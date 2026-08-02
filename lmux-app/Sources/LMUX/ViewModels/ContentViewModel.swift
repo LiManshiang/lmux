@@ -1,0 +1,343 @@
+import SwiftUI
+import Combine
+import AppKit
+
+@MainActor
+class ContentViewModel: ObservableObject {
+    @Published var sessions: [SessionSummary] = []
+    @Published var selectedSession: SessionSummary?
+    @Published var connectedSessionId: String?
+    @Published var selectedFullSession: Session?
+    @Published var showNewSessionSheet = false
+    @Published var backendRunning = false
+    @Published var backendStarting = false
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    @Published var statusMessage: String?
+
+    private let api = APIClient()
+    private var backendProcess: Process?
+    private var pollTimer: Timer?
+
+    // MARK: - Backend Management
+
+    func startBackend() {
+        backendStarting = true
+        Task {
+            // try to connect to existing backend
+            if await api.healthCheck() {
+                let token = loadToken()
+                let addr = loadAddr()
+                if let token = token, let addr = addr {
+                    api.configure(addr: addr, token: token)
+                    backendRunning = true
+                    backendStarting = false
+                    await refreshSessions()
+                    startPolling()
+                    return
+                }
+            }
+
+            // start backend process
+            await launchBackend()
+        }
+    }
+
+    func retryBackend() {
+        if backendProcess?.isRunning == true {
+            backendProcess?.terminate()
+        }
+        backendStarting = true
+        errorMessage = nil
+        statusMessage = "Starting backend..."
+        Task {
+            await launchBackend()
+        }
+    }
+
+    private func launchBackend() async {
+        // search for lmux binary in multiple locations
+        let paths = findCBSPaths()
+
+        var execPath: String?
+        for p in paths {
+            if FileManager.default.isExecutableFile(atPath: p) {
+                execPath = p
+                break
+            }
+        }
+
+        guard let execPath = execPath else {
+            backendStarting = false
+            errorMessage = "lmux backend not found. Try: cd ~/Projects/lmux && make build"
+            statusMessage = "Backend not found"
+            return
+        }
+        print("[lmux] Using backend at: \(execPath)")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: execPath)
+        process.arguments = ["--restore"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            backendProcess = process
+            print("[lmux] Process started, PID: \(process.processIdentifier)")
+        } catch {
+            backendStarting = false
+            errorMessage = "Failed to start backend: \(error.localizedDescription)"
+            statusMessage = "Backend failed to start"
+            return
+        }
+
+        // read token from output using a file handle readability handler
+        var accumulatedOutput = ""
+        let fileHandle = pipe.fileHandleForReading
+
+        // Use DispatchIO for reliable async reading instead of polling
+        let fd = fileHandle.fileDescriptor
+        let dispatchIO = DispatchIO(type: .stream, fileDescriptor: fd, queue: .main) { _ in
+            try? fileHandle.close()
+        }
+
+        dispatchIO.setLimit(lowWater: 1)
+        dispatchIO.read(offset: 0, length: Int.max, queue: .main) { [weak self] done, data, error in
+            guard let data = data, let chunk = String(data: Data(data), encoding: .utf8) else {
+                if done { dispatchIO.close() }
+                return
+            }
+            accumulatedOutput += chunk
+            for line in accumulatedOutput.components(separatedBy: "\n") {
+                if line.hasPrefix("LMUX_TOKEN=") {
+                    self?.saveToken(String(line.dropFirst(11)))
+                }
+                if line.hasPrefix("LMUX_ADDR=") {
+                    self?.saveAddr(String(line.dropFirst(10)))
+                }
+            }
+            // Keep only the last partial line
+            if let lastNewline = accumulatedOutput.lastIndex(of: "\n") {
+                accumulatedOutput = String(accumulatedOutput[accumulatedOutput.index(after: lastNewline)...])
+            }
+            if self?.loadToken() != nil && self?.loadAddr() != nil {
+                dispatchIO.close()
+            }
+            if done || error != nil { dispatchIO.close() }
+        }
+
+        // wait for backend to print token (with timeout)
+        let start = Date()
+        while (loadToken() == nil || loadAddr() == nil) && Date().timeIntervalSince(start) < 10 {
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        dispatchIO.close()
+
+        let token = loadToken() ?? ""
+        let addr = loadAddr() ?? "127.0.0.1:19680"
+        api.configure(addr: addr, token: token)
+
+        // wait for backend to be ready
+        for i in 0..<15 {
+            if await api.healthCheck() {
+                backendRunning = true
+                backendStarting = false
+                statusMessage = nil
+                await refreshSessions()
+                startPolling()
+                return
+            }
+            statusMessage = "Waiting for backend... (\(i + 1)/15)"
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+
+        backendStarting = false
+        backendRunning = false
+        errorMessage = "Backend failed to start on \(addr)"
+        statusMessage = "Backend failed"
+    }
+
+    private func findCBSPaths() -> [String] {
+        var paths: [String] = []
+
+        // 1. Bundled in .app Contents/MacOS (production deployment)
+        paths.append(Bundle.main.bundleURL
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("MacOS")
+            .appendingPathComponent("lmux-backend")
+            .path)
+
+        // 2. Relative to executable (development: swift run / Xcode)
+        if let execPath = Bundle.main.executableURL?.path {
+            let execDir = URL(fileURLWithPath: execPath).deletingLastPathComponent()
+            // Try backend/ subdirectory relative to executable
+            paths.append(execDir
+                .appendingPathComponent("backend")
+                .appendingPathComponent("lmux")
+                .path)
+            // Try parent of parent (SPM .build/debug structure)
+            paths.append(execDir
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("backend")
+                .appendingPathComponent("lmux")
+                .path)
+        }
+
+        // 3. Fallback: well-known paths
+        let home = NSHomeDirectory()
+        paths.append(home + "/Projects/lmux/bin/lmux")
+        paths.append(home + "/.local/bin/lmux")
+
+        // Filter to only existing executable files
+        print("[lmux] Backend search paths: \(paths)")
+        return paths.filter { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    // MARK: - Session Operations
+
+    func refreshSessions() async {
+        guard backendRunning else { return }
+
+        do {
+            let previousSelection = selectedSession?.id
+            let (_, summaries) = try await api.listSessions()
+            sessions = summaries
+
+            // preserve selection across refresh
+            if let prevId = previousSelection,
+               let current = summaries.first(where: { $0.id == prevId }) {
+                selectedSession = current
+            }
+            // clear any previous error on successful refresh
+            if errorMessage != nil {
+                errorMessage = nil
+            }
+        } catch {
+            if backendRunning {
+                // check if backend died
+                if await !api.healthCheck() {
+                    backendRunning = false
+                    statusMessage = "Backend disconnected"
+                    errorMessage = "Backend connection lost. Try restarting."
+                } else {
+                    statusMessage = "Refresh failed"
+                    errorMessage = "Failed to refresh sessions: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func selectSession(_ session: SessionSummary) {
+        selectedSession = session
+    }
+
+    func createSession(projectDir: String, name: String?, cbcSessionID: String?) async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let _ = try await api.createSession(
+                projectDir: projectDir,
+                name: name,
+                cbcSessionID: cbcSessionID
+            )
+            await refreshSessions()
+            // auto-select the new session so terminal connects immediately
+            if let created = sessions.first(where: { $0.projectDir == projectDir && $0.name == (name ?? "") }) {
+                selectedSession = created
+            } else if let first = sessions.first {
+                selectedSession = first
+            }
+            showNewSessionSheet = false
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func quickCreateSession() async {
+        let home = NSHomeDirectory()
+        let count = sessions.count + 1
+        let name = "Session \(count)"
+        await createSession(projectDir: home, name: name, cbcSessionID: nil)
+    }
+
+    func deleteSession(id: String) async {
+        do {
+            try await api.deleteSession(id: id)
+            if selectedSession?.id == id {
+                selectedSession = nil
+            }
+            await refreshSessions()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func renameSession(id: String, name: String) async {
+        do {
+            _ = try await api.renameSession(id: id, name: name)
+            await refreshSessions()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func restoreAll() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let count = try await api.restoreAll()
+            statusMessage = "Restored \(count) sessions"
+            await refreshSessions()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func attachToSession(_ session: SessionSummary) async { /* terminal handles this */ }
+
+    // Get session project directory for terminal spawning
+    func getSessionProjectDir(id: String) -> String? {
+        // sessions are already loaded, find the project dir from summaries
+        return sessions.first(where: { $0.id == id })?.projectDir
+    }
+
+    // MARK: - Polling
+
+    private func startPolling() {
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshSessions()
+            }
+        }
+    }
+
+    func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    // MARK: - Persistence
+
+    private func saveToken(_ token: String) {
+        UserDefaults.standard.set(token, forKey: "lmux_token")
+    }
+
+    private func loadToken() -> String? {
+        UserDefaults.standard.string(forKey: "lmux_token")
+    }
+
+    private func saveAddr(_ addr: String) {
+        UserDefaults.standard.set(addr, forKey: "lmux_addr")
+    }
+
+    private func loadAddr() -> String? {
+        UserDefaults.standard.string(forKey: "lmux_addr")
+    }
+}
