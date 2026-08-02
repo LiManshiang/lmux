@@ -41,6 +41,16 @@ class APIClient: ObservableObject {
         self.token = token
     }
 
+    /// WebSocket base URL for PTY relay connections.
+    var wsBaseURL: String {
+        baseURL
+    }
+
+    /// Authentication token for WebSocket connections.
+    var authToken: String {
+        token
+    }
+
     // MARK: - Sessions
 
     func listSessions() async throws -> (sessions: [Session], summaries: [SessionSummary]) {
@@ -51,6 +61,15 @@ class APIClient: ObservableObject {
         }
         let resp = try decode(Response.self, from: data)
         return (resp.sessions ?? [], resp.summaries)
+    }
+
+    func getSession(id: String) async throws -> Session {
+        let data = try await get("/api/sessions/\(id)")
+        struct Response: Codable {
+            let session: Session
+        }
+        let resp = try decode(Response.self, from: data)
+        return resp.session
     }
 
     func createSession(projectDir: String, name: String? = nil, cbcSessionID: String? = nil) async throws -> Session {

@@ -19,6 +19,27 @@ class ContentViewModel: ObservableObject {
     private var backendProcess: Process?
     private var pollTimer: Timer?
 
+    /// Terminal pool: preserves TerminalManager instances across session switches.
+    private var terminalManagers: [String: TerminalManager] = [:]
+
+    // MARK: - Terminal Pool
+
+    /// Get or create a TerminalManager for a session.
+    func terminalManager(for sessionID: String) -> TerminalManager {
+        if let existing = terminalManagers[sessionID] {
+            return existing
+        }
+        let mgr = TerminalManager()
+        terminalManagers[sessionID] = mgr
+        return mgr
+    }
+
+    /// Release a terminal manager when its session is deleted.
+    func releaseTerminalManager(for sessionID: String) {
+        terminalManagers[sessionID]?.disconnect()
+        terminalManagers.removeValue(forKey: sessionID)
+    }
+
     // MARK: - Backend Management
 
     func startBackend() {
@@ -232,6 +253,11 @@ class ContentViewModel: ObservableObject {
     }
 
     func selectSession(_ session: SessionSummary) {
+        // Detach previous session
+        if let prev = selectedSession, prev.id != session.id {
+            terminalManagers[prev.id]?.detach()
+            connectedSessionId = nil
+        }
         selectedSession = session
     }
 
@@ -267,6 +293,7 @@ class ContentViewModel: ObservableObject {
 
     func deleteSession(id: String) async {
         do {
+            releaseTerminalManager(for: id)
             try await api.deleteSession(id: id)
             if selectedSession?.id == id {
                 selectedSession = nil
@@ -300,6 +327,16 @@ class ContentViewModel: ObservableObject {
     }
 
     func attachToSession(_ session: SessionSummary) async { /* terminal handles this */ }
+
+    /// Ensure the backend has a running PTY process for this session.
+    func ensureProcessRunning(sessionID: String) async {
+        do {
+            // GET /api/sessions/{id} auto-spawns process if not running
+            _ = try await api.getSession(id: sessionID)
+        } catch {
+            print("[lmux] ensureProcessRunning error: \(error)")
+        }
+    }
 
     // Get session project directory for terminal spawning
     func getSessionProjectDir(id: String) -> String? {

@@ -54,7 +54,9 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, sess)
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"session": sess,
+	})
 }
 
 func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +72,9 @@ func (h *Handler) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sess)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session": sess,
+	})
 }
 
 func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {

@@ -67,9 +67,8 @@ struct ContentView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        if let session = viewModel.selectedSession {
-            SessionDetailView(session: session)
-                .id(session.id) // force re-render when selection changes
+        if viewModel.selectedSession != nil {
+            SessionDetailView()
         } else if !viewModel.backendRunning && !viewModel.backendStarting {
             BackendNotRunningView()
         } else if !viewModel.backendRunning {

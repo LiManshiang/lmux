@@ -32,19 +32,17 @@ func main() {
 	mgr := session.NewManager(store)
 	server := api.NewServer(cfg, mgr)
 
-	// Print token IMMEDIATELY
 	fmt.Printf("LMUX_TOKEN=%s\n", server.Token())
 	fmt.Printf("LMUX_ADDR=%s\n", server.Addr())
 
-	// Handle graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		log.Println("[lmux] Shutting down...")
 		os.Exit(0)
 	}()
 
-	// Start HTTP server FIRST (non-blocking goroutine), restore concurrently
 	go func() {
 		if *restore {
 			log.Println("[lmux] Restoring historical sessions...")

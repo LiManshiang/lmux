@@ -23,8 +23,8 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	h := NewHandler(s.mgr)
 
-	// Health is public (no auth), but still gets CORS
 	mux.HandleFunc("/api/health", corsMiddleware(h.Health))
+
 	mux.HandleFunc("/api/sessions", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:

@@ -87,8 +87,18 @@ func (m *Manager) Stop(id string) error {
 
 // Delete removes a session entirely.
 func (m *Manager) Delete(id string) error {
-	m.Stop(id)
 	return m.store.Delete(id)
+}
+
+// UpdateStatus updates the session status and PID.
+func (m *Manager) UpdateStatus(id string, status Status, pid int) error {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return err
+	}
+	sess.Status = status
+	sess.Pid = pid
+	return m.store.Save(sess)
 }
 
 // Rename updates the session's display name.
