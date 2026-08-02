@@ -36,8 +36,10 @@ class ContentViewModel: ObservableObject {
 
     /// Release a terminal manager when its session is deleted.
     func releaseTerminalManager(for sessionID: String) {
-        terminalManagers[sessionID]?.disconnect()
-        terminalManagers.removeValue(forKey: sessionID)
+        if let mgr = terminalManagers[sessionID] {
+            mgr.disconnect()
+            terminalManagers.removeValue(forKey: sessionID)
+        }
     }
 
     // MARK: - Backend Management
@@ -293,8 +295,8 @@ class ContentViewModel: ObservableObject {
 
     func deleteSession(id: String) async {
         do {
-            releaseTerminalManager(for: id)
             try await api.deleteSession(id: id)
+            releaseTerminalManager(for: id)
             if selectedSession?.id == id {
                 selectedSession = nil
             }
@@ -327,16 +329,6 @@ class ContentViewModel: ObservableObject {
     }
 
     func attachToSession(_ session: SessionSummary) async { /* terminal handles this */ }
-
-    /// Ensure the backend has a running PTY process for this session.
-    func ensureProcessRunning(sessionID: String) async {
-        do {
-            // GET /api/sessions/{id} auto-spawns process if not running
-            _ = try await api.getSession(id: sessionID)
-        } catch {
-            print("[lmux] ensureProcessRunning error: \(error)")
-        }
-    }
 
     // Get session project directory for terminal spawning
     func getSessionProjectDir(id: String) -> String? {

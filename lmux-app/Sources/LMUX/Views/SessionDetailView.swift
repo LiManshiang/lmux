@@ -37,22 +37,32 @@ struct SessionDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onAppear {
+            // Handle initial session when view first appears
+            if let id = viewModel.selectedSession?.id {
+                connectToSession(id: id)
+            }
+        }
         .onChange(of: viewModel.selectedSession?.id) { newID in
             guard let id = newID else { return }
-            let mgr = viewModel.terminalManager(for: id)
-
-            if mgr.terminalView == nil {
-                let session = viewModel.sessions.first { $0.id == id }
-                mgr.connect(
-                    sessionID: id,
-                    projectDir: session?.projectDir ?? NSHomeDirectory(),
-                    cbcSessionID: session?.cbcSessionID
-                )
-            } else if !mgr.isConnected {
-                mgr.reattach()
-            }
-
-            viewModel.connectedSessionId = id
+            connectToSession(id: id)
         }
+    }
+
+    private func connectToSession(id: String) {
+        let mgr = viewModel.terminalManager(for: id)
+
+        if mgr.terminalView == nil {
+            let session = viewModel.sessions.first { $0.id == id }
+            mgr.connect(
+                sessionID: id,
+                projectDir: session?.projectDir ?? NSHomeDirectory(),
+                cbcSessionID: session?.cbcSessionID
+            )
+        } else if !mgr.isConnected {
+            mgr.reattach()
+        }
+
+        viewModel.connectedSessionId = id
     }
 }
