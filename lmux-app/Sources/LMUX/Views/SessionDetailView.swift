@@ -20,7 +20,7 @@ struct SessionDetailView: View {
                     Spacer()
                     if mgr.processRunning {
                         Button(action: {
-                            Task { await viewModel.deleteSession(id: session.id) }
+                            viewModel.killSession(id: session.id)
                         }) {
                             Text("Kill").font(.system(size: 11))
                         }

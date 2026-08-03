@@ -64,6 +64,19 @@ class ContentViewModel: ObservableObject {
         attentionSessionIds.remove(sessionID)
     }
 
+    /// Kill the running codebuddy process without deleting the session.
+    func killSession(id: String) {
+        if let mgr = terminalManagers[id] {
+            mgr.disconnect()
+        }
+        completedSessionIds.remove(id)
+        activeSessionIds.remove(id)
+        attentionSessionIds.remove(id)
+        if connectedSessionId == id {
+            connectedSessionId = nil
+        }
+    }
+
     /// Whether the codebuddy-code process is currently running for this session.
     func isSessionActive(_ sessionID: String) -> Bool {
         activeSessionIds.contains(sessionID)
