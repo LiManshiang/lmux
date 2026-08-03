@@ -6,6 +6,7 @@ enum SessionRestore {
         let sessionID: String
         let projectDir: String
         let cbcSessionID: String?
+        var agentType: AgentType
     }
 
     private static var restoreURL: URL {
@@ -16,10 +17,10 @@ enum SessionRestore {
     }
 
     /// Save a session to the restore list.
-    static func save(sessionID: String, projectDir: String, cbcSessionID: String?) {
+    static func save(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
         var entries = load()
         entries.removeAll { $0.sessionID == sessionID }
-        entries.append(Entry(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID))
+        entries.append(Entry(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType))
         save(entries)
     }
 
