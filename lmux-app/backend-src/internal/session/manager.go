@@ -44,9 +44,6 @@ func (m *Manager) Create(req CreateRequest) (*Session, error) {
 
 	id := uuid.New().String()
 	cbcID := req.CBCSessionID
-	if cbcID == "" {
-		cbcID = uuid.New().String()
-	}
 
 	aiTitle := ""
 	if req.CBCSessionID != "" {
