@@ -76,8 +76,8 @@ class TerminalManager: ObservableObject {
         // Start process
         view.startProcess(executable: cbcPath, args: args, environment: envList, currentDirectory: projectDir)
 
-        // Expand scrollback buffer from default 500 to 10,000 lines
-        view.getTerminal().changeScrollback(10_000)
+        // Maximize scrollback buffer for full history viewing (default is 500)
+        view.getTerminal().changeScrollback(50_000)
 
         processGeneration += 1
         let gen = processGeneration
