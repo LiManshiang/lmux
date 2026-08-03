@@ -352,7 +352,9 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    func attachToSession(_ session: SessionSummary) async { /* terminal handles this */ }
+    func attachToSession(_ session: SessionSummary) async {
+        selectSession(session)
+    }
 
     // Get session project directory for terminal spawning
     func getSessionProjectDir(id: String) -> String? {
