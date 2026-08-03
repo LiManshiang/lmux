@@ -71,10 +71,7 @@ struct SessionRowView: View {
     }
 
     private var statusDotColor: Color {
-        if viewModel.isSessionActive(session.id) {
-            return Color.orange
-        }
-        if viewModel.hasSessionCompleted(session.id) {
+        if viewModel.isSessionActive(session.id) || viewModel.hasSessionCompleted(session.id) {
             return Color.green
         }
         return Color.gray
