@@ -144,6 +144,7 @@ class ContentViewModel: ObservableObject {
                     backendRunning = true
                     backendStarting = false
                     await refreshSessions()
+                    await restoreRunningSessions()
                     startPolling()
                     return
                 }
@@ -442,7 +443,7 @@ class ContentViewModel: ObservableObject {
                     projectDir: entry.projectDir,
                     name: nil,
                     cbcSessionID: entry.cbcSessionID,
-                    agentType: entry.agentType
+                    agentType: entry.agentType ?? .codebuddy
                 )
                 await refreshSessions()
             }
@@ -452,7 +453,7 @@ class ContentViewModel: ObservableObject {
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
                 cbcSessionID: entry.cbcSessionID,
-                agentType: entry.agentType
+                agentType: entry.agentType ?? .codebuddy
             )
         }
     }
