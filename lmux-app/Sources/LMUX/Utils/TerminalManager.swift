@@ -191,7 +191,7 @@ class TerminalManager: ObservableObject {
     func connectBash(sessionID: String, projectDir: String, agentType: AgentType = .codebuddy) {
         disconnect()
 
-        let view = LocalProcessTerminalView(frame: .zero)
+        let view = OutputAwareTerminalView(frame: .zero)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
         let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
@@ -201,6 +201,14 @@ class TerminalManager: ObservableObject {
         view.selectedTextBackgroundColor = theme.selectionNSColor
         view.caretColor = theme.cursorNSColor
         view.installColors(theme.ansiSwiftTermColors)
+
+        view.onFirstOutput = { [weak self] in
+            self?.onFirstOutput?()
+        }
+        view.onActivity = { [weak self] in
+            self?.lastActivityTime = Date()
+            self?.isIdle = false
+        }
 
         let zshPath = "/bin/zsh"
 
