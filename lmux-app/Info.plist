@@ -26,5 +26,11 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSCalendarsUsageDescription</key>
+	<string>This application does not use calendars.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This application does not use photos.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>This application does not use contacts.</string>
 </dict>
 </plist>
