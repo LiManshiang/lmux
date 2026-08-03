@@ -6,6 +6,7 @@ struct NewSessionSheet: View {
     @State private var sessionName = ""
     @State private var cbcSessionID = ""
     @State private var useResume = false
+    @State private var agentType: AgentType = .codebuddy
     @State private var dirExists = false
     @State private var showDirError = false
 
@@ -53,17 +54,30 @@ struct NewSessionSheet: View {
 
                 Divider()
 
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Agent")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Picker("Agent", selection: $agentType) {
+                        ForEach(AgentType.allCases, id: \.self) { agent in
+                            Text(agent.displayName).tag(agent)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
                 Toggle(isOn: $useResume) {
-                    Text("Resume existing CodeBuddy session")
+                    Text("Resume existing session")
                         .font(.body)
                 }
 
                 if useResume {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("CodeBuddy Session ID")
+                        Text("Session ID")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        TextField("UUID from ~/.codebuddy/projects/", text: $cbcSessionID)
+                        TextField("UUID", text: $cbcSessionID)
                             .textFieldStyle(.roundedBorder)
                     }
                 }
@@ -86,7 +100,8 @@ struct NewSessionSheet: View {
                         await viewModel.createSession(
                             projectDir: dir,
                             name: finalName,
-                            cbcSessionID: cbc
+                            cbcSessionID: cbc,
+                            agentType: agentType
                         )
                     }
                 }

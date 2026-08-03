@@ -91,7 +91,8 @@ struct SessionDetailView: View {
             mgr.connect(
                 sessionID: id,
                 projectDir: session?.projectDir ?? NSHomeDirectory(),
-                cbcSessionID: session?.cbcSessionID
+                cbcSessionID: session?.cbcSessionID,
+                agentType: session?.agentType ?? .codebuddy
             )
         } else if !mgr.isConnected {
             mgr.reattach()

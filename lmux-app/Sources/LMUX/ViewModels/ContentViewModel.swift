@@ -353,7 +353,7 @@ class ContentViewModel: ObservableObject {
         clearSessionAttention(session.id)
     }
 
-    func createSession(projectDir: String, name: String?, cbcSessionID: String?) async {
+    func createSession(projectDir: String, name: String?, cbcSessionID: String?, agentType: AgentType = .codebuddy) async {
         isLoading = true
         defer { isLoading = false }
 
@@ -361,7 +361,8 @@ class ContentViewModel: ObservableObject {
             let _ = try await api.createSession(
                 projectDir: projectDir,
                 name: name,
-                cbcSessionID: cbcSessionID
+                cbcSessionID: cbcSessionID,
+                agentType: agentType
             )
             await refreshSessions()
             // auto-select the new session so terminal connects immediately
@@ -376,11 +377,11 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    func quickCreateSession() async {
+    func quickCreateSession(agentType: AgentType = .codebuddy) async {
         let home = NSHomeDirectory()
         let count = sessions.count + 1
-        let name = "Session \(count)"
-        await createSession(projectDir: home, name: name, cbcSessionID: nil)
+        let name = "\(agentType.displayName) \(count)"
+        await createSession(projectDir: home, name: name, cbcSessionID: nil, agentType: agentType)
     }
 
     func deleteSession(id: String) async {
@@ -439,11 +440,11 @@ class ContentViewModel: ObservableObject {
             // Ensure session exists in backend; create if missing
             let existing = sessions.first { $0.id == entry.sessionID }
             if existing == nil {
-                // Create the session record if it was lost
                 _ = try? await api.createSession(
                     projectDir: entry.projectDir,
                     name: nil,
-                    cbcSessionID: entry.cbcSessionID
+                    cbcSessionID: entry.cbcSessionID,
+                    agentType: entry.agentType
                 )
                 await refreshSessions()
             }
@@ -452,7 +453,8 @@ class ContentViewModel: ObservableObject {
             mgr.connect(
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
-                cbcSessionID: entry.cbcSessionID
+                cbcSessionID: entry.cbcSessionID,
+                agentType: entry.agentType
             )
         }
     }
