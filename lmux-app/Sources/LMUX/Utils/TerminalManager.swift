@@ -188,7 +188,7 @@ class TerminalManager: ObservableObject {
     }
 
     /// Connect a bash/zsh terminal in the given directory (for new sessions).
-    func connectBash(sessionID: String, projectDir: String, agentType: AgentType = .codebuddy) {
+    func connectBash(sessionID: String, projectDir: String, agentType: AgentType) {
         disconnect()
 
         let view = OutputAwareTerminalView(frame: .zero)
