@@ -98,6 +98,9 @@ class TerminalManager: ObservableObject {
         processPID = view.process.shellPid
         lastActivityTime = Date()
         startIdleTimer()
+
+        // Persist for session restore on app restart
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID)
     }
 
     private func startIdleTimer() {
@@ -113,6 +116,9 @@ class TerminalManager: ObservableObject {
     func disconnect() {
         idleTimer?.invalidate()
         idleTimer = nil
+        if let sid = currentSessionID {
+            SessionRestore.remove(sessionID: sid)
+        }
         terminalView?.process.terminate()
         terminalView = nil
         currentSessionID = nil

@@ -242,6 +242,7 @@ class ContentViewModel: ObservableObject {
                 backendStarting = false
                 statusMessage = nil
                 await refreshSessions()
+                await restoreRunningSessions()
                 startPolling()
                 return
             }
@@ -409,6 +410,35 @@ class ContentViewModel: ObservableObject {
     func getSessionProjectDir(id: String) -> String? {
         // sessions are already loaded, find the project dir from summaries
         return sessions.first(where: { $0.id == id })?.projectDir
+    }
+
+    // MARK: - Session Restore
+
+    /// Re-launch sessions that were running before the app was last quit.
+    private func restoreRunningSessions() async {
+        let entries = SessionRestore.loadAll()
+        guard !entries.isEmpty else { return }
+
+        for entry in entries {
+            // Ensure session exists in backend; create if missing
+            let existing = sessions.first { $0.id == entry.sessionID }
+            if existing == nil {
+                // Create the session record if it was lost
+                _ = try? await api.createSession(
+                    projectDir: entry.projectDir,
+                    name: nil,
+                    cbcSessionID: entry.cbcSessionID
+                )
+                await refreshSessions()
+            }
+
+            let mgr = terminalManager(for: entry.sessionID)
+            mgr.connect(
+                sessionID: entry.sessionID,
+                projectDir: entry.projectDir,
+                cbcSessionID: entry.cbcSessionID
+            )
+        }
     }
 
     // MARK: - Polling
