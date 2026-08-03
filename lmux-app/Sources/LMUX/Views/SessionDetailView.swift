@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
+    @State private var showSplitPane = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,7 +19,24 @@ struct SessionDetailView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
+
+                    // Split pane toggle
                     if mgr.processRunning {
+                        Button(action: {
+                            showSplitPane.toggle()
+                            if showSplitPane {
+                                let splitMgr = viewModel.splitTerminalManager(for: sid)
+                                if splitMgr.terminalView == nil {
+                                    splitMgr.connectBash(projectDir: session.projectDir)
+                                }
+                            }
+                        }) {
+                            Image(systemName: showSplitPane ? "rectangle.split.1x2.fill" : "rectangle.split.1x2")
+                                .font(.system(size: 14))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Toggle bottom split pane")
+
                         Button(action: {
                             viewModel.killSession(id: session.id)
                         }) {
@@ -33,17 +51,34 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                PTYTerminalView(manager: mgr)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showSplitPane {
+                    VStack(spacing: 0) {
+                        PTYTerminalView(manager: mgr)
+                            .frame(maxWidth: .infinity)
+                            .layoutPriority(1)
+
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.3))
+                            .frame(height: 1)
+
+                        PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                            .frame(maxWidth: .infinity)
+                            .layoutPriority(1)
+                    }
+                } else {
+                    PTYTerminalView(manager: mgr)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .onAppear {
-            // Handle initial session when view first appears
+            showSplitPane = false
             if let id = viewModel.selectedSession?.id {
                 connectToSession(id: id)
             }
         }
         .onChange(of: viewModel.selectedSession?.id) { newID in
+            showSplitPane = false
             guard let id = newID else { return }
             connectToSession(id: id)
         }

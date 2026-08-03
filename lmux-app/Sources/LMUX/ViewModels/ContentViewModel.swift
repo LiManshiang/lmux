@@ -22,6 +22,8 @@ class ContentViewModel: ObservableObject {
 
     /// Terminal pool: preserves TerminalManager instances across session switches.
     private var terminalManagers: [String: TerminalManager] = [:]
+    /// Split pane terminal managers.
+    private var splitTerminalManagers: [String: TerminalManager] = [:]
 
     /// Sessions with an actively running codebuddy-code process.
     @Published var activeSessionIds: Set<String> = []
@@ -62,6 +64,18 @@ class ContentViewModel: ObservableObject {
         completedSessionIds.remove(sessionID)
         activeSessionIds.remove(sessionID)
         attentionSessionIds.remove(sessionID)
+        splitTerminalManagers[sessionID]?.disconnect()
+        splitTerminalManagers.removeValue(forKey: sessionID)
+    }
+
+    /// Get or create a split-pane TerminalManager for a session.
+    func splitTerminalManager(for sessionID: String) -> TerminalManager {
+        if let existing = splitTerminalManagers[sessionID] {
+            return existing
+        }
+        let mgr = TerminalManager()
+        splitTerminalManagers[sessionID] = mgr
+        return mgr
     }
 
     /// Kill the running codebuddy process without deleting the session.
@@ -69,6 +83,8 @@ class ContentViewModel: ObservableObject {
         if let mgr = terminalManagers[id] {
             mgr.disconnect()
         }
+        splitTerminalManagers[id]?.disconnect()
+        splitTerminalManagers.removeValue(forKey: id)
         completedSessionIds.remove(id)
         activeSessionIds.remove(id)
         attentionSessionIds.remove(id)

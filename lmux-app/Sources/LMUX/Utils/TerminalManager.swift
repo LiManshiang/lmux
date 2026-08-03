@@ -186,6 +186,36 @@ class TerminalManager: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// Connect a bash terminal in the given directory (for split pane).
+    func connectBash(projectDir: String) {
+        disconnect()
+
+        let view = LocalProcessTerminalView(frame: .zero)
+        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
+        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
+        view.nativeForegroundColor = theme.foregroundNSColor
+        view.nativeBackgroundColor = theme.backgroundNSColor
+        view.selectedTextBackgroundColor = theme.selectionNSColor
+        view.caretColor = theme.cursorNSColor
+        view.installColors(theme.ansiSwiftTermColors)
+
+        let bashPath = "/bin/bash"
+        let envList = ["TERM=xterm-256color", "LANG=en_US.UTF-8"]
+
+        view.startProcess(executable: bashPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
+        view.getTerminal().changeScrollback(1_000_000)
+
+        self.terminalView = view
+        isConnected = true
+        processRunning = true
+        processStartTime = Date()
+        processPID = view.process.shellPid
+        lastActivityTime = Date()
+        startIdleTimer()
+    }
+
     private func findCodeBuddyPath() -> String {
         // 1. Search PATH first
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
