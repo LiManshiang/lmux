@@ -66,6 +66,7 @@ class ContentViewModel: ObservableObject {
         attentionSessionIds.remove(sessionID)
         splitTerminalManagers[sessionID]?.disconnect()
         splitTerminalManagers.removeValue(forKey: sessionID)
+        SessionRestore.remove(sessionID: sessionID)
     }
 
     /// Get or create a split-pane TerminalManager for a session.
