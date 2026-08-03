@@ -9,6 +9,8 @@ class TerminalManager: ObservableObject {
 
     /// Called on main actor when the codebuddy-code process exits.
     var onProcessExit: (() -> Void)?
+    /// Called on main actor when the codebuddy-code process starts.
+    var onProcessStart: (() -> Void)?
 
     /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
     private(set) var terminalView: LocalProcessTerminalView?
@@ -66,6 +68,7 @@ class TerminalManager: ObservableObject {
         self.terminalView = view
         isConnected = true
         processRunning = true
+        onProcessStart?()
     }
 
     func disconnect() {
