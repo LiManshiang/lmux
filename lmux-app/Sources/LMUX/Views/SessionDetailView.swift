@@ -31,7 +31,7 @@ struct SessionDetailView: View {
                                 }
                             }
                         }) {
-                            Text(showSplitPane ? "Close Split" : "Split").font(.system(size: 11))
+                            Text(showSplitPane ? "Close Terminal" : "Terminal").font(.system(size: 11))
                         }
                         .buttonStyle(.borderless)
                         .help("Toggle bottom split pane")
@@ -39,7 +39,7 @@ struct SessionDetailView: View {
                         Button(action: {
                             viewModel.killSession(id: session.id)
                         }) {
-                            Text("Kill").font(.system(size: 11))
+                            Text("Stop").font(.system(size: 11))
                         }
                         .buttonStyle(.borderless)
                     }
