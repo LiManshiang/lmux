@@ -188,7 +188,7 @@ class ContentViewModel: ObservableObject {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: execPath)
-        process.arguments = ["--restore"]
+        process.arguments = []
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -379,9 +379,7 @@ class ContentViewModel: ObservableObject {
 
     func quickCreateSession(agentType: AgentType = .codebuddy) async {
         let home = NSHomeDirectory()
-        let count = sessions.count + 1
-        let name = "\(agentType.displayName) \(count)"
-        await createSession(projectDir: home, name: name, cbcSessionID: nil, agentType: agentType)
+        await createSession(projectDir: home, name: nil, cbcSessionID: nil, agentType: agentType)
     }
 
     func deleteSession(id: String) async {
