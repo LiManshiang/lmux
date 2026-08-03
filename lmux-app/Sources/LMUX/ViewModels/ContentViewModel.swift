@@ -35,7 +35,7 @@ class ContentViewModel: ObservableObject {
             return existing
         }
         let mgr = TerminalManager()
-        mgr.onProcessStart = { [weak self] in
+        mgr.onFirstOutput = { [weak self] in
             self?.activeSessionIds.insert(sessionID)
         }
         mgr.onProcessExit = { [weak self] in

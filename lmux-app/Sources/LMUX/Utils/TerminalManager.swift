@@ -9,8 +9,8 @@ class TerminalManager: ObservableObject {
 
     /// Called on main actor when the codebuddy-code process exits.
     var onProcessExit: (() -> Void)?
-    /// Called on main actor when the codebuddy-code process starts.
-    var onProcessStart: (() -> Void)?
+    /// Called on main actor when codebuddy-code produces first terminal output.
+    var onFirstOutput: (() -> Void)?
 
     /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
     private(set) var terminalView: LocalProcessTerminalView?
@@ -24,10 +24,13 @@ class TerminalManager: ObservableObject {
 
         currentSessionID = sessionID
 
-        let view = LocalProcessTerminalView(frame: .zero)
+        let view = OutputAwareTerminalView(frame: .zero)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         view.nativeBackgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0)
         view.nativeForegroundColor = NSColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1.0)
+        view.onFirstOutput = { [weak self] in
+            self?.onFirstOutput?()
+        }
 
         // Build command
         let cbcPath = findCodeBuddyPath()
@@ -75,7 +78,6 @@ class TerminalManager: ObservableObject {
         self.terminalView = view
         isConnected = true
         processRunning = true
-        onProcessStart?()
     }
 
     func disconnect() {
@@ -137,6 +139,20 @@ class TerminalManager: ObservableObject {
         }
 
         return "/opt/homebrew/bin/codebuddy-code"
+    }
+}
+
+/// A LocalProcessTerminalView that notifies on first data received from the PTY.
+private class OutputAwareTerminalView: LocalProcessTerminalView {
+    var onFirstOutput: (() -> Void)?
+    private var outputDetected = false
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        if !outputDetected {
+            outputDetected = true
+            onFirstOutput?()
+        }
+        super.dataReceived(slice: slice)
     }
 }
 
