@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftTerm
+import UserNotifications
 
 @MainActor
 class TerminalManager: ObservableObject {
@@ -75,6 +76,20 @@ class TerminalManager: ObservableObject {
 
         // Start process
         view.startProcess(executable: cbcPath, args: args, environment: envList, currentDirectory: projectDir)
+
+        // Register OSC 777 notification handler (ESC ] 777 ; notify ; <title> ; <body> ST)
+        view.getTerminal().parser.oscHandlers[777] = { [weak self] data in
+            guard let text = String(bytes: data, encoding: .utf8) else { return }
+            let parts = text.components(separatedBy: ";")
+            guard parts.count >= 3, parts[0] == "notify" else { return }
+            self?.sendOSCNotification(title: parts[1], body: parts[2...].joined(separator: ";"))
+        }
+
+        // Register OSC 9 handler for simple attention notifications
+        view.getTerminal().parser.oscHandlers[9] = { [weak self] data in
+            guard let msg = String(bytes: data, encoding: .utf8), !msg.isEmpty else { return }
+            self?.sendOSCNotification(title: "Session", body: msg)
+        }
 
         // Unlimited scrollback for full session history
         view.getTerminal().changeScrollback(1_000_000)
@@ -156,6 +171,19 @@ class TerminalManager: ObservableObject {
     /// Whether the session needs user attention (task completed in background).
     var needsAttention: Bool {
         !isConnected && !processRunning && terminalView != nil
+    }
+
+    private func sendOSCNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "lmux-osc-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func findCodeBuddyPath() -> String {
