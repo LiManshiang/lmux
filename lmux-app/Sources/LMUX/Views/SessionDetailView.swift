@@ -101,7 +101,7 @@ struct SessionDetailView: View {
                 )
             } else {
                 // New session: start with bash terminal
-                mgr.connectBash(projectDir: dir)
+                mgr.connectBash(sessionID: id, projectDir: dir, agentType: session?.agentType ?? .codebuddy)
             }
         } else if !mgr.isConnected {
             mgr.reattach()

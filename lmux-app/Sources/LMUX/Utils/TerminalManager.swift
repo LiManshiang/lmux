@@ -187,8 +187,8 @@ class TerminalManager: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
-    /// Connect a bash terminal in the given directory (for split pane).
-    func connectBash(projectDir: String) {
+    /// Connect a bash/zsh terminal in the given directory (for new sessions).
+    func connectBash(sessionID: String, projectDir: String, agentType: AgentType = .codebuddy) {
         disconnect()
 
         let view = LocalProcessTerminalView(frame: .zero)
@@ -220,6 +220,9 @@ class TerminalManager: ObservableObject {
         processPID = view.process.shellPid
         lastActivityTime = Date()
         startIdleTimer()
+
+        // Persist for session restore
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType)
     }
 
     private func findAgentPath(name: String) -> String {
