@@ -1,0 +1,180 @@
+import AppKit
+import SwiftTerm
+
+struct TerminalTheme: Identifiable {
+    let id: String
+    let name: String
+
+    let foreground: (Double, Double, Double)   // 0...1
+    let background: (Double, Double, Double)
+    let selection: (Double, Double, Double)
+    let cursor: (Double, Double, Double)
+    let ansi: [(UInt16, UInt16, UInt16)]       // 0...65535, 16 entries
+
+    // SwiftTerm Colors
+    var ansiSwiftTermColors: [SwiftTerm.Color] {
+        ansi.map { Color(red: $0, green: $1, blue: $2) }
+    }
+
+    // NSColors
+    var foregroundNSColor: NSColor {
+        NSColor(red: foreground.0, green: foreground.1, blue: foreground.2, alpha: 1.0)
+    }
+    var backgroundNSColor: NSColor {
+        NSColor(red: background.0, green: background.1, blue: background.2, alpha: 1.0)
+    }
+    var selectionNSColor: NSColor {
+        NSColor(red: selection.0, green: selection.1, blue: selection.2, alpha: 1.0)
+    }
+    var cursorNSColor: NSColor {
+        NSColor(red: cursor.0, green: cursor.1, blue: cursor.2, alpha: 1.0)
+    }
+
+    // MARK: - Preset Themes
+
+    static let all: [TerminalTheme] = [.dracula, .solarizedDark, .solarizedLight, .monokai, .oneDark, .gruvboxDark, .nord, .defaultTheme]
+
+    static let dracula = TerminalTheme(
+        id: "dracula", name: "Dracula",
+        foreground: (0.973, 0.973, 0.949),
+        background: (0.157, 0.161, 0.212),
+        selection: (0.263, 0.271, 0.357),
+        cursor: (0.973, 0.973, 0.949),
+        ansi: [
+            (0x282A, 0x2E36, 0x4447), (0xFF55, 0x5555, 0x5555),
+            (0x50FA, 0x7B50, 0xFA7B), (0xF1FA, 0x8CF1, 0xFA8C),
+            (0xBD93, 0xF9BD, 0x93F9), (0xFF79, 0xC6FF, 0x79C6),
+            (0x8BE9, 0xFD8B, 0xE9FD), (0xF8F8, 0xF2F8, 0xF8F2),
+            (0x6272, 0xA462, 0x72A4), (0xFF6E, 0x6EFF, 0x6E6E),
+            (0x69FF, 0x9469, 0xFF94), (0xFFFF, 0xA5FF, 0xFFA5),
+            (0xD6AC, 0xFFD6, 0xACFF), (0xFF6E, 0xC6FF, 0x6EC6),
+            (0xA4FF, 0xFFFE, 0xA4FF), (0xFFFF, 0xFFFF, 0xFFFF),
+        ]
+    )
+
+    static let solarizedDark = TerminalTheme(
+        id: "solarized-dark", name: "Solarized Dark",
+        foreground: (0.514, 0.580, 0.588),
+        background: (0.000, 0.169, 0.212),
+        selection: (0.027, 0.212, 0.259),
+        cursor: (0.514, 0.580, 0.588),
+        ansi: [
+            (0x0736, 0x4200, 0x2B36), (0xDC32, 0x2F00, 0xDC32),
+            (0x8599, 0x0000, 0x8599), (0xB589, 0x0000, 0xB589),
+            (0x268B, 0xD200, 0x268B), (0xD336, 0x8200, 0xD336),
+            (0x2AA1, 0x9800, 0x2AA1), (0xEEE8, 0xD500, 0xEEE8),
+            (0x002B, 0x3600, 0x0736), (0xCB4B, 0x1600, 0xCB4B),
+            (0x586E, 0x7500, 0x586E), (0x657B, 0x8300, 0x657B),
+            (0x8394, 0x9600, 0x8394), (0x6C71, 0xC400, 0x6C71),
+            (0x93A1, 0xA100, 0x93A1), (0xFDF6, 0xE300, 0xFDF6),
+        ]
+    )
+
+    static let solarizedLight = TerminalTheme(
+        id: "solarized-light", name: "Solarized Light",
+        foreground: (0.408, 0.482, 0.510),
+        background: (0.992, 0.965, 0.890),
+        selection: (0.929, 0.910, 0.835),
+        cursor: (0.408, 0.482, 0.510),
+        ansi: [
+            (0xEEE8, 0xD500, 0xEEE8), (0xDC32, 0x2F00, 0xDC32),
+            (0x8599, 0x0000, 0x8599), (0xB589, 0x0000, 0xB589),
+            (0x268B, 0xD200, 0x268B), (0xD336, 0x8200, 0xD336),
+            (0x2AA1, 0x9800, 0x2AA1), (0x0736, 0x4200, 0x0736),
+            (0xFDF6, 0xE300, 0xFDF6), (0xCB4B, 0x1600, 0xCB4B),
+            (0x93A1, 0xA100, 0x93A1), (0x8394, 0x9600, 0x8394),
+            (0x657B, 0x8300, 0x657B), (0x6C71, 0xC400, 0x6C71),
+            (0x586E, 0x7500, 0x586E), (0x002B, 0x3600, 0x002B),
+        ]
+    )
+
+    static let monokai = TerminalTheme(
+        id: "monokai", name: "Monokai",
+        foreground: (0.969, 0.969, 0.957),
+        background: (0.153, 0.157, 0.133),
+        selection: (0.294, 0.298, 0.267),
+        cursor: (0.969, 0.969, 0.957),
+        ansi: [
+            (0x2728, 0x2227, 0x2822), (0xF926, 0x72F9, 0x2672),
+            (0xA6E2, 0x2EA6, 0xE22E), (0xF4BF, 0x75F4, 0xBF75),
+            (0x66D9, 0xEF66, 0xD9EF), (0xAE81, 0xFFAE, 0x81FF),
+            (0xA1EF, 0xE4A1, 0xEFE4), (0xF8F8, 0xF2F8, 0xF8F2),
+            (0x7571, 0x5E75, 0x715E), (0xFD97, 0x1FFD, 0x971F),
+            (0xA6E2, 0x2EA6, 0xE22E), (0xF4BF, 0x75F4, 0xBF75),
+            (0x66D9, 0xEF66, 0xD9EF), (0xAE81, 0xFFAE, 0x81FF),
+            (0xA1EF, 0xE4A1, 0xEFE4), (0xF9F8, 0xF5F9, 0xF8F5),
+        ]
+    )
+
+    static let oneDark = TerminalTheme(
+        id: "one-dark", name: "One Dark",
+        foreground: (0.667, 0.690, 0.745),
+        background: (0.157, 0.173, 0.216),
+        selection: (0.235, 0.259, 0.322),
+        cursor: (0.325, 0.471, 0.671),
+        ansi: [
+            (0x282C, 0x3428, 0x2C34), (0xE06C, 0x75E0, 0x6C75),
+            (0x98C3, 0x7998, 0xC379), (0xE5C0, 0x7BE5, 0xC07B),
+            (0x61AF, 0xEF61, 0xAFEF), (0xC678, 0xDDC6, 0x78DD),
+            (0x56B6, 0xC256, 0xB6C2), (0xABB2, 0xBFAB, 0xB2BF),
+            (0x5458, 0x6254, 0x5862), (0xBE50, 0x46BE, 0x5046),
+            (0x98C3, 0x7998, 0xC379), (0xE5C0, 0x7BE5, 0xC07B),
+            (0x61AF, 0xEF61, 0xAFEF), (0xC678, 0xDDC6, 0x78DD),
+            (0x56B6, 0xC256, 0xB6C2), (0xFFFF, 0xFFFF, 0xFFFF),
+        ]
+    )
+
+    static let gruvboxDark = TerminalTheme(
+        id: "gruvbox-dark", name: "Gruvbox Dark",
+        foreground: (0.922, 0.890, 0.780),
+        background: (0.157, 0.149, 0.141),
+        selection: (0.310, 0.294, 0.271),
+        cursor: (0.922, 0.890, 0.780),
+        ansi: [
+            (0x2828, 0x2828, 0x2828), (0xCC24, 0x1DCC, 0x241D),
+            (0x9897, 0x1A98, 0x971A), (0xD799, 0x21D7, 0x9921),
+            (0x4585, 0x8845, 0x8588), (0xB162, 0x86B1, 0x6286),
+            (0x689D, 0x6A68, 0x9D6A), (0xA899, 0x84A8, 0x9984),
+            (0x9283, 0x7492, 0x8374), (0xFB49, 0x34FB, 0x4934),
+            (0xB8BB, 0x26B8, 0xBB26), (0xFABD, 0x2FFA, 0xBD2F),
+            (0x83A5, 0x9883, 0xA598), (0xD386, 0x9BD3, 0x869B),
+            (0x8EC0, 0x7C8E, 0xC07C), (0xEBDB, 0xB2EB, 0xDBB2),
+        ]
+    )
+
+    static let nord = TerminalTheme(
+        id: "nord", name: "Nord",
+        foreground: (0.847, 0.871, 0.914),
+        background: (0.180, 0.204, 0.251),
+        selection: (0.263, 0.298, 0.369),
+        cursor: (0.847, 0.871, 0.914),
+        ansi: [
+            (0x3B42, 0x523B, 0x4252), (0xBF61, 0x6ABF, 0x616A),
+            (0xA3BE, 0x8CA3, 0xBE8C), (0xEBCB, 0x8BEB, 0xCB8B),
+            (0x81A1, 0xC181, 0xA1C1), (0xB48E, 0xADB4, 0x8EAD),
+            (0x88C0, 0xD088, 0xC0D0), (0xE5E9, 0xF0E5, 0xE9F0),
+            (0x4C56, 0x6A4C, 0x566A), (0xBF61, 0x6ABF, 0x616A),
+            (0xA3BE, 0x8CA3, 0xBE8C), (0xEBCB, 0x8BEB, 0xCB8B),
+            (0x81A1, 0xC181, 0xA1C1), (0xB48E, 0xADB4, 0x8EAD),
+            (0x8FBC, 0xBB8F, 0xBCBB), (0xECEC, 0xEFEF, 0xF4F4),
+        ]
+    )
+
+    static let defaultTheme = TerminalTheme(
+        id: "default", name: "Default",
+        foreground: (0.847, 0.847, 0.847),
+        background: (0.090, 0.090, 0.110),
+        selection: (0.263, 0.271, 0.357),
+        cursor: (0.847, 0.847, 0.847),
+        ansi: [
+            (0x0000, 0x0000, 0x0000), (0xCC00, 0x0000, 0xCC00),
+            (0x4E9A, 0x0600, 0x4E9A), (0xC4A0, 0x0000, 0xC4A0),
+            (0x3465, 0xA400, 0x3465), (0x7550, 0x7B00, 0x7550),
+            (0x0698, 0x9A00, 0x0698), (0xD3D7, 0xCF00, 0xD3D7),
+            (0x5557, 0x5300, 0x5557), (0xEF29, 0x2900, 0xEF29),
+            (0x8AE2, 0x3400, 0x8AE2), (0xFCE9, 0x4F00, 0xFCE9),
+            (0x729F, 0xCF00, 0x729F), (0xAD7F, 0xA800, 0xAD7F),
+            (0x34E2, 0xE2A2, 0x34E2), (0xEEEE, 0xEECE, 0xEEEE),
+        ]
+    )
+}

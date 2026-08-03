@@ -26,8 +26,15 @@ class TerminalManager: ObservableObject {
 
         let view = OutputAwareTerminalView(frame: .zero)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        view.nativeBackgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0)
-        view.nativeForegroundColor = NSColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1.0)
+
+        // Apply selected theme
+        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
+        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
+        view.nativeForegroundColor = theme.foregroundNSColor
+        view.nativeBackgroundColor = theme.backgroundNSColor
+        view.selectedTextBackgroundColor = theme.selectionNSColor
+        view.caretColor = theme.cursorNSColor
+        view.installColors(theme.ansiSwiftTermColors)
         view.onFirstOutput = { [weak self] in
             self?.onFirstOutput?()
         }
@@ -119,7 +126,6 @@ class TerminalManager: ObservableObject {
         }
 
         // 3. Search nvm installations across mounted volumes
-        let home = NSHomeDirectory()
         let volumes = (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []
         for vol in volumes where vol != "Macintosh HD" && !vol.hasPrefix(".") {
             let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"

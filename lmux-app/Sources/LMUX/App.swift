@@ -26,5 +26,9 @@ struct LmuxApp: App {
                     .keyboardShortcut("n", modifiers: .command)
             }
         }
+
+        Settings {
+            PreferencesView()
+        }
     }
 }
