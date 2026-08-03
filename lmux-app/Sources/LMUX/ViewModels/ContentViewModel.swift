@@ -75,6 +75,9 @@ class ContentViewModel: ObservableObject {
         if connectedSessionId == id {
             connectedSessionId = nil
         }
+        if selectedSession?.id == id {
+            selectedSession = nil
+        }
     }
 
     /// Whether the codebuddy-code process is currently running for this session.
