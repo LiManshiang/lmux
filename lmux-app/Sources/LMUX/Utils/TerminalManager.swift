@@ -7,6 +7,9 @@ class TerminalManager: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var processRunning: Bool = false
 
+    /// Called on main actor when the codebuddy-code process exits.
+    var onProcessExit: (() -> Void)?
+
     /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
     private(set) var terminalView: LocalProcessTerminalView?
 
@@ -56,6 +59,7 @@ class TerminalManager: ObservableObject {
             DispatchQueue.main.async {
                 self?.isConnected = false
                 self?.processRunning = false
+                self?.onProcessExit?()
             }
         }
 

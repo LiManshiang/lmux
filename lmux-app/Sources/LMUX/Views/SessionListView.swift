@@ -70,14 +70,20 @@ struct SessionRowView: View {
         viewModel.selectedSession?.id == session.id
     }
 
-    private var isConnected: Bool {
-        viewModel.connectedSessionId == session.id
+    private var statusDotColor: Color {
+        if viewModel.isSessionActive(session.id) {
+            return Color.orange
+        }
+        if viewModel.hasSessionCompleted(session.id) {
+            return Color.green
+        }
+        return Color.gray
     }
 
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(isConnected ? Color.green : Color.gray)
+                .fill(statusDotColor)
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {

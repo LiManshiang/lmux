@@ -22,6 +22,9 @@ class ContentViewModel: ObservableObject {
     /// Terminal pool: preserves TerminalManager instances across session switches.
     private var terminalManagers: [String: TerminalManager] = [:]
 
+    /// Sessions whose codebuddy-code process has exited (completed tasks).
+    private var completedSessionIds: Set<String> = []
+
     // MARK: - Terminal Pool
 
     /// Get or create a TerminalManager for a session.
@@ -30,6 +33,9 @@ class ContentViewModel: ObservableObject {
             return existing
         }
         let mgr = TerminalManager()
+        mgr.onProcessExit = { [weak self] in
+            self?.completedSessionIds.insert(sessionID)
+        }
         terminalManagers[sessionID] = mgr
         return mgr
     }
@@ -40,6 +46,17 @@ class ContentViewModel: ObservableObject {
             mgr.disconnect()
             terminalManagers.removeValue(forKey: sessionID)
         }
+        completedSessionIds.remove(sessionID)
+    }
+
+    /// Whether the codebuddy-code process is currently running for this session.
+    func isSessionActive(_ sessionID: String) -> Bool {
+        terminalManagers[sessionID]?.processRunning ?? false
+    }
+
+    /// Whether the codebuddy-code process has completed (exited) for this session.
+    func hasSessionCompleted(_ sessionID: String) -> Bool {
+        completedSessionIds.contains(sessionID)
     }
 
     // MARK: - Backend Management
