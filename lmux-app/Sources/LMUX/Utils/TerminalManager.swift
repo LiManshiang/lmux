@@ -85,7 +85,15 @@ class TerminalManager: ObservableObject {
         isConnected = true
     }
 
-    private nonisolated func findCodeBuddyPath() -> String {
+    private func findCodeBuddyPath() -> String {
+        // 1. Search PATH first
+        let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
+        for dir in pathDirs {
+            let p = "\(dir)/codebuddy-code"
+            if FileManager.default.isExecutableFile(atPath: p) { return p }
+        }
+
+        // 2. Try common fixed paths
         let candidates = [
             "/opt/homebrew/bin/codebuddy-code",
             "/usr/local/bin/codebuddy-code",
@@ -93,15 +101,27 @@ class TerminalManager: ObservableObject {
         for p in candidates {
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
-        // Search nvm
+
+        // 3. Search nvm installations across mounted volumes
         let home = NSHomeDirectory()
-        let nvmBase = "/Volumes/DeveloperM4P/OpenSource/nvm/versions/node"
-        if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
-            for entry in entries {
-                let p = "\(nvmBase)/\(entry)/bin/codebuddy-code"
-                if FileManager.default.isExecutableFile(atPath: p) { return p }
+        let volumes = (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []
+        for vol in volumes where vol != "Macintosh HD" && !vol.hasPrefix(".") {
+            let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"
+            if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
+                for entry in entries {
+                    let p = "\(nvmBase)/\(entry)/bin/codebuddy-code"
+                    if FileManager.default.isExecutableFile(atPath: p) { return p }
+                }
             }
         }
+
+        // 4. Check NVM_DIR from environment
+        let env = ProcessInfo.processInfo.environment
+        if let nvmDir = env["NVM_DIR"] {
+            let p = "\(nvmDir)/codebuddy-code"
+            if FileManager.default.isExecutableFile(atPath: p) { return p }
+        }
+
         return "/opt/homebrew/bin/codebuddy-code"
     }
 }

@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 5.7
 import PackageDescription
 
 let package = Package(
@@ -10,7 +10,7 @@ let package = Package(
         .executable(name: "lmux", targets: ["LMUX"])
     ],
     dependencies: [
-        .package(path: "/Users/manshiangli/Projects/SwiftTerm"),
+        .package(path: "/Volumes/Developer/CodeBuddy/Projects/lmux/SwiftTerm"),
     ],
     targets: [
         .executableTarget(
