@@ -27,7 +27,7 @@ struct SessionDetailView: View {
                             if showSplitPane {
                                 let splitMgr = viewModel.splitTerminalManager(for: sid)
                                 if splitMgr.terminalView == nil {
-                                    splitMgr.connectBash(projectDir: session.projectDir)
+                                    splitMgr.connectBash(sessionID: sid, projectDir: session.projectDir)
                                 }
                             }
                         }) {
