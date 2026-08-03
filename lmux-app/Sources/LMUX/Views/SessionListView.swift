@@ -109,6 +109,18 @@ struct SessionRowView: View {
                     .fontWeight(isSelected ? .semibold : .regular)
                     .lineLimit(1)
 
+                // Status line
+                if let mgr = manager, mgr.processRunning {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(mgr.isIdle ? Color.secondary : Color.green)
+                            .frame(width: 5, height: 5)
+                        Text(mgr.isIdle ? "idle" : "running")
+                            .font(.system(size: 10))
+                            .foregroundColor(mgr.isIdle ? .secondary : .green)
+                    }
+                }
+
                 HStack(spacing: 4) {
                     if viewModel.isSessionActive(session.id), let elapsed = manager?.formattedElapsed {
                         HStack(spacing: 2) {

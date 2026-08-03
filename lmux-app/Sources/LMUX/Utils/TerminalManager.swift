@@ -6,6 +6,7 @@ import SwiftTerm
 class TerminalManager: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var processRunning: Bool = false
+    @Published var isIdle: Bool = true
 
     /// Called on main actor when the codebuddy-code process exits.
     var onProcessExit: (() -> Void)?
@@ -19,6 +20,8 @@ class TerminalManager: ObservableObject {
     private var processGeneration: Int = 0
     private(set) var processStartTime: Date?
     private(set) var processPID: Int32 = 0
+    private var lastActivityTime: Date = Date()
+    private var idleTimer: Timer?
 
     /// Connect by spawning codebuddy-code directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?) {
@@ -39,6 +42,10 @@ class TerminalManager: ObservableObject {
         view.installColors(theme.ansiSwiftTermColors)
         view.onFirstOutput = { [weak self] in
             self?.onFirstOutput?()
+        }
+        view.onActivity = { [weak self] in
+            self?.lastActivityTime = Date()
+            self?.isIdle = false
         }
 
         // Build command
@@ -89,9 +96,23 @@ class TerminalManager: ObservableObject {
         processRunning = true
         processStartTime = Date()
         processPID = view.process.shellPid
+        lastActivityTime = Date()
+        startIdleTimer()
+    }
+
+    private func startIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.processRunning else { return }
+            if Date().timeIntervalSince(self.lastActivityTime) > 3.0 {
+                self.isIdle = true
+            }
+        }
     }
 
     func disconnect() {
+        idleTimer?.invalidate()
+        idleTimer = nil
         terminalView?.process.terminate()
         terminalView = nil
         currentSessionID = nil
@@ -171,6 +192,7 @@ class TerminalManager: ObservableObject {
 /// A LocalProcessTerminalView that notifies on first data received from the PTY.
 private class OutputAwareTerminalView: LocalProcessTerminalView {
     var onFirstOutput: (() -> Void)?
+    var onActivity: (() -> Void)?
     private var outputDetected = false
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
@@ -178,6 +200,7 @@ private class OutputAwareTerminalView: LocalProcessTerminalView {
             outputDetected = true
             onFirstOutput?()
         }
+        onActivity?()
         super.dataReceived(slice: slice)
     }
 }
