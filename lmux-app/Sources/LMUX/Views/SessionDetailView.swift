@@ -31,8 +31,7 @@ struct SessionDetailView: View {
                                 }
                             }
                         }) {
-                            Image(systemName: showSplitPane ? "rectangle.bottomhalf.inset.filled" : "rectangle.bottomhalf.inset")
-                                .font(.system(size: 14))
+                            Text(showSplitPane ? "Close Split" : "Split").font(.system(size: 11))
                         }
                         .buttonStyle(.borderless)
                         .help("Toggle bottom split pane")
