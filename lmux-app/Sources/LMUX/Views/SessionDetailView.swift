@@ -88,12 +88,21 @@ struct SessionDetailView: View {
 
         if mgr.terminalView == nil {
             let session = viewModel.sessions.first { $0.id == id }
-            mgr.connect(
-                sessionID: id,
-                projectDir: session?.projectDir ?? NSHomeDirectory(),
-                cbcSessionID: session?.cbcSessionID,
-                agentType: session?.agentType ?? .codebuddy
-            )
+            let dir = session?.projectDir ?? NSHomeDirectory()
+            let cbc = session?.cbcSessionID
+
+            if let cbc, !cbc.isEmpty {
+                // Resume existing agent session
+                mgr.connect(
+                    sessionID: id,
+                    projectDir: dir,
+                    cbcSessionID: cbc,
+                    agentType: session?.agentType ?? .codebuddy
+                )
+            } else {
+                // New session: start with bash terminal
+                mgr.connectBash(projectDir: dir)
+            }
         } else if !mgr.isConnected {
             mgr.reattach()
         }
