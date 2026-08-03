@@ -202,10 +202,15 @@ class TerminalManager: ObservableObject {
         view.caretColor = theme.cursorNSColor
         view.installColors(theme.ansiSwiftTermColors)
 
-        let bashPath = "/bin/bash"
-        let envList = ["TERM=xterm-256color", "LANG=en_US.UTF-8"]
+        let zshPath = "/bin/zsh"
 
-        view.startProcess(executable: bashPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
+        // Inherit full environment from parent process
+        var parentEnv = ProcessInfo.processInfo.environment
+        parentEnv["TERM"] = "xterm-256color"
+        parentEnv["LANG"] = "en_US.UTF-8"
+        let envList = parentEnv.map { "\($0.key)=\($0.value)" }
+
+        view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
         view.getTerminal().changeScrollback(1_000_000)
 
         self.terminalView = view
