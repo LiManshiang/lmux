@@ -11,12 +11,13 @@ const (
 	StatusCrashed Status = "crashed"
 )
 
-// Session represents a managed CodeBuddy Code session.
+// Session represents a managed agent session.
 type Session struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	ProjectDir   string    `json:"project_dir"`
 	CBCSessionID string    `json:"cbc_session_id,omitempty"`
+	AgentType    string    `json:"agent_type,omitempty"`
 	Status       Status    `json:"status"`
 	AiTitle      string    `json:"ai_title,omitempty"`
 	GitBranch    string    `json:"git_branch,omitempty"`
@@ -30,6 +31,7 @@ type CreateRequest struct {
 	ProjectDir   string `json:"project_dir"`
 	Name         string `json:"name,omitempty"`
 	CBCSessionID string `json:"cbc_session_id,omitempty"`
+	AgentType    string `json:"agent_type,omitempty"`
 }
 
 // RenameRequest is used to rename a session.
@@ -43,6 +45,7 @@ type Summary struct {
 	Name           string `json:"name"`
 	ProjectDir     string `json:"project_dir"`
 	CBCSessionID   string `json:"cbc_session_id,omitempty"`
+	AgentType      string `json:"agent_type,omitempty"`
 	Status         Status `json:"status"`
 	AiTitle        string `json:"ai_title,omitempty"`
 	GitBranch      string `json:"git_branch,omitempty"`

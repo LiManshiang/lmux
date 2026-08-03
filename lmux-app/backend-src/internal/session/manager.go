@@ -55,11 +55,17 @@ func (m *Manager) Create(req CreateRequest) (*Session, error) {
 		}
 	}
 
+	agentType := req.AgentType
+	if agentType == "" {
+		agentType = "codebuddy"
+	}
+
 	sess := &Session{
 		ID:           id,
 		Name:         name,
 		ProjectDir:   absDir,
 		CBCSessionID: cbcID,
+		AgentType:    agentType,
 		Status:       StatusStopped,
 		AiTitle:      aiTitle,
 		GitBranch:    getGitBranch(absDir),
@@ -176,6 +182,7 @@ func (m *Manager) Summaries() ([]Summary, error) {
 			Name:         s.Name,
 			ProjectDir:   s.ProjectDir,
 			CBCSessionID: s.CBCSessionID,
+			AgentType:    s.AgentType,
 			Status:       s.Status,
 			AiTitle:      s.AiTitle,
 			GitBranch:    s.GitBranch,

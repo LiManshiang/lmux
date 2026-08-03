@@ -56,6 +56,7 @@ func migrate(db *sql.DB) error {
 		name TEXT NOT NULL,
 		project_dir TEXT NOT NULL,
 		cbc_session_id TEXT DEFAULT '',
+		agent_type TEXT DEFAULT 'codebuddy',
 		status TEXT NOT NULL DEFAULT 'stopped',
 		ai_title TEXT DEFAULT '',
 		git_branch TEXT DEFAULT '',
@@ -65,7 +66,12 @@ func migrate(db *sql.DB) error {
 	);
 	`
 	_, err := db.Exec(query)
-	return err
+	if err != nil {
+		return err
+	}
+	// Add agent_type column to existing tables (migration)
+	db.Exec(`ALTER TABLE sessions ADD COLUMN agent_type TEXT DEFAULT 'codebuddy'`)
+	return nil
 }
 
 // Save inserts or updates a session record.
@@ -73,12 +79,13 @@ func (s *Store) Save(sess *Session) error {
 	sess.UpdatedAt = time.Now()
 	query := `
 	INSERT INTO sessions (id, name, project_dir, cbc_session_id,
-		status, ai_title, git_branch, pid, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		agent_type, status, ai_title, git_branch, pid, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		project_dir=excluded.project_dir,
 		cbc_session_id=excluded.cbc_session_id,
+		agent_type=excluded.agent_type,
 		status=excluded.status,
 		ai_title=excluded.ai_title,
 		git_branch=excluded.git_branch,
@@ -87,7 +94,7 @@ func (s *Store) Save(sess *Session) error {
 	`
 	_, err := s.db.Exec(query,
 		sess.ID, sess.Name, sess.ProjectDir, sess.CBCSessionID,
-		string(sess.Status), sess.AiTitle, sess.GitBranch,
+		sess.AgentType, string(sess.Status), sess.AiTitle, sess.GitBranch,
 		sess.Pid, sess.CreatedAt, sess.UpdatedAt,
 	)
 	return err
@@ -96,7 +103,7 @@ func (s *Store) Save(sess *Session) error {
 // Get retrieves a session by ID.
 func (s *Store) Get(id string) (*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		status, ai_title, git_branch, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
 		FROM sessions WHERE id = ?`
 	row := s.db.QueryRow(query, id)
 	return scanSession(row)
@@ -105,7 +112,7 @@ func (s *Store) Get(id string) (*Session, error) {
 // List returns all sessions ordered by updated_at descending.
 func (s *Store) List() ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		status, ai_title, git_branch, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
 		FROM sessions ORDER BY updated_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -133,7 +140,7 @@ func (s *Store) Delete(id string) error {
 // ListByStatus returns sessions filtered by status.
 func (s *Store) ListByStatus(status Status) ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		status, ai_title, git_branch, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
 		FROM sessions WHERE status = ? ORDER BY updated_at DESC`
 	rows, err := s.db.Query(query, string(status))
 	if err != nil {
@@ -157,7 +164,7 @@ func scanSession(row *sql.Row) (*Session, error) {
 	var status string
 	err := row.Scan(
 		&sess.ID, &sess.Name, &sess.ProjectDir, &sess.CBCSessionID,
-		&status, &sess.AiTitle, &sess.GitBranch,
+		&sess.AgentType, &status, &sess.AiTitle, &sess.GitBranch,
 		&sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err != nil {
@@ -172,7 +179,7 @@ func scanSessionFromRows(rows *sql.Rows) (*Session, error) {
 	var status string
 	err := rows.Scan(
 		&sess.ID, &sess.Name, &sess.ProjectDir, &sess.CBCSessionID,
-		&status, &sess.AiTitle, &sess.GitBranch,
+		&sess.AgentType, &status, &sess.AiTitle, &sess.GitBranch,
 		&sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err != nil {
