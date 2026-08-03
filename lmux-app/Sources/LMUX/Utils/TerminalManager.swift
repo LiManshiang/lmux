@@ -16,6 +16,7 @@ class TerminalManager: ObservableObject {
     private(set) var terminalView: LocalProcessTerminalView?
 
     private var currentSessionID: String?
+    private var processGeneration: Int = 0
 
     /// Connect by spawning codebuddy-code directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?) {
@@ -56,9 +57,15 @@ class TerminalManager: ObservableObject {
         // Start process
         view.startProcess(executable: cbcPath, args: args, environment: envList, currentDirectory: projectDir)
 
+        processGeneration += 1
+        let gen = processGeneration
+
         // Track process exit
         view.processDelegate = Delegate { [weak self] in
             DispatchQueue.main.async {
+                // Only fire exit callback for the current process generation,
+                // not stale callbacks from previously-terminated processes.
+                guard self?.processGeneration == gen else { return }
                 self?.isConnected = false
                 self?.processRunning = false
                 self?.onProcessExit?()
