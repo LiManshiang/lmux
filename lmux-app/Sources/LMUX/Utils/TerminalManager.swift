@@ -76,8 +76,8 @@ class TerminalManager: ObservableObject {
         // Start process
         view.startProcess(executable: cbcPath, args: args, environment: envList, currentDirectory: projectDir)
 
-        // Maximize scrollback buffer for full history viewing (default is 500)
-        view.getTerminal().changeScrollback(50_000)
+        // Unlimited scrollback for full session history
+        view.getTerminal().changeScrollback(1_000_000)
 
         processGeneration += 1
         let gen = processGeneration
