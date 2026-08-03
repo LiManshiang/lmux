@@ -31,7 +31,7 @@ struct SessionDetailView: View {
                                 }
                             }
                         }) {
-                            Image(systemName: showSplitPane ? "rectangle.split.1x2.fill" : "rectangle.split.1x2")
+                            Image(systemName: showSplitPane ? "rectangle.bottomhalf.inset.filled" : "rectangle.bottomhalf.inset")
                                 .font(.system(size: 14))
                         }
                         .buttonStyle(.borderless)
