@@ -17,6 +17,8 @@ class TerminalManager: ObservableObject {
 
     private var currentSessionID: String?
     private var processGeneration: Int = 0
+    private(set) var processStartTime: Date?
+    private(set) var processPID: Int32 = 0
 
     /// Connect by spawning codebuddy-code directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?) {
@@ -85,6 +87,8 @@ class TerminalManager: ObservableObject {
         self.terminalView = view
         isConnected = true
         processRunning = true
+        processStartTime = Date()
+        processPID = view.process.shellPid
     }
 
     func disconnect() {
@@ -93,6 +97,8 @@ class TerminalManager: ObservableObject {
         currentSessionID = nil
         isConnected = false
         processRunning = false
+        processStartTime = nil
+        processPID = 0
     }
 
     /// Detach without killing: disconnect UI but keep process running.
@@ -106,6 +112,20 @@ class TerminalManager: ObservableObject {
     func reattach() {
         guard terminalView != nil else { return }
         isConnected = true
+    }
+
+    /// Formatted elapsed time since process started, or nil if not running.
+    var formattedElapsed: String? {
+        guard let start = processStartTime, processRunning else { return nil }
+        let elapsed = Int(Date().timeIntervalSince(start))
+        if elapsed < 60 { return "\(elapsed)s" }
+        if elapsed < 3600 { return "\(elapsed / 60)m \(elapsed % 60)s" }
+        return "\(elapsed / 3600)h \((elapsed % 3600) / 60)m"
+    }
+
+    /// Whether the session needs user attention (task completed in background).
+    var needsAttention: Bool {
+        !isConnected && !processRunning && terminalView != nil
     }
 
     private func findCodeBuddyPath() -> String {

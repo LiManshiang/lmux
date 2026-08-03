@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import UserNotifications
 
 @MainActor
 class ContentViewModel: ObservableObject {
@@ -26,6 +27,8 @@ class ContentViewModel: ObservableObject {
     @Published var activeSessionIds: Set<String> = []
     /// Sessions whose codebuddy-code process has exited (completed tasks).
     @Published var completedSessionIds: Set<String> = []
+    /// Sessions that need user attention (completed while in background).
+    @Published var attentionSessionIds: Set<String> = []
 
     // MARK: - Terminal Pool
 
@@ -41,6 +44,10 @@ class ContentViewModel: ObservableObject {
         mgr.onProcessExit = { [weak self] in
             self?.activeSessionIds.remove(sessionID)
             self?.completedSessionIds.insert(sessionID)
+            if self?.selectedSession?.id != sessionID {
+                self?.attentionSessionIds.insert(sessionID)
+                self?.sendCompletionNotification(sessionID: sessionID)
+            }
         }
         terminalManagers[sessionID] = mgr
         return mgr
@@ -54,6 +61,7 @@ class ContentViewModel: ObservableObject {
         }
         completedSessionIds.remove(sessionID)
         activeSessionIds.remove(sessionID)
+        attentionSessionIds.remove(sessionID)
     }
 
     /// Whether the codebuddy-code process is currently running for this session.
@@ -64,6 +72,30 @@ class ContentViewModel: ObservableObject {
     /// Whether the codebuddy-code process has completed (exited) for this session.
     func hasSessionCompleted(_ sessionID: String) -> Bool {
         completedSessionIds.contains(sessionID)
+    }
+
+    /// Whether this session needs user attention (completed in background).
+    func needsSessionAttention(_ sessionID: String) -> Bool {
+        attentionSessionIds.contains(sessionID)
+    }
+
+    /// Clear the attention flag when user focuses the session.
+    func clearSessionAttention(_ sessionID: String) {
+        attentionSessionIds.remove(sessionID)
+    }
+
+    private func sendCompletionNotification(sessionID: String) {
+        let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
+        let content = UNMutableNotificationContent()
+        content.title = "Task Complete"
+        content.body = "\(name) has finished."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "lmux-complete-\(sessionID)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     // MARK: - Backend Management
@@ -285,6 +317,7 @@ class ContentViewModel: ObservableObject {
             connectedSessionId = nil
         }
         selectedSession = session
+        clearSessionAttention(session.id)
     }
 
     func createSession(projectDir: String, name: String?, cbcSessionID: String?) async {
