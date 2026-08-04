@@ -435,8 +435,9 @@ class ContentViewModel: ObservableObject {
         let entries = SessionRestore.loadAll()
         guard !entries.isEmpty else { return }
 
+        // Batch-create any sessions missing from the backend.
+        var needsRefresh = false
         for entry in entries {
-            // Ensure session exists in backend; create if missing
             if sessions.first(where: { $0.id == entry.sessionID }) == nil {
                 _ = try? await api.createSession(
                     projectDir: entry.projectDir,
@@ -444,11 +445,13 @@ class ContentViewModel: ObservableObject {
                     cbcSessionID: entry.cbcSessionID,
                     agentType: entry.agentType ?? .codebuddy
                 )
-                await refreshSessions()
+                needsRefresh = true
             }
+        }
+        if needsRefresh { await refreshSessions() }
 
+        for entry in entries {
             // Re-fetch the backend session so we can fall back to its cbcSessionID
-            // if the restore.json entry was corrupted or saved without it.
             let backend = sessions.first(where: { $0.id == entry.sessionID })
 
             // Prefer restore.json cbcSessionID, but fall back to backend if missing.
