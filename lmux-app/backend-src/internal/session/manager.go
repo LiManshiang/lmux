@@ -74,6 +74,9 @@ func (m *Manager) Create(req CreateRequest) (*Session, error) {
 		return nil, fmt.Errorf("save session: %w", err)
 	}
 
+	// Invalidate scanner cache so newly created sessions are visible.
+	codebuddy.InvalidateCache()
+
 	return sess, nil
 }
 
