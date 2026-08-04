@@ -51,38 +51,33 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                // Main terminal — always fills the entire area, never resizes.
-                // Using ZStack so the split pane overlays the bottom without
-                // changing the main terminal's frame, avoiding SIGWINCH that
-                // would cause the agent to re-render its display.
-                ZStack(alignment: .bottom) {
-                    PTYTerminalView(manager: mgr)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Main terminal — fills available space.
+                // The split-pane area below has a FIXED outer frame height that
+                // never changes when toggling visibility, so the main terminal
+                // never resizes and no SIGWINCH is sent to the agent.
+                PTYTerminalView(manager: mgr)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // Split pane overlay — always in view tree, zero-height when hidden.
-                    VStack(spacing: 0) {
-                        VStack(spacing: 0) {
-                            Rectangle()
-                                .fill(Color.secondary.opacity(0.3))
-                                .frame(height: showSplitPane ? dividerHeight : 0)
-                                .gesture(showSplitPane ? DragGesture().onChanged { value in
-                                    let newHeight = terminalHeight - value.translation.height
-                                    terminalHeight = max(80, min(500, newHeight))
-                                } : nil)
-                                .onHover { inside in
-                                    if inside && showSplitPane { NSCursor.resizeUpDown.push() }
-                                    else { NSCursor.pop() }
-                                }
-
-                            PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                                .frame(height: showSplitPane ? terminalHeight : 0)
-                                .clipped()
+                // Split pane — always present, outer frame height fixed.
+                // Visibility is controlled by inner content heights (0 or actual).
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(height: showSplitPane ? dividerHeight : 0)
+                        .gesture(showSplitPane ? DragGesture().onChanged { value in
+                            let newHeight = terminalHeight - value.translation.height
+                            terminalHeight = max(80, min(500, newHeight))
+                        } : nil)
+                        .onHover { inside in
+                            if inside && showSplitPane { NSCursor.resizeUpDown.push() }
+                            else { NSCursor.pop() }
                         }
-                        .frame(height: showSplitPane ? terminalHeight + dividerHeight : 0)
+
+                    PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                        .frame(height: showSplitPane ? terminalHeight : 0)
                         .clipped()
-                    }
-                    .allowsHitTesting(showSplitPane)
                 }
+                .frame(height: terminalHeight + dividerHeight)
             }
         }
         .onAppear {
