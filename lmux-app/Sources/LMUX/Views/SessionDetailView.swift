@@ -96,13 +96,18 @@ struct SessionDetailView: View {
         }
         .onAppear {
             showSplitPane = false
-            if let id = viewModel.selectedSession?.id {
+            // Only connect if not already managing a terminal for this session.
+            // Prevents session restarts during polling-triggered view updates.
+            if let id = viewModel.selectedSession?.id,
+               viewModel.connectedSessionId != id {
                 connectToSession(id: id)
             }
         }
         .onChange(of: viewModel.selectedSession?.id) { newID in
             showSplitPane = false
             guard let id = newID else { return }
+            // Skip if already connected to prevent unnecessary session restarts
+            guard viewModel.connectedSessionId != id else { return }
             connectToSession(id: id)
         }
     }
