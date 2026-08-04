@@ -69,7 +69,6 @@ struct ContentView: View {
     private var detailView: some View {
         if viewModel.selectedSession != nil {
             SessionDetailView()
-                .id(viewModel.connectedSessionId ?? "no_session")
         } else if !viewModel.backendRunning && !viewModel.backendStarting {
             BackendNotRunningView()
         } else if !viewModel.backendRunning {
