@@ -64,13 +64,21 @@ func migrate(db *sql.DB) error {
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL
 	);
+	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+	CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
 	`
 	_, err := db.Exec(query)
 	if err != nil {
 		return err
 	}
-	// Add agent_type column to existing tables (migration)
-	db.Exec(`ALTER TABLE sessions ADD COLUMN agent_type TEXT DEFAULT 'codebuddy'`)
+
+	// Migration: add agent_type column if upgrading from older schema.
+	var version int
+	db.QueryRow("PRAGMA user_version").Scan(&version)
+	if version < 1 {
+		db.Exec("ALTER TABLE sessions ADD COLUMN agent_type TEXT DEFAULT 'codebuddy'")
+		db.Exec("PRAGMA user_version = 1")
+	}
 	return nil
 }
 
@@ -129,6 +137,37 @@ func (s *Store) List() ([]*Session, error) {
 		sessions = append(sessions, sess)
 	}
 	return sessions, rows.Err()
+}
+
+// ListSummaries returns lightweight session summaries for the polling path,
+// selecting only the fields actually used by the frontend.
+func (s *Store) ListSummaries() ([]Summary, error) {
+	query := `SELECT id, name, project_dir, cbc_session_id,
+		agent_type, status, ai_title, git_branch
+		FROM sessions ORDER BY updated_at DESC`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []Summary
+	for rows.Next() {
+		var sm Summary
+		var statusStr string
+		var cbcID, agentType, aiTitle, gitBranch sql.NullString
+		if err := rows.Scan(&sm.ID, &sm.Name, &sm.ProjectDir,
+			&cbcID, &agentType, &statusStr, &aiTitle, &gitBranch); err != nil {
+			return nil, err
+		}
+		sm.CBCSessionID = cbcID.String
+		sm.AgentType = agentType.String
+		sm.Status = Status(statusStr)
+		sm.AiTitle = aiTitle.String
+		sm.GitBranch = gitBranch.String
+		summaries = append(summaries, sm)
+	}
+	return summaries, rows.Err()
 }
 
 // Delete removes a session by ID.

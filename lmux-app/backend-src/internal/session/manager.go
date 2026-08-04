@@ -171,24 +171,7 @@ func (m *Manager) RestoreAll() ([]*Session, error) {
 
 // Summaries returns lightweight summaries for all sessions.
 func (m *Manager) Summaries() ([]Summary, error) {
-	sessions, err := m.List()
-	if err != nil {
-		return nil, err
-	}
-	summaries := make([]Summary, len(sessions))
-	for i, s := range sessions {
-		summaries[i] = Summary{
-			ID:           s.ID,
-			Name:         s.Name,
-			ProjectDir:   s.ProjectDir,
-			CBCSessionID: s.CBCSessionID,
-			AgentType:    s.AgentType,
-			Status:       s.Status,
-			AiTitle:      s.AiTitle,
-			GitBranch:    s.GitBranch,
-		}
-	}
-	return summaries, nil
+	return m.store.ListSummaries()
 }
 
 func getGitBranch(dir string) string {
