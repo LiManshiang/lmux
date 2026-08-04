@@ -8,11 +8,16 @@ struct ContentView: View {
         HStack(spacing: 0) {
             // Sidebar
             VStack(spacing: 0) {
-                Text("Sessions")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                HStack {
+                    Text("Sessions")
+                        .font(.headline)
+                    Spacer()
+                    Text(AppVersion.current)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
                 Divider()
 
