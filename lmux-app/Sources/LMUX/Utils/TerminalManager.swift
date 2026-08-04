@@ -258,11 +258,12 @@ class TerminalManager: ObservableObject {
             let currentPID = self.processPID
             Self.detectionQueue.async { [weak self] in
                 guard let self else { return }
-                let detected = self.detectRunningAgent(shellPID: currentPID)
+                let result = self.detectRunningAgent(shellPID: currentPID)
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, let detected, detected != self.detectedAgentType else { return }
-                    self.detectedAgentType = detected
-                    SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
+                    guard let self, let result else { return }
+                    guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
+                    self.detectedAgentType = result.agentType
+                    SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
                 }
             }
         }
@@ -278,7 +279,7 @@ class TerminalManager: ObservableObject {
 
     /// Walk child processes of `shellPID` to find known agent executables.
     /// Runs on background queue; does not access main-actor state.
-    nonisolated private func detectRunningAgent(shellPID: Int32) -> AgentType? {
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?)? {
         // Get direct children of the shell process.
         guard let childPIDs = getChildPIDs(of: shellPID) else { return nil }
 
@@ -289,14 +290,32 @@ class TerminalManager: ObservableObject {
 
             // Detect Claude.
             if lower.contains("claude") && !lower.contains("claudecode") {
-                return .claude
+                return (.claude, extractSessionID(from: cmdLine, agent: "claude"))
             }
             // Detect CodeBuddy.
             if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
-                return .codebuddy
+                return (.codebuddy, extractSessionID(from: cmdLine, agent: "codebuddy"))
             }
         }
 
+        return nil
+    }
+
+    /// Extract the --session-id argument from an agent command line.
+    nonisolated private func extractSessionID(from cmdLine: String, agent: String) -> String? {
+        // codebuddy: codebuddy-code --permission-mode auto --session-id <UUID>
+        // claude:     claude --dangerously-skip-permissions --session-id <UUID>
+        let components = cmdLine.components(separatedBy: " ")
+        for i in 0..<(components.count - 1) {
+            let arg = components[i]
+            if arg == "--session-id" || arg.hasPrefix("--session-id=") {
+                if arg.contains("=") {
+                    return arg.components(separatedBy: "=").last
+                } else {
+                    return components[i + 1]
+                }
+            }
+        }
         return nil
     }
 
