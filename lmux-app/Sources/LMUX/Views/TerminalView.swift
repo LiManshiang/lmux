@@ -23,7 +23,7 @@ struct PTYTerminalView: NSViewRepresentable {
             terminal.autoresizingMask = [.width, .height]
             nsView.addSubview(terminal)
             nsView.window?.makeFirstResponder(terminal)
-        } else {
+        } else if terminal.frame.size != nsView.bounds.size {
             terminal.frame = nsView.bounds
         }
     }
