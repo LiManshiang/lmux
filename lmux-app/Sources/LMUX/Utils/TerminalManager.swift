@@ -227,6 +227,8 @@ class TerminalManager: ObservableObject {
 }
 
 /// A LocalProcessTerminalView that notifies on first data received from the PTY.
+/// Also filters CSI 3 J (clear scrollback) escape sequences to preserve the
+/// entire conversation history in the terminal buffer.
 private class OutputAwareTerminalView: LocalProcessTerminalView {
     var onFirstOutput: (() -> Void)?
     var onActivity: (() -> Void)?
@@ -238,7 +240,24 @@ private class OutputAwareTerminalView: LocalProcessTerminalView {
             onFirstOutput?()
         }
         onActivity?()
-        super.dataReceived(slice: slice)
+
+        // Strip CSI 3 J (clear scrollback) to preserve conversation history.
+        // This is the escape sequence: ESC [ 3 J = 0x1B 0x5B 0x33 0x4A
+        var data = Array(slice)
+        var i = 0
+        while i < data.count {
+            if i + 3 < data.count,
+               data[i] == 0x1B, data[i + 1] == 0x5B,
+               data[i + 2] == 0x33, data[i + 3] == 0x4A {
+                data.removeSubrange(i..<(i + 4))
+            } else {
+                i += 1
+            }
+        }
+
+        if !data.isEmpty {
+            super.dataReceived(slice: data[...])
+        }
     }
 }
 
