@@ -118,9 +118,10 @@ struct SessionDetailView: View {
 
             // Check restore entry to determine if this session was previously running an agent
             let restoreEntry = SessionRestore.loadAll().first { $0.sessionID == id }
-            let shouldRestoreAgent = restoreEntry?.launchMode == .agent || (cbc != nil && !cbc!.isEmpty)
+            let hasCbcID = cbc != nil && !cbc!.isEmpty
 
-            if shouldRestoreAgent {
+            if hasCbcID {
+                // Resume with known session ID (full history restore)
                 mgr.connect(
                     sessionID: id,
                     projectDir: dir,
@@ -128,7 +129,7 @@ struct SessionDetailView: View {
                     agentType: agent
                 )
             } else {
-                // New session: start with bash terminal
+                // New session or previously bash-only: start with bash terminal
                 mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
             }
         } else if !mgr.isConnected {

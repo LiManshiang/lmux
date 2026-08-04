@@ -451,18 +451,16 @@ class ContentViewModel: ObservableObject {
 
             let mgr = terminalManager(for: entry.sessionID)
 
-            // Determine how to restore based on the launch mode and session state.
-            // - agent mode with cbcSessionID → resume agent session via connect()
-            // - agent mode without cbcSessionID → start agent fresh via connect()
-            // - bash mode → restore bash terminal via connectBash()
-            // - old entries without launchMode default to bash for safety
-            if entry.launchMode == .agent {
+            // Agent restore only when we have a cbcSessionID to resume history.
+            // Without it, restore as bash so the user's terminal session is preserved.
+            if entry.launchMode == .agent, let cbc = entry.cbcSessionID, !cbc.isEmpty {
                 mgr.connect(
                     sessionID: entry.sessionID,
                     projectDir: entry.projectDir,
-                    cbcSessionID: entry.cbcSessionID,
+                    cbcSessionID: cbc,
                     agentType: entry.agentType ?? .codebuddy
                 )
+            } else {
             } else {
                 mgr.connectBash(
                     sessionID: entry.sessionID,
