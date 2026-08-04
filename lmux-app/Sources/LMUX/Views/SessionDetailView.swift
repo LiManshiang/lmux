@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var splitRatio: CGFloat = 0.2
+    @State private var splitRatio: CGFloat = 0.25
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,8 +53,8 @@ struct SessionDetailView: View {
 
             if showSplitPane {
                 GeometryReader { geo in
-                    let topHeight = max(60, geo.size.height * splitRatio)
-                    let bottomHeight = max(60, geo.size.height - topHeight - dividerHeight)
+                    let bottomHeight = max(60, geo.size.height * splitRatio)
+                    let topHeight = max(60, geo.size.height - bottomHeight - dividerHeight)
 
                     VStack(spacing: 0) {
                         PTYTerminalView(manager: mgr)
