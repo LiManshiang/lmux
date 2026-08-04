@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var splitRatio: CGFloat = 0.3
+    @State private var splitRatio: CGFloat = 0.2
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,10 +59,11 @@ struct SessionDetailView: View {
                         VStack(spacing: 0) {
                             PTYTerminalView(manager: mgr)
                                 .frame(width: geo.size.width, height: topHeight)
+                                .clipped()
 
                             // Draggable divider
                             Rectangle()
-                                .fill(Color.secondary.opacity(0.3))
+                                .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
                                 .frame(height: dividerHeight)
                                 .contentShape(Rectangle())
                                 .gesture(
@@ -82,7 +83,9 @@ struct SessionDetailView: View {
 
                             PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
                                 .frame(width: geo.size.width, height: bottomHeight)
+                                .clipped()
                         }
+                        .animation(.none, value: splitRatio)
                     }
                 } else {
                     PTYTerminalView(manager: mgr)
