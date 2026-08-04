@@ -269,10 +269,13 @@ class TerminalManager: ObservableObject {
         }
         // Fire immediately, then again at 3s and 10s for quick detection (agent might not be running yet).
         agentDetectionTimer?.fire()
+
+        let detectionPID = self.processPID
+        let alreadyDetected = self.detectedAgentType != nil
+
         Self.detectionQueue.asyncAfter(deadline: .now() + 3) { [weak self] in
-            guard let self, self.processRunning, self.processPID > 0 else { return }
-            if self.detectedAgentType != nil { return }  // already detected
-            let result = self.detectRunningAgent(shellPID: self.processPID)
+            guard let self, !alreadyDetected else { return }
+            let result = self.detectRunningAgent(shellPID: detectionPID)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result else { return }
                 self.detectedAgentType = result.agentType
@@ -280,9 +283,8 @@ class TerminalManager: ObservableObject {
             }
         }
         Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
-            guard let self, self.processRunning, self.processPID > 0 else { return }
-            if self.detectedAgentType != nil { return }
-            let result = self.detectRunningAgent(shellPID: self.processPID)
+            guard let self, !alreadyDetected else { return }
+            let result = self.detectRunningAgent(shellPID: detectionPID)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result else { return }
                 self.detectedAgentType = result.agentType
