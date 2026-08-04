@@ -49,7 +49,6 @@ class TerminalManager: ObservableObject {
         }
         view.onActivity = { [weak self] in
             self?.lastActivityTime = Date()
-            self?.isIdle = false
         }
 
         // Build command
@@ -128,8 +127,9 @@ class TerminalManager: ObservableObject {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self, self.processRunning else { return }
-            if Date().timeIntervalSince(self.lastActivityTime) > 3.0 {
-                self.isIdle = true
+            let idle = Date().timeIntervalSince(self.lastActivityTime) > 3.0
+            if self.isIdle != idle {
+                self.isIdle = idle
             }
         }
     }
@@ -210,7 +210,6 @@ class TerminalManager: ObservableObject {
         }
         view.onActivity = { [weak self] in
             self?.lastActivityTime = Date()
-            self?.isIdle = false
         }
 
         let zshPath = "/bin/zsh"
