@@ -15,12 +15,12 @@ struct PTYTerminalView: NSViewRepresentable {
         container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
         container.postsBoundsChangedNotifications = true
 
-        // Track live-resize start/end via bounds change notifications
-        context.coordinator.resizeObserver = NotificationCenter.default.addObserver(
+        let coordinator = context.coordinator
+        coordinator.resizeObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
             object: container,
             queue: .main
-        ) { [weak container, weak coordinator, weak manager] _ in
+        ) { [weak container, weak coordinator, weak manager = manager] _ in
             guard let container,
                   let coordinator,
                   let terminal = manager?.terminalView,
@@ -95,7 +95,7 @@ struct PTYTerminalView: NSViewRepresentable {
 
             terminal.frame.origin = NSPoint(x: dx, y: dy)
             terminal.frame.size = realSize
-            terminal.layer?.affineTransform = CGAffineTransform(scaleX: scale, y: scale)
+            terminal.layer?.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
 
             CATransaction.commit()
         }
@@ -107,7 +107,7 @@ struct PTYTerminalView: NSViewRepresentable {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
 
-            terminal.layer?.affineTransform = .identity
+            terminal.layer?.setAffineTransform(.identity)
             terminal.frame.origin = .zero
             terminal.frame.size = size
 
