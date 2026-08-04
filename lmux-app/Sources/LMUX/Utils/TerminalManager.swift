@@ -234,6 +234,9 @@ private class OutputAwareTerminalView: LocalProcessTerminalView {
     var onActivity: (() -> Void)?
     private var outputDetected = false
 
+    /// Remaining bytes from the previous dataReceived call (partial escape sequence).
+    private var pending = Data()
+
     override func dataReceived(slice: ArraySlice<UInt8>) {
         if !outputDetected {
             outputDetected = true
@@ -241,22 +244,56 @@ private class OutputAwareTerminalView: LocalProcessTerminalView {
         }
         onActivity?()
 
-        // Strip CSI 3 J (clear scrollback) to preserve conversation history.
-        // This is the escape sequence: ESC [ 3 J = 0x1B 0x5B 0x33 0x4A
-        var data = Array(slice)
+        // Prepend any pending bytes from the previous partial call.
+        var data = pending + Data(slice)
+
+        // Filter out CSI 3 J sequences. This is the escape sequence that clears
+        // the terminal's scrollback buffer. We look for ESC [ (optional private
+        // chars) 3 J and remove the entire sequence.
+        //
+        // CSI format: ESC [ (0x20-0x3F)* (0x30-0x3F)* final(0x40-0x7E)
+        // CSI 3 J:     ESC [ ... 3 ... J where 3 is a parameter
+        //
+        // Handle cross-boundary: save up to 15 trailing bytes so a sequence
+        // split across dataReceived calls is reassembled.
+        var output = Data()
         var i = 0
+        let esc: UInt8 = 0x1B
+        let bracket: UInt8 = 0x5B
+
         while i < data.count {
-            if i + 3 < data.count,
-               data[i] == 0x1B, data[i + 1] == 0x5B,
-               data[i + 2] == 0x33, data[i + 3] == 0x4A {
-                data.removeSubrange(i..<(i + 4))
-            } else {
-                i += 1
+            if data[i] == esc, i + 1 < data.count, data[i + 1] == bracket {
+                // Find the end of the CSI sequence (final byte in 0x40-0x7E).
+                var end = i + 2
+                while end < data.count && data[end] < 0x40 {
+                    end += 1
+                }
+                if end < data.count, data[end] >= 0x40, data[end] <= 0x7E {
+                    let finalByte = data[end]
+                    // Check if this is a J final byte with parameter 3.
+                    if finalByte == 0x4A {
+                        let params = data[(i + 2)..<end]
+                        let isClearScrollback = params.contains(0x33) // ASCII '3'
+                        if isClearScrollback {
+                            i = end + 1  // skip entire CSI 3 J sequence
+                            continue
+                        }
+                    }
+                }
             }
+            output.append(data[i])
+            i += 1
         }
 
-        if !data.isEmpty {
-            super.dataReceived(slice: data[...])
+        // Keep the last few bytes as pending — they might be part of a split
+        // escape sequence that will complete in the next dataReceived call.
+        let keep = min(15, output.count)
+        let split = output.count - keep
+        if split > 0 {
+            super.dataReceived(slice: Array(output[..<split])[...])
+            pending = Data(output[split...])
+        } else {
+            pending = Data(output)
         }
     }
 }
