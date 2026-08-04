@@ -242,35 +242,28 @@ class ContentViewModel: ObservableObject {
             if done || error != nil { dispatchIO.close() }
         }
 
-        // wait for backend to print token (with timeout)
-        let start = Date()
-        while (loadToken() == nil || loadAddr() == nil) && Date().timeIntervalSince(start) < 10 {
-            try? await Task.sleep(nanoseconds: 200_000_000)
+        // Wait for backend to be ready (single loop, 1s interval, 20s timeout).
+        for _ in 0..<20 {
+            if let token = loadToken(), let addr = loadAddr() {
+                api.configure(addr: addr, token: token)
+                if await api.healthCheck() {
+                    dispatchIO.close()
+                    backendRunning = true
+                    backendStarting = false
+                    statusMessage = nil
+                    await refreshSessions()
+                    await restoreRunningSessions()
+                    startPolling()
+                    return
+                }
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
         dispatchIO.close()
 
-        let token = loadToken() ?? ""
-        let addr = loadAddr() ?? "127.0.0.1:19680"
-        api.configure(addr: addr, token: token)
-
-        // wait for backend to be ready
-        for i in 0..<15 {
-            if await api.healthCheck() {
-                backendRunning = true
-                backendStarting = false
-                statusMessage = nil
-                await refreshSessions()
-                await restoreRunningSessions()
-                startPolling()
-                return
-            }
-            statusMessage = "Waiting for backend... (\(i + 1)/15)"
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
         backendStarting = false
         backendRunning = false
-        errorMessage = "Backend failed to start on \(addr)"
+        errorMessage = "Backend failed to start on \(loadAddr() ?? "127.0.0.1:19680")"
         statusMessage = "Backend failed"
     }
 
@@ -319,6 +312,12 @@ class ContentViewModel: ObservableObject {
         do {
             let previousSelection = selectedSession?.id
             let (_, summaries) = try await api.listSessions()
+
+            // Avoid triggering SwiftUI diff on every poll when nothing changed.
+            let newIDs = Set(summaries.map { $0.id })
+            let oldIDs = Set(sessions.map { $0.id })
+            guard newIDs != oldIDs else { return }
+
             sessions = summaries
 
             // preserve selection across refresh
@@ -499,7 +498,7 @@ class ContentViewModel: ObservableObject {
 
     private func startPolling() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshSessions()
             }
