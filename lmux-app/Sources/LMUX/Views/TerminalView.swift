@@ -13,55 +13,33 @@ struct PTYTerminalView: NSViewRepresentable {
         let container = NSView(frame: .zero)
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
-        container.postsBoundsChangedNotifications = true
-
-        let coordinator = context.coordinator
-        coordinator.resizeObserver = NotificationCenter.default.addObserver(
-            forName: NSView.boundsDidChangeNotification,
-            object: container,
-            queue: .main
-        ) { [weak container, weak coordinator, weak manager = manager] _ in
-            guard let container,
-                  let coordinator,
-                  let terminal = manager?.terminalView,
-                  manager?.isConnected == true,
-                  terminal.superview === container
-            else { return }
-
-            let newSize = container.bounds.size
-            guard terminal.frame.size != newSize else { return }
-
-            if container.inLiveResize {
-                coordinator.applyStretchTransform(terminal: terminal, toFill: newSize)
-            } else {
-                coordinator.applyFinalSize(terminal: terminal, size: newSize)
-            }
-        }
-
         return container
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         guard let terminal = manager.terminalView, manager.isConnected else {
             nsView.subviews.forEach { $0.removeFromSuperview() }
-            context.coordinator.savedSize = nil
+            context.coordinator.clear()
             return
         }
 
         if terminal.superview !== nsView {
             nsView.subviews.forEach { $0.removeFromSuperview() }
-            context.coordinator.savedSize = nil
+            context.coordinator.clear()
             terminal.frame = nsView.bounds
             terminal.autoresizingMask = []
             nsView.addSubview(terminal)
             nsView.window?.makeFirstResponder(terminal)
+            return
         }
-    }
 
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        if let observer = coordinator.resizeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            coordinator.resizeObserver = nil
+        let containerSize = nsView.bounds.size
+        guard containerSize != terminal.frame.size else { return }
+
+        if nsView.window?.inLiveResize == true {
+            context.coordinator.stretch(terminal: terminal, to: containerSize)
+        } else {
+            context.coordinator.snapToFinal(terminal: terminal, size: containerSize)
         }
     }
 
@@ -71,46 +49,44 @@ struct PTYTerminalView: NSViewRepresentable {
 
     final class Coordinator {
         var savedSize: NSSize?
-        var resizeObserver: NSObjectProtocol?
 
-        /// During live resize, visually stretch the content via transform instead
-        /// of triggering TIOCSWINSZ + buffer reflow + Metal redraw.
-        func applyStretchTransform(terminal: NSView, toFill containerSize: NSSize) {
-            // Save the "real" size so we know where to snap back
+        func clear() {
+            savedSize = nil
+        }
+
+        /// Live resize: keep real pixel size, visually stretch with CATransform.
+        func stretch(terminal: NSView, to containerSize: NSSize) {
             if savedSize == nil { savedSize = terminal.frame.size }
+            guard let real = savedSize, real.width > 0, real.height > 0 else { return }
 
-            guard let realSize = savedSize, realSize.width > 0, realSize.height > 0 else { return }
+            let sx = containerSize.width / real.width
+            let sy = containerSize.height / real.height
+            let scale = min(sx, sy)
+            let dx = (containerSize.width - real.width * scale) / 2
+            let dy = (containerSize.height - real.height * scale) / 2
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-
-            // Position centered, then scale to fill container
-            let sx = containerSize.width / realSize.width
-            let sy = containerSize.height / realSize.height
-            let scale = min(sx, sy)
-            let scaledW = realSize.width * scale
-            let scaledH = realSize.height * scale
-            let dx = (containerSize.width - scaledW) / 2
-            let dy = (containerSize.height - scaledH) / 2
-
             terminal.frame.origin = NSPoint(x: dx, y: dy)
-            terminal.frame.size = realSize
+            terminal.frame.size = real
             terminal.layer?.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
-
             CATransaction.commit()
         }
 
-        /// Resize ends: remove transform, apply exact frame (triggers TIOCSWINSZ once).
-        func applyFinalSize(terminal: NSView, size: NSSize) {
+        /// Resize ended: remove transform, apply exact frame (TIOCSWINSZ once).
+        func snapToFinal(terminal: NSView, size: NSSize) {
+            let wasStretched = savedSize != nil
             savedSize = nil
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
 
-            terminal.layer?.setAffineTransform(.identity)
-            terminal.frame.origin = .zero
-            terminal.frame.size = size
+            if wasStretched {
+                terminal.layer?.setAffineTransform(.identity)
+                terminal.frame.origin = .zero
+            }
 
+            terminal.frame.size = size
             CATransaction.commit()
         }
     }
