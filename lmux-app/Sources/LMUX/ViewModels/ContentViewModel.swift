@@ -311,7 +311,7 @@ class ContentViewModel: ObservableObject {
 
         do {
             let previousSelection = selectedSession?.id
-            let (_, summaries) = try await api.listSessions()
+            let summaries = try await api.listSessions()
 
             // Avoid triggering SwiftUI diff on every poll when nothing changed.
             let newIDs = Set(summaries.map { $0.id })
