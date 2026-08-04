@@ -113,7 +113,9 @@ struct SessionDetailView: View {
                     agentType: agent
                 )
             } else {
-                mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
+                // New session without history: start agent directly with proper
+                // launch args (--permission-mode auto etc.), not bash.
+                mgr.connect(sessionID: id, projectDir: dir, cbcSessionID: nil, agentType: agent)
             }
         } else if !mgr.isConnected {
             mgr.reattach()

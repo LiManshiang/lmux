@@ -488,9 +488,11 @@ class ContentViewModel: ObservableObject {
                     agentType: entry.agentType ?? .codebuddy
                 )
             } else {
-                mgr.connectBash(
+                // New session without history: start agent with proper launch args.
+                mgr.connect(
                     sessionID: entry.sessionID,
                     projectDir: entry.projectDir,
+                    cbcSessionID: nil,
                     agentType: entry.agentType ?? .codebuddy
                 )
             }
