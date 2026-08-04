@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/manshiangli/cbsm/internal/codebuddy"
 	"github.com/manshiangli/cbsm/internal/session"
 )
 
@@ -142,4 +143,21 @@ func extractIDFromPath(path, action string) string {
 		return parts[0]
 	}
 	return ""
+}
+
+// FindCodebuddySessionByProject looks up the most recent codebuddy session ID
+// for a project directory by scanning JSONL files.
+func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ProjectDir string `json:"project_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectDir == "" {
+		writeError(w, http.StatusBadRequest, "invalid project_dir")
+		return
+	}
+
+	sessionID := codebuddy.FindRecentSessionForProject(body.ProjectDir)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id": sessionID,
+	})
 }

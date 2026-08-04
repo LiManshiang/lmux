@@ -117,6 +117,24 @@ class APIClient {
         return resp.restored
     }
 
+    func findCodebuddySession(projectDir: String) async throws -> String? {
+        struct Body: Codable {
+            let projectDir: String
+            enum CodingKeys: String, CodingKey {
+                case projectDir = "project_dir"
+            }
+        }
+        let data = try await post("/api/codebuddy/find-session", body: Body(projectDir: projectDir))
+        struct Response: Codable {
+            let sessionID: String?
+            enum CodingKeys: String, CodingKey {
+                case sessionID = "session_id"
+            }
+        }
+        let resp = try decode(Response.self, from: data)
+        return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     // MARK: - Health
 
     func healthCheck() async -> Bool {

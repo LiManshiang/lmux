@@ -221,3 +221,21 @@ func parseJSONL(path string) (SessionInfo, error) {
 
 	return info, nil
 }
+
+// FindRecentSessionForProject scans all codebuddy session directories
+// and returns the most recent session ID for the given project directory.
+// Returns empty string if no matching session is found.
+func FindRecentSessionForProject(projectDir string) string {
+	sessions, err := ScanAll()
+	if err != nil {
+		return ""
+	}
+
+	var best SessionInfo
+	for _, s := range sessions {
+		if s.CWD == projectDir && s.Timestamp > best.Timestamp {
+			best = s
+		}
+	}
+	return best.SessionID
+}
