@@ -5,3 +5,4 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 ./bump-version.sh
 git add lmux-app/Sources/LMUX/Utils/Version.swift
+git add lmux-app/Info.plist
