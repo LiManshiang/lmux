@@ -438,8 +438,7 @@ class ContentViewModel: ObservableObject {
 
         for entry in entries {
             // Ensure session exists in backend; create if missing
-            let existing = sessions.first { $0.id == entry.sessionID }
-            if existing == nil {
+            if sessions.first(where: { $0.id == entry.sessionID }) == nil {
                 _ = try? await api.createSession(
                     projectDir: entry.projectDir,
                     name: nil,
@@ -449,25 +448,41 @@ class ContentViewModel: ObservableObject {
                 await refreshSessions()
             }
 
+            // Re-fetch the backend session so we can fall back to its cbcSessionID
+            // if the restore.json entry was corrupted or saved without it.
+            let backend = sessions.first(where: { $0.id == entry.sessionID })
+
+            // Prefer restore.json cbcSessionID, but fall back to backend if missing.
+            // (restore.json can lose cbcSessionID when overwritten by connectBash or detection.)
+            let restoreCBC = entry.cbcSessionID
+            let hasRestoreCBC = (restoreCBC != nil && !restoreCBC!.isEmpty)
+            let backendCBC = backend?.cbcSessionID
+            let effectiveCBC = hasRestoreCBC ? restoreCBC : backendCBC
+            let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
+
             let mgr = terminalManager(for: entry.sessionID)
 
             // Determine how to restore based on launch mode and session state.
             //
+            // The backend is authoritative for cbcSessionID (restore.json may be stale).
+            // If the backend has a session ID to resume, always restore to agent mode
+            // regardless of what restore.json says about launchMode.
+            //
             // New entries (with launchMode):
-            //   .agent + cbcSessionID → resume agent session via connect()
-            //   .agent              → start agent fresh via connect()
-            //   .bash               → restore bash terminal via connectBash()
+            //   .agent               → start agent via connect()
+            //   .bash                → restore bash terminal via connectBash()
             //
             // Old entries (no launchMode, for backward compatibility):
             //   + cbcSessionID      → resume agent session (original behavior)
             //   - cbcSessionID      → start bash terminal (safe fallback)
-            let hasCBC = (entry.cbcSessionID != nil) && !(entry.cbcSessionID!.isEmpty)
+            let isAgentMode = entry.launchMode == .agent || hasEffectiveCBC
+            let isLegacyResume = (entry.launchMode == nil && hasEffectiveCBC)
 
-            if entry.launchMode == .agent || (entry.launchMode == nil && hasCBC) {
+            if isAgentMode || isLegacyResume {
                 mgr.connect(
                     sessionID: entry.sessionID,
                     projectDir: entry.projectDir,
-                    cbcSessionID: entry.cbcSessionID,
+                    cbcSessionID: effectiveCBC,
                     agentType: entry.agentType ?? .codebuddy
                 )
             } else {
