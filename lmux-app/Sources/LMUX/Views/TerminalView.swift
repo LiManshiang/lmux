@@ -24,13 +24,10 @@ struct PTYTerminalView: NSViewRepresentable {
         }
 
         if terminal.superview !== nsView {
-            // Guard against zero-bounds during initial SwiftUI layout pass.
-            guard nsView.bounds.width > 0, nsView.bounds.height > 0 else { return }
-
             nsView.subviews.forEach { $0.removeFromSuperview() }
             context.coordinator.clear()
             terminal.frame = nsView.bounds
-            terminal.autoresizingMask = []
+            terminal.autoresizingMask = [.width, .height]
             nsView.addSubview(terminal)
             nsView.window?.makeFirstResponder(terminal)
             return
