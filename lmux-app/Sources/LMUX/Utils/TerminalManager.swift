@@ -13,6 +13,8 @@ class TerminalManager: ObservableObject {
     var onProcessExit: (() -> Void)?
     /// Called on main actor when codebuddy-code produces first terminal output.
     var onFirstOutput: (() -> Void)?
+    /// Called on main actor when starting a process fails (e.g. executable not found).
+    var onConnectError: ((String) -> Void)?
 
     /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
     private(set) var terminalView: LocalProcessTerminalView?
@@ -57,6 +59,10 @@ class TerminalManager: ObservableObject {
 
         // Build command
         let agentPath = findAgentPath(name: agentType.executableName)
+        guard FileManager.default.isExecutableFile(atPath: agentPath) else {
+            onConnectError?("Agent executable not found: \(agentPath)")
+            return
+        }
         var args = agentType.launchArgs
         if let id = cbcSessionID, !id.isEmpty {
             args.append(contentsOf: agentType.resumeArgs(sessionID: id))
@@ -82,6 +88,13 @@ class TerminalManager: ObservableObject {
 
         // Start process
         view.startProcess(executable: agentPath, args: args, environment: envList, currentDirectory: projectDir)
+
+        // SwiftTerm keeps shellPid == 0 silently when forkpty fails; don't
+        // enter a fake "running" state in that case.
+        guard view.process.shellPid > 0 else {
+            onConnectError?("Failed to launch \(agentType.executableName)")
+            return
+        }
 
         // Register OSC 777 notification handler (ESC ] 777 ; notify ; <title> ; <body> ST)
         view.getTerminal().parser.oscHandlers[777] = { [weak self] data in
@@ -160,6 +173,11 @@ class TerminalManager: ObservableObject {
         isConnected = false
         idleTimer?.invalidate()
         idleTimer = nil
+        // Stop the agent-detection timer so it doesn't linger after switching
+        // sessions; it restarts on the next connectBash(). detectedAgentType
+        // is preserved for reattach.
+        agentDetectionTimer?.invalidate()
+        agentDetectionTimer = nil
         // Keep terminalView alive so process keeps running
     }
 
@@ -224,6 +242,10 @@ class TerminalManager: ObservableObject {
         }
 
         let zshPath = "/bin/zsh"
+        guard FileManager.default.isExecutableFile(atPath: zshPath) else {
+            onConnectError?("Shell not found: \(zshPath)")
+            return
+        }
 
         // Inherit full environment from parent process
         var parentEnv = ProcessInfo.processInfo.environment
@@ -232,7 +254,12 @@ class TerminalManager: ObservableObject {
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
         view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
-        view.getTerminal().changeScrollback(1_000_000)
+
+        guard view.process.shellPid > 0 else {
+            onConnectError?("Failed to launch shell")
+            return
+        }
+        view.getTerminal().changeScrollback(200_000)
 
         self.terminalView = view
         isConnected = true
