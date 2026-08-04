@@ -341,12 +341,23 @@ class TerminalManager: ObservableObject {
         }
     }
 
+    private static var agentPathCache: [String: String] = [:]
+
     private func findAgentPath(name: String) -> String {
+        // Return cached path if still valid.
+        if let cached = Self.agentPathCache[name],
+           FileManager.default.isExecutableFile(atPath: cached) {
+            return cached
+        }
+
         // 1. Search PATH first
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
         for dir in pathDirs {
             let p = "\(dir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
+            if FileManager.default.isExecutableFile(atPath: p) {
+                Self.agentPathCache[name] = p
+                return p
+            }
         }
 
         // 2. Try common fixed paths
@@ -355,7 +366,10 @@ class TerminalManager: ObservableObject {
             "/usr/local/bin/\(name)",
         ]
         for p in candidates {
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
+            if FileManager.default.isExecutableFile(atPath: p) {
+                Self.agentPathCache[name] = p
+                return p
+            }
         }
 
         // 3. Search nvm installations across mounted volumes
@@ -365,7 +379,10 @@ class TerminalManager: ObservableObject {
             if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
                 for entry in entries {
                     let p = "\(nvmBase)/\(entry)/bin/\(name)"
-                    if FileManager.default.isExecutableFile(atPath: p) { return p }
+                    if FileManager.default.isExecutableFile(atPath: p) {
+                        Self.agentPathCache[name] = p
+                        return p
+                    }
                 }
             }
         }
@@ -374,10 +391,15 @@ class TerminalManager: ObservableObject {
         let env = ProcessInfo.processInfo.environment
         if let nvmDir = env["NVM_DIR"] {
             let p = "\(nvmDir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
+            if FileManager.default.isExecutableFile(atPath: p) {
+                Self.agentPathCache[name] = p
+                return p
+            }
         }
 
-        return "/opt/homebrew/bin/\(name)"
+        let fallback = "/opt/homebrew/bin/\(name)"
+        Self.agentPathCache[name] = fallback
+        return fallback
     }
 }
 
