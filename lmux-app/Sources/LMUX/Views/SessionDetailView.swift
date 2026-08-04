@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var terminalHeight: CGFloat = 200
+    @State private var splitRatio: CGFloat = 0.25
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,32 +51,51 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                // Main terminal — fills all available space, never resizes.
-                // Split pane is added as a bottom overlay, so it never affects
-                // the main terminal's layout frame = no SIGWINCH, no wasted space.
-                PTYTerminalView(manager: mgr)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) {
+                // Main terminal: uses if/else branching to avoid GeometryReader
+                // when no split pane (fixes /skills reload), but both branches
+                // share the same .id() so SwiftUI preserves the NSView across toggle.
+                if showSplitPane {
+                    GeometryReader { geo in
+                        let bottomHeight = max(60, geo.size.height * splitRatio)
+                        let topHeight = max(60, geo.size.height - bottomHeight - dividerHeight)
+
                         VStack(spacing: 0) {
+                            PTYTerminalView(manager: mgr)
+                                .id("main-terminal")
+                                .frame(width: geo.size.width, height: topHeight)
+                                .clipped()
+
+                            // Draggable divider
                             Rectangle()
-                                .fill(Color.secondary.opacity(0.3))
-                                .frame(height: showSplitPane ? dividerHeight : 0)
-                                .gesture(showSplitPane ? DragGesture().onChanged { value in
-                                    let newHeight = terminalHeight - value.translation.height
-                                    terminalHeight = max(80, min(500, newHeight))
-                                } : nil)
+                                .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
+                                .frame(height: dividerHeight)
+                                .contentShape(Rectangle())
+                                .gesture(
+                                    DragGesture()
+                                        .onChanged { value in
+                                            let newRatio = splitRatio - value.translation.height / geo.size.height
+                                            splitRatio = min(max(newRatio, 0.15), 0.85)
+                                        }
+                                )
                                 .onHover { inside in
-                                    if inside && showSplitPane { NSCursor.resizeUpDown.push() }
-                                    else { NSCursor.pop() }
+                                    if inside {
+                                        NSCursor.resizeUpDown.push()
+                                    } else {
+                                        NSCursor.pop()
+                                    }
                                 }
 
                             PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                                .frame(height: showSplitPane ? terminalHeight : 0)
+                                .frame(width: geo.size.width, height: bottomHeight)
                                 .clipped()
                         }
-                        .frame(height: showSplitPane ? terminalHeight + dividerHeight : 0)
-                        .clipped()
+                        .animation(.none, value: splitRatio)
                     }
+                } else {
+                    PTYTerminalView(manager: mgr)
+                        .id("main-terminal")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .onAppear {
