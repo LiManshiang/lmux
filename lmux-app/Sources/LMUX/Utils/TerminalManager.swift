@@ -94,8 +94,8 @@ class TerminalManager: ObservableObject {
             self?.sendOSCNotification(title: "Session", body: msg)
         }
 
-        // Unlimited scrollback for full session history
-        view.getTerminal().changeScrollback(1_000_000)
+        // Keep enough scrollback for a full day of conversation.
+        view.getTerminal().changeScrollback(50_000)
 
         processGeneration += 1
         let gen = processGeneration
