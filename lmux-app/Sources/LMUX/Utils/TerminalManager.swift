@@ -45,10 +45,14 @@ class TerminalManager: ObservableObject {
         view.caretColor = theme.cursorNSColor
         view.installColors(theme.ansiSwiftTermColors)
         view.onFirstOutput = { [weak self] in
-            self?.onFirstOutput?()
+            DispatchQueue.main.async {
+                self?.onFirstOutput?()
+            }
         }
         view.onActivity = { [weak self] in
-            self?.lastActivityTime = Date()
+            DispatchQueue.main.async {
+                self?.lastActivityTime = Date()
+            }
         }
 
         // Build command
@@ -209,10 +213,14 @@ class TerminalManager: ObservableObject {
         view.installColors(theme.ansiSwiftTermColors)
 
         view.onFirstOutput = { [weak self] in
-            self?.onFirstOutput?()
+            DispatchQueue.main.async {
+                self?.onFirstOutput?()
+            }
         }
         view.onActivity = { [weak self] in
-            self?.lastActivityTime = Date()
+            DispatchQueue.main.async {
+                self?.lastActivityTime = Date()
+            }
         }
 
         let zshPath = "/bin/zsh"
