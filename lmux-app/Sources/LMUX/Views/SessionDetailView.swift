@@ -51,47 +51,46 @@ struct SessionDetailView: View {
 
                 Divider()
 
+            if showSplitPane {
                 GeometryReader { geo in
-                    let topHeight = showSplitPane
-                        ? max(60, geo.size.height * splitRatio)
-                        : geo.size.height
-                    let bottomHeight = showSplitPane
-                        ? max(60, geo.size.height - topHeight - dividerHeight)
-                        : 0
+                    let topHeight = max(60, geo.size.height * splitRatio)
+                    let bottomHeight = max(60, geo.size.height - topHeight - dividerHeight)
 
                     VStack(spacing: 0) {
                         PTYTerminalView(manager: mgr)
                             .frame(width: geo.size.width, height: topHeight)
                             .clipped()
 
-                        if showSplitPane {
-                            // Draggable divider
-                            Rectangle()
-                                .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
-                                .frame(height: dividerHeight)
-                                .contentShape(Rectangle())
-                                .gesture(
-                                    DragGesture()
-                                        .onChanged { value in
-                                            let newRatio = splitRatio + value.translation.height / geo.size.height
-                                            splitRatio = min(max(newRatio, 0.15), 0.85)
-                                        }
-                                )
-                                .onHover { inside in
-                                    if inside {
-                                        NSCursor.resizeUpDown.push()
-                                    } else {
-                                        NSCursor.pop()
+                        // Draggable divider
+                        Rectangle()
+                            .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
+                            .frame(height: dividerHeight)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { value in
+                                        let newRatio = splitRatio + value.translation.height / geo.size.height
+                                        splitRatio = min(max(newRatio, 0.15), 0.85)
                                     }
+                            )
+                            .onHover { inside in
+                                if inside {
+                                    NSCursor.resizeUpDown.push()
+                                } else {
+                                    NSCursor.pop()
                                 }
+                            }
 
-                            PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                                .frame(width: geo.size.width, height: bottomHeight)
-                                .clipped()
-                        }
+                        PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                            .frame(width: geo.size.width, height: bottomHeight)
+                            .clipped()
                     }
                     .animation(.none, value: splitRatio)
                 }
+            } else {
+                PTYTerminalView(manager: mgr)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             }
         }
         .onAppear {
