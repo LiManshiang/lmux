@@ -19,6 +19,12 @@ class ContentViewModel: ObservableObject {
     private let api = APIClient()
     private var backendProcess: Process?
     private var pollTimer: Timer?
+    /// DispatchIO reading the backend's stdout/stderr pipe. Kept as a property so
+    /// retryBackend() can close it before terminating the process (prevents
+    /// EV_VANISHED crashes from a closed pipe fd).
+    private var backendIO: DispatchIO?
+    /// Guards against double-close of backendIO.
+    private var backendIOClosed = false
 
     /// Terminal pool: preserves TerminalManager instances across session switches.
     private var terminalManagers: [String: TerminalManager] = [:]
@@ -50,6 +56,10 @@ class ContentViewModel: ObservableObject {
                 self?.attentionSessionIds.insert(sessionID)
                 self?.sendCompletionNotification(sessionID: sessionID)
             }
+        }
+        mgr.onConnectError = { [weak self] message in
+            self?.statusMessage = message
+            self?.errorMessage = message
         }
         terminalManagers[sessionID] = mgr
         return mgr
@@ -157,15 +167,27 @@ class ContentViewModel: ObservableObject {
     }
 
     func retryBackend() {
+        // Close the pipe IO first so the DispatchIO doesn't hit a vanished
+        // descriptor when we terminate the backend process.
+        closeBackendIO()
         if backendProcess?.isRunning == true {
             backendProcess?.terminate()
         }
+        backendProcess = nil
         backendStarting = true
         errorMessage = nil
         statusMessage = "Starting backend..."
         Task {
             await launchBackend()
         }
+    }
+
+    /// Close the backend's DispatchIO exactly once (safe to call from any path).
+    private func closeBackendIO() {
+        guard !backendIOClosed else { return }
+        backendIOClosed = true
+        backendIO?.close()
+        backendIO = nil
     }
 
     private func launchBackend() async {
@@ -216,11 +238,13 @@ class ContentViewModel: ObservableObject {
         let dispatchIO = DispatchIO(type: .stream, fileDescriptor: fd, queue: .main) { _ in
             try? fileHandle.close()
         }
+        backendIO = dispatchIO
+        backendIOClosed = false
 
         dispatchIO.setLimit(lowWater: 1)
         dispatchIO.read(offset: 0, length: Int.max, queue: .main) { [weak self] done, data, error in
             guard let data = data, let chunk = String(data: Data(data), encoding: .utf8) else {
-                if done { dispatchIO.close() }
+                if done { self?.closeBackendIO() }
                 return
             }
             accumulatedOutput += chunk
@@ -237,9 +261,9 @@ class ContentViewModel: ObservableObject {
                 accumulatedOutput = String(accumulatedOutput[accumulatedOutput.index(after: lastNewline)...])
             }
             if self?.loadToken() != nil && self?.loadAddr() != nil {
-                dispatchIO.close()
+                self?.closeBackendIO()
             }
-            if done || error != nil { dispatchIO.close() }
+            if done || error != nil { self?.closeBackendIO() }
         }
 
         // Wait for backend to be ready (single loop, 1s interval, 20s timeout).
@@ -247,7 +271,7 @@ class ContentViewModel: ObservableObject {
             if let token = loadToken(), let addr = loadAddr() {
                 api.configure(addr: addr, token: token)
                 if await api.healthCheck() {
-                    dispatchIO.close()
+                    closeBackendIO()
                     backendRunning = true
                     backendStarting = false
                     statusMessage = nil
@@ -261,6 +285,7 @@ class ContentViewModel: ObservableObject {
         }
         dispatchIO.close()
 
+        closeBackendIO()
         backendStarting = false
         backendRunning = false
         errorMessage = "Backend failed to start on \(loadAddr() ?? "127.0.0.1:19680")"
