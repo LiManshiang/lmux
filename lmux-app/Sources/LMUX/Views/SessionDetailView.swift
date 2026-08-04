@@ -113,9 +113,10 @@ struct SessionDetailView: View {
                     agentType: agent
                 )
             } else {
-                // New session without history: start agent directly with proper
-                // launch args (--permission-mode auto etc.), not bash.
-                mgr.connect(sessionID: id, projectDir: dir, cbcSessionID: nil, agentType: agent)
+                // New session without history: start a bash terminal. Agent
+                // detection will upgrade to agent mode if the user launches
+                // codebuddy/claude manually inside the shell.
+                mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
             }
         } else if !mgr.isConnected {
             mgr.reattach()

@@ -462,11 +462,11 @@ class ContentViewModel: ObservableObject {
             let mgr = terminalManager(for: entry.sessionID)
             let isAgentMode = entry.launchMode == .agent
 
-            // Always try to find the codebuddy session ID from JSONL when missing,
-            // regardless of launchMode. New sessions start as bash but the user
-            // may have started codebuddy/claude manually, which stores a session ID
-            // in JSONL that we can use to resume conversation history.
-            if effectiveCBC == nil || effectiveCBC!.isEmpty {
+            // Only look up a codebuddy session ID from JSONL when this is
+            // known to be an agent session. Scanning unconditionally would
+            // match old sessions in the same directory (e.g. home dir) and
+            // hijack a fresh bash session into agent mode on restore.
+            if isAgentMode, (effectiveCBC == nil || effectiveCBC!.isEmpty) {
                 if let found = try? await api.findCodebuddySession(projectDir: entry.projectDir),
                    !found.isEmpty {
                     effectiveCBC = found
@@ -488,11 +488,12 @@ class ContentViewModel: ObservableObject {
                     agentType: entry.agentType ?? .codebuddy
                 )
             } else {
-                // New session without history: start agent with proper launch args.
-                mgr.connect(
+                // New session without history: start a bash terminal. Agent
+                // detection will upgrade to agent mode if the user launches
+                // codebuddy/claude manually inside the shell.
+                mgr.connectBash(
                     sessionID: entry.sessionID,
                     projectDir: entry.projectDir,
-                    cbcSessionID: nil,
                     agentType: entry.agentType ?? .codebuddy
                 )
             }
