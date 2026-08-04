@@ -35,7 +35,13 @@ app: backend build
 	@echo "App bundle created: $(APP_DIR)"
 	@echo "Run: open $(APP_DIR)"
 
-run: app
+run:
+	@if [ ! -e "$(APP_DIR)/Contents/MacOS/lmux" ] || \
+	     [ -n "$$(find Sources Package.swift ../SwiftTerm/Sources backend-src -type f -newer '$(APP_DIR)/Contents/MacOS/lmux' -print -quit 2>/dev/null)" ]; then \
+		$(MAKE) app; \
+	else \
+		echo "lmux.app is up to date (skipping rebuild to keep signature/TCC stable)."; \
+	fi
 	open $(APP_DIR)
 
 clean:
