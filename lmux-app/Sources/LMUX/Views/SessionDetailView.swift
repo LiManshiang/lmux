@@ -51,16 +51,20 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                if showSplitPane {
-                    GeometryReader { geo in
-                        let topHeight = max(60, geo.size.height * splitRatio)
-                        let bottomHeight = max(60, geo.size.height - topHeight - dividerHeight)
+                GeometryReader { geo in
+                    let topHeight = showSplitPane
+                        ? max(60, geo.size.height * splitRatio)
+                        : geo.size.height
+                    let bottomHeight = showSplitPane
+                        ? max(60, geo.size.height - topHeight - dividerHeight)
+                        : 0
 
-                        VStack(spacing: 0) {
-                            PTYTerminalView(manager: mgr)
-                                .frame(width: geo.size.width, height: topHeight)
-                                .clipped()
+                    VStack(spacing: 0) {
+                        PTYTerminalView(manager: mgr)
+                            .frame(width: geo.size.width, height: topHeight)
+                            .clipped()
 
+                        if showSplitPane {
                             // Draggable divider
                             Rectangle()
                                 .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
@@ -85,11 +89,8 @@ struct SessionDetailView: View {
                                 .frame(width: geo.size.width, height: bottomHeight)
                                 .clipped()
                         }
-                        .animation(.none, value: splitRatio)
                     }
-                } else {
-                    PTYTerminalView(manager: mgr)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .animation(.none, value: splitRatio)
                 }
             }
         }
