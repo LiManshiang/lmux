@@ -65,6 +65,13 @@ class ContentViewModel: ObservableObject {
         return mgr
     }
 
+    /// Read-only access to an existing TerminalManager. Unlike
+    /// `terminalManager(for:)` this never creates one, so list rows can
+    /// query state without allocating managers for every session.
+    func terminalManagerIfExists(for sessionID: String) -> TerminalManager? {
+        terminalManagers[sessionID]
+    }
+
     /// Release a terminal manager when its session is deleted.
     func releaseTerminalManager(for sessionID: String) {
         if let mgr = terminalManagers[sessionID] {
@@ -339,9 +346,9 @@ class ContentViewModel: ObservableObject {
             let summaries = try await api.listSessions()
 
             // Avoid triggering SwiftUI diff on every poll when nothing changed.
-            let newIDs = Set(summaries.map { $0.id })
-            let oldIDs = Set(sessions.map { $0.id })
-            guard newIDs != oldIDs else { return }
+            // Compare full contents (status, pid, ai_title, ...) not just IDs,
+            // so field-level updates from the backend reach the UI.
+            guard summaries != sessions else { return }
 
             sessions = summaries
 

@@ -82,7 +82,8 @@ struct SessionRowView: View {
     }
 
     private var manager: TerminalManager? {
-        viewModel.terminalManager(for: session.id)
+        // Read-only: don't create a TerminalManager just to render a row.
+        viewModel.terminalManagerIfExists(for: session.id)
     }
 
     var body: some View {

@@ -87,9 +87,15 @@ enum SessionRestore {
         }
     }
 
-    /// Load all sessions that should be restored. Returns from cache if available.
+    /// Load all sessions that should be restored. Returns from the in-memory
+    /// cache when available; disk is only read once. Runs on ioQueue so callers
+    /// (including the main actor) never block on file I/O.
     static func loadAll() -> [Entry] {
-        return loadFromDisk()
+        return ioQueue.sync {
+            let entries = cachedEntries ?? loadFromDisk()
+            cachedEntries = entries
+            return entries
+        }
     }
 
     /// Clear the restore list.
