@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.40</string>
+	<string>1.0.41</string>
 	<key>CFBundleVersion</key>
-	<string>40</string>
+	<string>41</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>NSPrincipalClass</key>
@@ -26,11 +26,5 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSCalendarsUsageDescription</key>
-	<string>This application does not use calendars.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This application does not use photos.</string>
-	<key>NSContactsUsageDescription</key>
-	<string>This application does not use contacts.</string>
 </dict>
 </plist>
