@@ -267,8 +267,28 @@ class TerminalManager: ObservableObject {
                 }
             }
         }
-        // Fire immediately for quick detection.
+        // Fire immediately, then again at 3s and 10s for quick detection (agent might not be running yet).
         agentDetectionTimer?.fire()
+        Self.detectionQueue.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.processRunning, self.processPID > 0 else { return }
+            if self.detectedAgentType != nil { return }  // already detected
+            let result = self.detectRunningAgent(shellPID: self.processPID)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let result else { return }
+                self.detectedAgentType = result.agentType
+                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+            }
+        }
+        Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, self.processRunning, self.processPID > 0 else { return }
+            if self.detectedAgentType != nil { return }
+            let result = self.detectRunningAgent(shellPID: self.processPID)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let result else { return }
+                self.detectedAgentType = result.agentType
+                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+            }
+        }
     }
 
     private func stopAgentDetection() {
@@ -280,10 +300,10 @@ class TerminalManager: ObservableObject {
     /// Walk child processes of `shellPID` to find known agent executables.
     /// Runs on background queue; does not access main-actor state.
     nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?)? {
-        // Get direct children of the shell process.
-        guard let childPIDs = getChildPIDs(of: shellPID) else { return nil }
+        // Check all descendants (not just direct children) in case agent runs in a subshell.
+        guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
-        for pid in childPIDs {
+        for pid in allPIDs {
             // Check the command line of each child.
             let cmdLine = getCommandLine(of: pid) ?? ""
             let lower = cmdLine.lowercased()
@@ -317,6 +337,19 @@ class TerminalManager: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// Returns PIDs of all descendants (children recursively) of the given parent PID.
+    nonisolated private func getDescendantPIDs(of parentPID: Int32) -> [Int32]? {
+        var all: [Int32] = []
+        var queue = [parentPID]
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            guard let children = getChildPIDs(of: current) else { continue }
+            all.append(contentsOf: children)
+            queue.append(contentsOf: children)
+        }
+        return all.isEmpty ? nil : all
     }
 
     /// Returns PIDs of direct children of the given parent PID.
