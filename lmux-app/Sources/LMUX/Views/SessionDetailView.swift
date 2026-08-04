@@ -51,33 +51,32 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                // Main terminal — fills available space.
-                // The split-pane area below has a FIXED outer frame height that
-                // never changes when toggling visibility, so the main terminal
-                // never resizes and no SIGWINCH is sent to the agent.
+                // Main terminal — fills all available space, never resizes.
+                // Split pane is added as a bottom overlay, so it never affects
+                // the main terminal's layout frame = no SIGWINCH, no wasted space.
                 PTYTerminalView(manager: mgr)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .bottom) {
+                        VStack(spacing: 0) {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.3))
+                                .frame(height: showSplitPane ? dividerHeight : 0)
+                                .gesture(showSplitPane ? DragGesture().onChanged { value in
+                                    let newHeight = terminalHeight - value.translation.height
+                                    terminalHeight = max(80, min(500, newHeight))
+                                } : nil)
+                                .onHover { inside in
+                                    if inside && showSplitPane { NSCursor.resizeUpDown.push() }
+                                    else { NSCursor.pop() }
+                                }
 
-                // Split pane — always present, outer frame height fixed.
-                // Visibility is controlled by inner content heights (0 or actual).
-                VStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.3))
-                        .frame(height: showSplitPane ? dividerHeight : 0)
-                        .gesture(showSplitPane ? DragGesture().onChanged { value in
-                            let newHeight = terminalHeight - value.translation.height
-                            terminalHeight = max(80, min(500, newHeight))
-                        } : nil)
-                        .onHover { inside in
-                            if inside && showSplitPane { NSCursor.resizeUpDown.push() }
-                            else { NSCursor.pop() }
+                            PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                                .frame(height: showSplitPane ? terminalHeight : 0)
+                                .clipped()
                         }
-
-                    PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                        .frame(height: showSplitPane ? terminalHeight : 0)
+                        .frame(height: showSplitPane ? terminalHeight + dividerHeight : 0)
                         .clipped()
-                }
-                .frame(height: terminalHeight + dividerHeight)
+                    }
             }
         }
         .onAppear {
