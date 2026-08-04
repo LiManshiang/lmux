@@ -23,6 +23,8 @@ class TerminalManager: ObservableObject {
     private(set) var processPID: Int32 = 0
     private var lastActivityTime: Date = Date()
     private var idleTimer: Timer?
+    private var agentDetectionTimer: Timer?
+    private(set) var detectedAgentType: AgentType?
 
     /// Connect by spawning an agent directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
@@ -119,7 +121,7 @@ class TerminalManager: ObservableObject {
         startIdleTimer()
 
         // Persist for session restore on app restart
-        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType)
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: .agent)
     }
 
     private func startIdleTimer() {
@@ -135,6 +137,7 @@ class TerminalManager: ObservableObject {
     func disconnect() {
         idleTimer?.invalidate()
         idleTimer = nil
+        stopAgentDetection()
         if let sid = currentSessionID {
             SessionRestore.remove(sessionID: sid)
         }
@@ -230,7 +233,99 @@ class TerminalManager: ObservableObject {
         startIdleTimer()
 
         // Persist for session restore
-        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType)
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType, launchMode: .bash)
+
+        // Start agent detection: periodically check what child processes the user
+        // runs inside the bash terminal so we can restore the correct agent type.
+        startAgentDetection(sessionID: sessionID, projectDir: projectDir)
+    }
+
+    // MARK: - Agent Detection
+
+    /// Start periodically checking the shell's child processes for known agent executables.
+    private func startAgentDetection(sessionID: String, projectDir: String) {
+        stopAgentDetection()
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.processRunning, self.processPID > 0 else { return }
+            if let detected = self.detectRunningAgent(shellPID: self.processPID) {
+                guard detected != self.detectedAgentType else { return }
+                self.detectedAgentType = detected
+                // Persist the detected agent type so the next restore uses it.
+                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
+            }
+        }
+        // Fire immediately for quick detection.
+        agentDetectionTimer?.fire()
+    }
+
+    private func stopAgentDetection() {
+        agentDetectionTimer?.invalidate()
+        agentDetectionTimer = nil
+        detectedAgentType = nil
+    }
+
+    /// Walk child processes of `shellPID` to find known agent executables.
+    private func detectRunningAgent(shellPID: Int32) -> AgentType? {
+        // Get direct children of the shell process.
+        guard let childPIDs = getChildPIDs(of: shellPID) else { return nil }
+
+        for pid in childPIDs {
+            // Check the command line of each child.
+            let cmdLine = getCommandLine(of: pid) ?? ""
+            let lower = cmdLine.lowercased()
+
+            // Detect Claude.
+            if lower.contains("claude") && !lower.contains("claudecode") {
+                return .claude
+            }
+            // Detect CodeBuddy.
+            if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
+                return .codebuddy
+            }
+        }
+
+        return nil
+    }
+
+    /// Returns PIDs of direct children of the given parent PID.
+    private func getChildPIDs(of parentPID: Int32) -> [Int32]? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        task.arguments = ["-P", "\(parentPID)"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return output.split(separator: "\n").compactMap { Int32($0) }
+        } catch {
+            return nil
+        }
+    }
+
+    /// Returns the full command line of a process by PID.
+    private func getCommandLine(of pid: Int32) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "command="]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
+        }
     }
 
     private func findAgentPath(name: String) -> String {
