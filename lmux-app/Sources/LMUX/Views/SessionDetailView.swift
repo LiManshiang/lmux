@@ -54,8 +54,11 @@ struct SessionDetailView: View {
                 // Main terminal — always at a non-conditional position.
                 // The split pane is an overlay so it doesn't create conditional
                 // view branches around the PTYTerminalView. This prevents
-                // NSView recreation when observed state changes.
+                // NSView recreation when observed state changes. Stable .id()
+                // values keep SwiftUI from recreating the NSView across
+                // structural changes (see K3).
                 PTYTerminalView(manager: mgr)
+                    .id("main-terminal-\(sid)")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .bottom) {
                         if showSplitPane {
@@ -72,6 +75,7 @@ struct SessionDetailView: View {
                                     )
 
                                 PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                                    .id("split-terminal-\(sid)")
                                     .frame(height: terminalHeight)
                             }
                             .background(Color(nsColor: .windowBackgroundColor))
