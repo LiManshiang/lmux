@@ -275,6 +275,7 @@ private class OutputAwareTerminalView: LocalProcessTerminalView {
                         let params = data[(i + 2)..<end]
                         let isClearScrollback = params.contains(0x33) // ASCII '3'
                         if isClearScrollback {
+                            print("[lmux:filter] blocked CSI 3 J at offset \(i)")
                             i = end + 1  // skip entire CSI 3 J sequence
                             continue
                         }
