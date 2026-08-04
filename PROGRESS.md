@@ -2,7 +2,7 @@
 
 **日期:** 2026-08-04
 **分支:** 1.0.6（开发）+ fix/crash-issues（崩溃/权限修复，未合并）
-**版本:** 1.0.43
+**版本:** 1.0.45
 **Git 钩子:** pre-commit 自动升级小版本号
 
 ---
@@ -43,6 +43,7 @@
 | 23 | 通知权限仅在 `.notDetermined` 时请求；Info.plist 删除日历/照片/通讯录多余 usage key | 58a933f | App.swift, Info.plist |
 | 24 | 新增 NSAppleMusicUsageDescription/NSPhotoLibraryUsageDescription（声明不使用），使拒绝状态可持久化、弹窗收敛为一次 | 812a521 | Info.plist |
 | 25 | `make run` 检测源码变更，.app 未过期时跳过重建，保持签名/TCC 权限稳定 | e2f9bdc | Makefile |
+| 26 | 终端内容覆盖 header：容器 `clipsToBounds` + stretch 的 dx/dy clamp 到 >=0 | 5679d5a | TerminalView.swift |
 
 ## 已知问题
 
@@ -76,12 +77,12 @@ lmux-app/Sources/LMUX/
   Utils/
     TerminalManager.swift    — agent 检测 + 闪退修复 + 性能优化 + 启动失败检测 + scrollback
     SessionRestore.swift     — LaunchMode 追踪 + ioQueue 缓存读
-    Version.swift            — 版本号定义（1.0.43）
+    Version.swift            — 版本号定义（1.0.45）
   Views/
     SessionDetailView.swift  — split pane overlay + 启动路由（bash/agent）+ .id()
     SessionListView.swift    — 只读 manager 查询
     ContentView.swift        — 侧边栏版本号显示
-    TerminalView.swift       — frame 更新优化
+    TerminalView.swift       — frame 更新优化 + 裁剪/防溢出
   ViewModels/
     ContentViewModel.swift   — restore 路由 + polling 优化 + DispatchIO 防护 + 数组比较
   Models/
@@ -97,7 +98,7 @@ bump-version.sh             — 版本号升级脚本
 ## 下次继续
 
 1. **合并 fix/crash-issues → 1.0.6**（用户确认后再合）
-2. 在 Intel macOS 12.5 真机跑修复版（Swift ABI 理论兼容，需真机验证；验证 `/skills`、窗口缩放、split pane、权限弹窗）
+2. 在 Intel macOS 12.5 真机跑修复版（Swift ABI 理论兼容，需真机验证；验证 `/skills`、窗口缩放、split pane、权限弹窗、header 覆盖）
 3. 12.5 机器上若改代码路径，改 `Package.swift` 为相对路径 `../SwiftTerm`
 4. K4 根治：申请 Apple Developer ID 证书，`make app` 用 `codesign --sign "Developer ID Application: ..."`（替换 Makefile 里的 ad-hoc 签名）
 5. 其他中低风险项（可选）：backend/lmux 二进制为构建产物，避免提交
@@ -107,6 +108,6 @@ bump-version.sh             — 版本号升级脚本
 ```
 master ─── 最终稳定代码
 1.0.6  ─── 开发主线（bash 修复已合入 da95ae3）
-fix/crash-issues ─── 崩溃/权限/性能修复（12 项，d837686..e2f9bdc），未合并
+fix/crash-issues ─── 崩溃/权限/性能/渲染修复（13 项，d837686..5679d5a），未合并
 perf/optimize-v1 ─── 性能优化（已合并到 1.0.6）
 ```
