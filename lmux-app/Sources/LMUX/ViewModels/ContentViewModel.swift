@@ -324,10 +324,12 @@ class ContentViewModel: ObservableObject {
             // Preserve selection across refresh only if the id actually changed,
             // not on every poll. Reassigning the same id creates a new object which
             // triggers unnecessary SwiftUI view updates that can cause terminal reconnects.
-            if let prevId = previousSelection,
-               selectedSession?.id != prevId,
-               let current = summaries.first(where: { $0.id == prevId }) {
-                selectedSession = current
+            if let prevId = previousSelection {
+                if selectedSession?.id != prevId {
+                    if let current = summaries.first(where: { $0.id == prevId }) {
+                        selectedSession = current
+                    }
+                }
             }
             // clear any previous error on successful refresh
             if errorMessage != nil {
