@@ -89,12 +89,7 @@ enum SessionRestore {
 
     /// Load all sessions that should be restored. Returns from cache if available.
     static func loadAll() -> [Entry] {
-        ioQueue.sync {
-            if let cached = cachedEntries { return cached }
-            let entries = loadFromDisk()
-            cachedEntries = entries
-            return entries
-        }
+        return loadFromDisk()
     }
 
     /// Clear the restore list.

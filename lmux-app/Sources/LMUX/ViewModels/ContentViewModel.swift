@@ -475,6 +475,11 @@ class ContentViewModel: ObservableObject {
 
             let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
 
+            // Sync cbcSessionID back to the backend so all paths (restore + connectToSession) see it.
+            if hasEffectiveCBC, let backend = backend, backend.cbcSessionID == nil || backend.cbcSessionID!.isEmpty {
+                try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: effectiveCBC!)
+            }
+
             if isAgentMode || hasEffectiveCBC {
                 mgr.connect(
                     sessionID: entry.sessionID,

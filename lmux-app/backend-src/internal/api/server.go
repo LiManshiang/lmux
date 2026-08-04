@@ -41,6 +41,10 @@ func (s *Server) Start() error {
 			h.RenameSession(w, r)
 			return
 		}
+		if id := extractIDFromPath(path, "cbc-session"); id != "" && r.Method == http.MethodPost {
+			h.SetCBCSessionID(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			h.GetSession(w, r)

@@ -135,6 +135,16 @@ class APIClient {
         return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
+        struct Body: Codable {
+            let cbcSessionID: String
+            enum CodingKeys: String, CodingKey {
+                case cbcSessionID = "cbc_session_id"
+            }
+        }
+        _ = try await post("/api/sessions/\(sessionID)/cbc-session", body: Body(cbcSessionID: cbcSessionID))
+    }
+
     // MARK: - Health
 
     func healthCheck() async -> Bool {

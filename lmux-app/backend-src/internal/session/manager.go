@@ -184,3 +184,13 @@ func getGitBranch(dir string) string {
 	if branch == "HEAD" { return "" }
 	return branch
 }
+
+// SetCBCSessionID sets the codebuddy session ID for an existing session.
+func (m *Manager) SetCBCSessionID(id, cbcSessionID string) error {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return err
+	}
+	sess.CBCSessionID = cbcSessionID
+	return m.store.Save(sess)
+}
