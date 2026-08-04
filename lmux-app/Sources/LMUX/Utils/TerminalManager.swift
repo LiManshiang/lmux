@@ -256,9 +256,10 @@ class TerminalManager: ObservableObject {
         agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
             let currentPID = self.processPID
-            Self.detectionQueue.async {
+            Self.detectionQueue.async { [weak self] in
+                guard let self else { return }
                 let detected = self.detectRunningAgent(shellPID: currentPID)
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     guard let self, let detected, detected != self.detectedAgentType else { return }
                     self.detectedAgentType = detected
                     SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
@@ -276,7 +277,8 @@ class TerminalManager: ObservableObject {
     }
 
     /// Walk child processes of `shellPID` to find known agent executables.
-    private func detectRunningAgent(shellPID: Int32) -> AgentType? {
+    /// Runs on background queue; does not access main-actor state.
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> AgentType? {
         // Get direct children of the shell process.
         guard let childPIDs = getChildPIDs(of: shellPID) else { return nil }
 
@@ -299,7 +301,7 @@ class TerminalManager: ObservableObject {
     }
 
     /// Returns PIDs of direct children of the given parent PID.
-    private func getChildPIDs(of parentPID: Int32) -> [Int32]? {
+    nonisolated private func getChildPIDs(of parentPID: Int32) -> [Int32]? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         task.arguments = ["-P", "\(parentPID)"]
@@ -320,7 +322,7 @@ class TerminalManager: ObservableObject {
     }
 
     /// Returns the full command line of a process by PID.
-    private func getCommandLine(of pid: Int32) -> String? {
+    nonisolated private func getCommandLine(of pid: Int32) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-p", "\(pid)", "-o", "command="]
