@@ -62,21 +62,19 @@ class APIClient: ObservableObject {
         return resp.session
     }
 
-    func createSession(projectDir: String, name: String? = nil, cbcSessionID: String? = nil, agentType: AgentType = .codebuddy) async throws -> Session {
+    func createSession(projectDir: String, name: String? = nil, cbcSessionID: String? = nil) async throws -> Session {
         struct Body: Codable {
             let projectDir: String
             let name: String?
             let cbcSessionID: String?
-            let agentType: AgentType
 
             enum CodingKeys: String, CodingKey {
                 case projectDir = "project_dir"
                 case name
                 case cbcSessionID = "cbc_session_id"
-                case agentType = "agent_type"
             }
         }
-        let body = Body(projectDir: projectDir, name: name, cbcSessionID: cbcSessionID, agentType: agentType)
+        let body = Body(projectDir: projectDir, name: name, cbcSessionID: cbcSessionID)
         let data = try await post("/api/sessions", body: body)
         struct Response: Codable {
             let session: Session

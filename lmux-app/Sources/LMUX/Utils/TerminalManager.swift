@@ -24,13 +24,12 @@ class TerminalManager: ObservableObject {
     private var lastActivityTime: Date = Date()
     private var idleTimer: Timer?
 
-    /// Connect by spawning an agent directly via SwiftTerm's forkpty.
-    func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
+    /// Connect by spawning codebuddy-code directly via SwiftTerm's forkpty.
+    func connect(sessionID: String, projectDir: String, cbcSessionID: String?) {
         disconnect()
 
         currentSessionID = sessionID
 
-        // ... same terminal setup ...
         let view = OutputAwareTerminalView(frame: .zero)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
@@ -51,10 +50,10 @@ class TerminalManager: ObservableObject {
         }
 
         // Build command
-        let agentPath = findAgentPath(name: agentType.executableName)
-        var args = agentType.launchArgs
+        let cbcPath = findCodeBuddyPath()
+        var args = ["--permission-mode", "auto", "-y"]
         if let id = cbcSessionID, !id.isEmpty {
-            args.append(contentsOf: agentType.resumeArgs(sessionID: id))
+            args.append(contentsOf: ["--session-id", id])
         }
 
         // Build environment
@@ -69,14 +68,14 @@ class TerminalManager: ObservableObject {
         for p in ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.local/bin"] {
             if !pathEnv.contains(p) { pathEnv = "\(p):\(pathEnv)" }
         }
-        let agentDir = URL(fileURLWithPath: agentPath).deletingLastPathComponent().path
-        if !pathEnv.contains(agentDir) { pathEnv = "\(agentDir):\(pathEnv)" }
+        let cbcDir = URL(fileURLWithPath: cbcPath).deletingLastPathComponent().path
+        if !pathEnv.contains(cbcDir) { pathEnv = "\(cbcDir):\(pathEnv)" }
         parentEnv["PATH"] = pathEnv
 
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
         // Start process
-        view.startProcess(executable: agentPath, args: args, environment: envList, currentDirectory: projectDir)
+        view.startProcess(executable: cbcPath, args: args, environment: envList, currentDirectory: projectDir)
 
         // Register OSC 777 notification handler (ESC ] 777 ; notify ; <title> ; <body> ST)
         view.getTerminal().parser.oscHandlers[777] = { [weak self] data in
@@ -119,7 +118,7 @@ class TerminalManager: ObservableObject {
         startIdleTimer()
 
         // Persist for session restore on app restart
-        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType)
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID)
     }
 
     private func startIdleTimer() {
@@ -187,64 +186,18 @@ class TerminalManager: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
-    /// Connect a bash/zsh terminal in the given directory (for new sessions).
-    func connectBash(sessionID: String, projectDir: String, agentType: AgentType) {
-        disconnect()
-
-        let view = OutputAwareTerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-
-        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
-        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-
-        view.onFirstOutput = { [weak self] in
-            self?.onFirstOutput?()
-        }
-        view.onActivity = { [weak self] in
-            self?.lastActivityTime = Date()
-            self?.isIdle = false
-        }
-
-        let zshPath = "/bin/zsh"
-
-        // Inherit full environment from parent process
-        var parentEnv = ProcessInfo.processInfo.environment
-        parentEnv["TERM"] = "xterm-256color"
-        parentEnv["LANG"] = "en_US.UTF-8"
-        let envList = parentEnv.map { "\($0.key)=\($0.value)" }
-
-        view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
-        view.getTerminal().changeScrollback(1_000_000)
-
-        self.terminalView = view
-        isConnected = true
-        processRunning = true
-        processStartTime = Date()
-        processPID = view.process.shellPid
-        lastActivityTime = Date()
-        startIdleTimer()
-
-        // Persist for session restore
-        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType)
-    }
-
-    private func findAgentPath(name: String) -> String {
+    private func findCodeBuddyPath() -> String {
         // 1. Search PATH first
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
         for dir in pathDirs {
-            let p = "\(dir)/\(name)"
+            let p = "\(dir)/codebuddy-code"
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
 
         // 2. Try common fixed paths
         let candidates = [
-            "/opt/homebrew/bin/\(name)",
-            "/usr/local/bin/\(name)",
+            "/opt/homebrew/bin/codebuddy-code",
+            "/usr/local/bin/codebuddy-code",
         ]
         for p in candidates {
             if FileManager.default.isExecutableFile(atPath: p) { return p }
@@ -256,7 +209,7 @@ class TerminalManager: ObservableObject {
             let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"
             if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
                 for entry in entries {
-                    let p = "\(nvmBase)/\(entry)/bin/\(name)"
+                    let p = "\(nvmBase)/\(entry)/bin/codebuddy-code"
                     if FileManager.default.isExecutableFile(atPath: p) { return p }
                 }
             }
@@ -265,11 +218,11 @@ class TerminalManager: ObservableObject {
         // 4. Check NVM_DIR from environment
         let env = ProcessInfo.processInfo.environment
         if let nvmDir = env["NVM_DIR"] {
-            let p = "\(nvmDir)/\(name)"
+            let p = "\(nvmDir)/codebuddy-code"
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
 
-        return "/opt/homebrew/bin/\(name)"
+        return "/opt/homebrew/bin/codebuddy-code"
     }
 }
 

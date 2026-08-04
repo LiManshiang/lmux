@@ -22,8 +22,6 @@ class ContentViewModel: ObservableObject {
 
     /// Terminal pool: preserves TerminalManager instances across session switches.
     private var terminalManagers: [String: TerminalManager] = [:]
-    /// Split pane terminal managers.
-    private var splitTerminalManagers: [String: TerminalManager] = [:]
 
     /// Sessions with an actively running codebuddy-code process.
     @Published var activeSessionIds: Set<String> = []
@@ -64,19 +62,6 @@ class ContentViewModel: ObservableObject {
         completedSessionIds.remove(sessionID)
         activeSessionIds.remove(sessionID)
         attentionSessionIds.remove(sessionID)
-        splitTerminalManagers[sessionID]?.disconnect()
-        splitTerminalManagers.removeValue(forKey: sessionID)
-        SessionRestore.remove(sessionID: sessionID)
-    }
-
-    /// Get or create a split-pane TerminalManager for a session.
-    func splitTerminalManager(for sessionID: String) -> TerminalManager {
-        if let existing = splitTerminalManagers[sessionID] {
-            return existing
-        }
-        let mgr = TerminalManager()
-        splitTerminalManagers[sessionID] = mgr
-        return mgr
     }
 
     /// Kill the running codebuddy process without deleting the session.
@@ -84,8 +69,6 @@ class ContentViewModel: ObservableObject {
         if let mgr = terminalManagers[id] {
             mgr.disconnect()
         }
-        splitTerminalManagers[id]?.disconnect()
-        splitTerminalManagers.removeValue(forKey: id)
         completedSessionIds.remove(id)
         activeSessionIds.remove(id)
         attentionSessionIds.remove(id)
@@ -145,7 +128,6 @@ class ContentViewModel: ObservableObject {
                     backendRunning = true
                     backendStarting = false
                     await refreshSessions()
-                    await restoreRunningSessions()
                     startPolling()
                     return
                 }
@@ -190,7 +172,7 @@ class ContentViewModel: ObservableObject {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: execPath)
-        process.arguments = []
+        process.arguments = ["--restore"]
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -355,7 +337,7 @@ class ContentViewModel: ObservableObject {
         clearSessionAttention(session.id)
     }
 
-    func createSession(projectDir: String, name: String?, cbcSessionID: String?, agentType: AgentType = .codebuddy) async {
+    func createSession(projectDir: String, name: String?, cbcSessionID: String?) async {
         isLoading = true
         defer { isLoading = false }
 
@@ -363,8 +345,7 @@ class ContentViewModel: ObservableObject {
             let _ = try await api.createSession(
                 projectDir: projectDir,
                 name: name,
-                cbcSessionID: cbcSessionID,
-                agentType: agentType
+                cbcSessionID: cbcSessionID
             )
             await refreshSessions()
             // auto-select the new session so terminal connects immediately
@@ -379,9 +360,11 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    func quickCreateSession(agentType: AgentType = .codebuddy) async {
+    func quickCreateSession() async {
         let home = NSHomeDirectory()
-        await createSession(projectDir: home, name: nil, cbcSessionID: nil, agentType: agentType)
+        let count = sessions.count + 1
+        let name = "Session \(count)"
+        await createSession(projectDir: home, name: name, cbcSessionID: nil)
     }
 
     func deleteSession(id: String) async {
@@ -440,11 +423,11 @@ class ContentViewModel: ObservableObject {
             // Ensure session exists in backend; create if missing
             let existing = sessions.first { $0.id == entry.sessionID }
             if existing == nil {
+                // Create the session record if it was lost
                 _ = try? await api.createSession(
                     projectDir: entry.projectDir,
                     name: nil,
-                    cbcSessionID: entry.cbcSessionID,
-                    agentType: entry.agentType ?? .codebuddy
+                    cbcSessionID: entry.cbcSessionID
                 )
                 await refreshSessions()
             }
@@ -453,8 +436,7 @@ class ContentViewModel: ObservableObject {
             mgr.connect(
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
-                cbcSessionID: entry.cbcSessionID,
-                agentType: entry.agentType ?? .codebuddy
+                cbcSessionID: entry.cbcSessionID
             )
         }
     }
