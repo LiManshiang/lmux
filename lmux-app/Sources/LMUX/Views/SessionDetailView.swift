@@ -114,18 +114,22 @@ struct SessionDetailView: View {
             let session = viewModel.sessions.first { $0.id == id }
             let dir = session?.projectDir ?? NSHomeDirectory()
             let cbc = session?.cbcSessionID
+            let agent = session?.agentType ?? .codebuddy
 
-            if let cbc, !cbc.isEmpty {
-                // Resume existing agent session
+            // Check restore entry to determine if this session was previously running an agent
+            let restoreEntry = SessionRestore.loadAll().first { $0.sessionID == id }
+            let shouldRestoreAgent = restoreEntry?.launchMode == .agent || (cbc != nil && !cbc!.isEmpty)
+
+            if shouldRestoreAgent {
                 mgr.connect(
                     sessionID: id,
                     projectDir: dir,
                     cbcSessionID: cbc,
-                    agentType: session?.agentType ?? .codebuddy
+                    agentType: agent
                 )
             } else {
                 // New session: start with bash terminal
-                mgr.connectBash(sessionID: id, projectDir: dir, agentType: session?.agentType ?? .codebuddy)
+                mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
             }
         } else if !mgr.isConnected {
             mgr.reattach()
