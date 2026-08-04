@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var splitRatio: CGFloat = 0.25
+    @State private var terminalHeight: CGFloat = 200
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,47 +51,27 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                GeometryReader { geo in
-                    let bottomHeight = showSplitPane
-                        ? max(60, geo.size.height * splitRatio)
-                        : 0
-                    let topHeight = showSplitPane
-                        ? max(60, geo.size.height - bottomHeight - dividerHeight)
-                        : geo.size.height
+                // Main terminal — fills all available space
+                PTYTerminalView(manager: mgr)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    VStack(spacing: 0) {
-                        PTYTerminalView(manager: mgr)
-                            .frame(width: geo.size.width, height: topHeight)
-                            .clipped()
-
-                        if showSplitPane {
-                            // Draggable divider
-                            Rectangle()
-                                .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
-                                .frame(height: dividerHeight)
-                                .contentShape(Rectangle())
-                                .gesture(
-                                    DragGesture()
-                                        .onChanged { value in
-                                            let newRatio = splitRatio - value.translation.height / geo.size.height
-                                            splitRatio = min(max(newRatio, 0.15), 0.85)
-                                        }
-                                )
-                                .onHover { inside in
-                                    if inside {
-                                        NSCursor.resizeUpDown.push()
-                                    } else {
-                                        NSCursor.pop()
-                                    }
-                                }
-
-                            PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                                .frame(width: geo.size.width, height: bottomHeight)
-                                .clipped()
-                        }
+                // Split pane — always in the view tree (zero-height when hidden)
+                // to avoid structural view changes that trigger NSView recreation.
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(height: showSplitPane ? dividerHeight : 0)
+                    .gesture(showSplitPane ? DragGesture().onChanged { value in
+                        let newHeight = terminalHeight - value.translation.height
+                        terminalHeight = max(80, min(500, newHeight))
+                    } : nil)
+                    .onHover { inside in
+                        if inside && showSplitPane { NSCursor.resizeUpDown.push() }
+                        else { NSCursor.pop() }
                     }
-                    .animation(.none, value: splitRatio)
-                }
+
+                PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                    .frame(height: showSplitPane ? terminalHeight : 0)
+                    .clipped()
             }
         }
         .onAppear {
