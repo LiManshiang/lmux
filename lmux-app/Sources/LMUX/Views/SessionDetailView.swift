@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var splitRatio: CGFloat = 0.5
+    @State private var splitRatio: CGFloat = 0.3
 
     var body: some View {
         VStack(spacing: 0) {
