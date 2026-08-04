@@ -154,6 +154,8 @@ class TerminalManager: ObservableObject {
     /// LocalProcessTerminalView's process continues because we don't call terminate().
     func detach() {
         isConnected = false
+        idleTimer?.invalidate()
+        idleTimer = nil
         // Keep terminalView alive so process keeps running
     }
 
@@ -161,6 +163,7 @@ class TerminalManager: ObservableObject {
     func reattach() {
         guard terminalView != nil else { return }
         isConnected = true
+        startIdleTimer()
     }
 
     /// Formatted elapsed time since process started, or nil if not running.
@@ -241,16 +244,25 @@ class TerminalManager: ObservableObject {
 
     // MARK: - Agent Detection
 
+    /// Background queue for agent detection subprocess calls (pgrep/ps).
+    private static let detectionQueue = DispatchQueue(label: "lmux.agent-detection", qos: .utility)
+
     /// Start periodically checking the shell's child processes for known agent executables.
     private func startAgentDetection(sessionID: String, projectDir: String) {
         stopAgentDetection()
-        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.processRunning, self.processPID > 0 else { return }
-            if let detected = self.detectRunningAgent(shellPID: self.processPID) {
-                guard detected != self.detectedAgentType else { return }
-                self.detectedAgentType = detected
-                // Persist the detected agent type so the next restore uses it.
-                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
+        let pid = self.processPID
+        guard pid > 0 else { return }
+
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            guard let self, self.processRunning, self.processPID > 0 else { return }
+            let currentPID = self.processPID
+            Self.detectionQueue.async {
+                let detected = self.detectRunningAgent(shellPID: currentPID)
+                DispatchQueue.main.async {
+                    guard let self, let detected, detected != self.detectedAgentType else { return }
+                    self.detectedAgentType = detected
+                    SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
+                }
             }
         }
         // Fire immediately for quick detection.
