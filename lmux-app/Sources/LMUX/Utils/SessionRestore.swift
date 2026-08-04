@@ -43,48 +43,86 @@ enum SessionRestore {
         }
     }
 
-    private static var restoreURL: URL {
+    // MARK: - Caching & I/O
+
+    private static let restoreURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("lmux", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("restore.json")
-    }
+    }()
 
-    /// Save a session to the restore list.
+    private static let encoder: JSONEncoder = { let e = JSONEncoder(); return e }()
+    private static let decoder: JSONDecoder = { let d = JSONDecoder(); return d }()
+
+    /// All I/O runs on this queue to keep it off the main actor.
+    private static let ioQueue = DispatchQueue(label: "lmux.restore", qos: .utility)
+
+    /// In-memory cache to avoid reading the file on every access.
+    private static var cachedEntries: [Entry]?
+    /// Debounced write work item for coalescing rapid saves.
+    private static var writeWorkItem: DispatchWorkItem?
+
+    // MARK: - Public API
+
+    /// Save a session to the restore list. Updates in-memory cache immediately;
+    /// the disk write is coalesced and runs on a background queue.
     static func save(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy, launchMode: LaunchMode = .bash) {
-        var entries = load()
-        entries.removeAll { $0.sessionID == sessionID }
-        entries.append(Entry(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: launchMode))
-        save(entries)
+        ioQueue.async {
+            var entries = cachedEntries ?? loadFromDisk()
+            entries.removeAll { $0.sessionID == sessionID }
+            entries.append(Entry(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: launchMode))
+            cachedEntries = entries
+            scheduleWrite()
+        }
     }
 
     /// Remove a session from the restore list.
     static func remove(sessionID: String) {
-        var entries = load()
-        entries.removeAll { $0.sessionID == sessionID }
-        save(entries)
+        ioQueue.async {
+            var entries = cachedEntries ?? loadFromDisk()
+            entries.removeAll { $0.sessionID == sessionID }
+            cachedEntries = entries
+            scheduleWrite()
+        }
     }
 
-    /// Load all sessions that should be restored.
+    /// Load all sessions that should be restored. Returns from cache if available.
     static func loadAll() -> [Entry] {
-        load()
+        ioQueue.sync {
+            if let cached = cachedEntries { return cached }
+            let entries = loadFromDisk()
+            cachedEntries = entries
+            return entries
+        }
     }
 
     /// Clear the restore list.
     static func clearAll() {
-        save([])
+        ioQueue.async {
+            cachedEntries = []
+            scheduleWrite()
+        }
     }
 
-    private static func load() -> [Entry] {
+    // MARK: - Private
+
+    private static func loadFromDisk() -> [Entry] {
         guard let data = try? Data(contentsOf: restoreURL),
-              let entries = try? JSONDecoder().decode([Entry].self, from: data) else {
+              let entries = try? decoder.decode([Entry].self, from: data) else {
             return []
         }
         return entries
     }
 
-    private static func save(_ entries: [Entry]) {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: restoreURL, options: .atomic)
+    private static func scheduleWrite() {
+        writeWorkItem?.cancel()
+        let work = DispatchWorkItem {
+            guard let entries = cachedEntries else { return }
+            guard let data = try? encoder.encode(entries) else { return }
+            try? data.write(to: restoreURL, options: .atomic)
+        }
+        writeWorkItem = work
+        ioQueue.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 }
