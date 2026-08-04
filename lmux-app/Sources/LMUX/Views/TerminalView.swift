@@ -12,6 +12,9 @@ struct PTYTerminalView: NSViewRepresentable {
 
         let container = NSView(frame: .zero)
         container.wantsLayer = true
+        // Clip so a transiently overshooting terminal frame (e.g. during
+        // live-resize stretch) can never paint over the header row above.
+        container.clipsToBounds = true
         container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
         return container
     }
@@ -62,8 +65,10 @@ struct PTYTerminalView: NSViewRepresentable {
             let sx = containerSize.width / real.width
             let sy = containerSize.height / real.height
             let scale = min(sx, sy)
-            let dx = (containerSize.width - real.width * scale) / 2
-            let dy = (containerSize.height - real.height * scale) / 2
+            // Clamp to >= 0 so the stretched terminal never moves above or
+            // left of the container (which would paint over the header row).
+            let dx = max(0, (containerSize.width - real.width * scale) / 2)
+            let dy = max(0, (containerSize.height - real.height * scale) / 2)
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
