@@ -3,7 +3,6 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var splitRatio: CGFloat = 0.2
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,62 +50,35 @@ struct SessionDetailView: View {
 
                 Divider()
 
-            if showSplitPane {
-                GeometryReader { geo in
-                    let topHeight = max(60, geo.size.height * splitRatio)
-                    let bottomHeight = max(60, geo.size.height - topHeight - dividerHeight)
-
+                if showSplitPane {
                     VStack(spacing: 0) {
                         PTYTerminalView(manager: mgr)
-                            .frame(width: geo.size.width, height: topHeight)
-                            .clipped()
+                            .frame(maxWidth: .infinity)
+                            .layoutPriority(1)
 
-                        // Draggable divider
                         Rectangle()
-                            .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
-                            .frame(height: dividerHeight)
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture()
-                                    .onChanged { value in
-                                        let newRatio = splitRatio + value.translation.height / geo.size.height
-                                        splitRatio = min(max(newRatio, 0.15), 0.85)
-                                    }
-                            )
-                            .onHover { inside in
-                                if inside {
-                                    NSCursor.resizeUpDown.push()
-                                } else {
-                                    NSCursor.pop()
-                                }
-                            }
+                            .fill(Color.secondary.opacity(0.3))
+                            .frame(height: 1)
 
                         PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                            .frame(width: geo.size.width, height: bottomHeight)
-                            .clipped()
+                            .frame(maxWidth: .infinity)
+                            .layoutPriority(1)
                     }
-                    .animation(.none, value: splitRatio)
+                } else {
+                    PTYTerminalView(manager: mgr)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else {
-                PTYTerminalView(manager: mgr)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
             }
         }
         .onAppear {
             showSplitPane = false
-            // Only connect if not already managing a terminal for this session.
-            // Prevents session restarts during polling-triggered view updates.
-            if let id = viewModel.selectedSession?.id,
-               viewModel.connectedSessionId != id {
+            if let id = viewModel.selectedSession?.id {
                 connectToSession(id: id)
             }
         }
         .onChange(of: viewModel.selectedSession?.id) { newID in
             showSplitPane = false
             guard let id = newID else { return }
-            // Skip if already connected to prevent unnecessary session restarts
-            guard viewModel.connectedSessionId != id else { return }
             connectToSession(id: id)
         }
     }
@@ -118,23 +90,18 @@ struct SessionDetailView: View {
             let session = viewModel.sessions.first { $0.id == id }
             let dir = session?.projectDir ?? NSHomeDirectory()
             let cbc = session?.cbcSessionID
-            let agent = session?.agentType ?? .codebuddy
 
-            // Check restore entry to determine if this session was previously running an agent
-            let restoreEntry = SessionRestore.loadAll().first { $0.sessionID == id }
-            let hasCbcID = cbc != nil && !cbc!.isEmpty
-
-            if hasCbcID {
-                // Resume with known session ID (full history restore)
+            if let cbc, !cbc.isEmpty {
+                // Resume existing agent session
                 mgr.connect(
                     sessionID: id,
                     projectDir: dir,
                     cbcSessionID: cbc,
-                    agentType: agent
+                    agentType: session?.agentType ?? .codebuddy
                 )
             } else {
-                // New session or previously bash-only: start with bash terminal
-                mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
+                // New session: start with bash terminal
+                mgr.connectBash(sessionID: id, projectDir: dir, agentType: session?.agentType ?? .codebuddy)
             }
         } else if !mgr.isConnected {
             mgr.reattach()
@@ -143,5 +110,3 @@ struct SessionDetailView: View {
         viewModel.connectedSessionId = id
     }
 }
-
-private let dividerHeight: CGFloat = 4
