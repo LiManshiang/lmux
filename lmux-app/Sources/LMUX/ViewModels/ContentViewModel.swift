@@ -242,35 +242,28 @@ class ContentViewModel: ObservableObject {
             if done || error != nil { dispatchIO.close() }
         }
 
-        // wait for backend to print token (with timeout)
-        let start = Date()
-        while (loadToken() == nil || loadAddr() == nil) && Date().timeIntervalSince(start) < 10 {
-            try? await Task.sleep(nanoseconds: 200_000_000)
+        // Wait for backend to be ready (single loop, 1s interval, 20s timeout).
+        for _ in 0..<20 {
+            if let token = loadToken(), let addr = loadAddr() {
+                api.configure(addr: addr, token: token)
+                if await api.healthCheck() {
+                    dispatchIO.close()
+                    backendRunning = true
+                    backendStarting = false
+                    statusMessage = nil
+                    await refreshSessions()
+                    await restoreRunningSessions()
+                    startPolling()
+                    return
+                }
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
         dispatchIO.close()
 
-        let token = loadToken() ?? ""
-        let addr = loadAddr() ?? "127.0.0.1:19680"
-        api.configure(addr: addr, token: token)
-
-        // wait for backend to be ready
-        for i in 0..<15 {
-            if await api.healthCheck() {
-                backendRunning = true
-                backendStarting = false
-                statusMessage = nil
-                await refreshSessions()
-                await restoreRunningSessions()
-                startPolling()
-                return
-            }
-            statusMessage = "Waiting for backend... (\(i + 1)/15)"
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
         backendStarting = false
         backendRunning = false
-        errorMessage = "Backend failed to start on \(addr)"
+        errorMessage = "Backend failed to start on \(loadAddr() ?? "127.0.0.1:19680")"
         statusMessage = "Backend failed"
     }
 
@@ -318,7 +311,13 @@ class ContentViewModel: ObservableObject {
 
         do {
             let previousSelection = selectedSession?.id
-            let (_, summaries) = try await api.listSessions()
+            let summaries = try await api.listSessions()
+
+            // Avoid triggering SwiftUI diff on every poll when nothing changed.
+            let newIDs = Set(summaries.map { $0.id })
+            let oldIDs = Set(sessions.map { $0.id })
+            guard newIDs != oldIDs else { return }
+
             sessions = summaries
 
             // preserve selection across refresh
@@ -436,8 +435,9 @@ class ContentViewModel: ObservableObject {
         let entries = SessionRestore.loadAll()
         guard !entries.isEmpty else { return }
 
+        // Batch-create any sessions missing from the backend.
+        var needsRefresh = false
         for entry in entries {
-            // Ensure session exists in backend; create if missing
             if sessions.first(where: { $0.id == entry.sessionID }) == nil {
                 _ = try? await api.createSession(
                     projectDir: entry.projectDir,
@@ -445,40 +445,42 @@ class ContentViewModel: ObservableObject {
                     cbcSessionID: entry.cbcSessionID,
                     agentType: entry.agentType ?? .codebuddy
                 )
-                await refreshSessions()
+                needsRefresh = true
             }
+        }
+        if needsRefresh { await refreshSessions() }
 
+        for entry in entries {
             // Re-fetch the backend session so we can fall back to its cbcSessionID
-            // if the restore.json entry was corrupted or saved without it.
             let backend = sessions.first(where: { $0.id == entry.sessionID })
 
             // Prefer restore.json cbcSessionID, but fall back to backend if missing.
-            // (restore.json can lose cbcSessionID when overwritten by connectBash or detection.)
             let restoreCBC = entry.cbcSessionID
-            let hasRestoreCBC = (restoreCBC != nil && !restoreCBC!.isEmpty)
             let backendCBC = backend?.cbcSessionID
-            let effectiveCBC = hasRestoreCBC ? restoreCBC : backendCBC
-            let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
+            var effectiveCBC = (restoreCBC != nil && !restoreCBC!.isEmpty) ? restoreCBC : backendCBC
 
             let mgr = terminalManager(for: entry.sessionID)
+            let isAgentMode = entry.launchMode == .agent
 
-            // Determine how to restore based on launch mode and session state.
-            //
-            // The backend is authoritative for cbcSessionID (restore.json may be stale).
-            // If the backend has a session ID to resume, always restore to agent mode
-            // regardless of what restore.json says about launchMode.
-            //
-            // New entries (with launchMode):
-            //   .agent               → start agent via connect()
-            //   .bash                → restore bash terminal via connectBash()
-            //
-            // Old entries (no launchMode, for backward compatibility):
-            //   + cbcSessionID      → resume agent session (original behavior)
-            //   - cbcSessionID      → start bash terminal (safe fallback)
-            let isAgentMode = entry.launchMode == .agent || hasEffectiveCBC
-            let isLegacyResume = (entry.launchMode == nil && hasEffectiveCBC)
+            // Always try to find the codebuddy session ID from JSONL when missing,
+            // regardless of launchMode. New sessions start as bash but the user
+            // may have started codebuddy/claude manually, which stores a session ID
+            // in JSONL that we can use to resume conversation history.
+            if effectiveCBC == nil || effectiveCBC!.isEmpty {
+                if let found = try? await api.findCodebuddySession(projectDir: entry.projectDir),
+                   !found.isEmpty {
+                    effectiveCBC = found
+                }
+            }
 
-            if isAgentMode || isLegacyResume {
+            let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
+
+            // Sync cbcSessionID back to the backend so all paths (restore + connectToSession) see it.
+            if hasEffectiveCBC, let backend = backend, backend.cbcSessionID == nil || backend.cbcSessionID!.isEmpty {
+                try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: effectiveCBC!)
+            }
+
+            if isAgentMode || hasEffectiveCBC {
                 mgr.connect(
                     sessionID: entry.sessionID,
                     projectDir: entry.projectDir,
@@ -499,7 +501,7 @@ class ContentViewModel: ObservableObject {
 
     private func startPolling() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshSessions()
             }

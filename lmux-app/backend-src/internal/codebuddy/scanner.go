@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SessionInfo is a lightweight summary extracted from a CodeBuddy session JSONL.
@@ -20,10 +21,14 @@ type SessionInfo struct {
 
 // Cache for scanned sessions to avoid repeated file I/O.
 var (
-	cacheMu     sync.RWMutex
+	cacheMu        sync.RWMutex
 	cachedSessions []SessionInfo
+	sessionByID    map[string]SessionInfo
 	cacheValid     bool
+	cacheTime      time.Time
 )
+
+const cacheTTL = 60 * time.Second
 
 // InvalidateCache forces a re-scan on the next call.
 func InvalidateCache() {
@@ -106,7 +111,7 @@ func FindUserSessionsDirs() ([]string, error) {
 // Results are cached to avoid repeated file I/O.
 func ScanAll() ([]SessionInfo, error) {
 	cacheMu.RLock()
-	if cacheValid {
+	if cacheValid && time.Since(cacheTime) < cacheTTL {
 		result := cachedSessions
 		cacheMu.RUnlock()
 		return result, nil
@@ -117,7 +122,7 @@ func ScanAll() ([]SessionInfo, error) {
 	defer cacheMu.Unlock()
 
 	// Double-check after acquiring write lock
-	if cacheValid {
+	if cacheValid && time.Since(cacheTime) < cacheTTL {
 		return cachedSessions, nil
 	}
 
@@ -136,20 +141,27 @@ func ScanAll() ([]SessionInfo, error) {
 	}
 
 	cachedSessions = all
+	sessionByID = make(map[string]SessionInfo, len(all))
+	for _, s := range all {
+		sessionByID[s.SessionID] = s
+	}
 	cacheValid = true
+	cacheTime = time.Now()
 	return all, nil
 }
 
 // GetSessionByID looks up a single session by its CodeBuddy session ID.
 func GetSessionByID(sessionID string) (*SessionInfo, error) {
-	sessions, err := ScanAll()
+	// Ensure cache is populated.
+	_, err := ScanAll()
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range sessions {
-		if s.SessionID == sessionID {
-			return &s, nil
-		}
+
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	if info, ok := sessionByID[sessionID]; ok {
+		return &info, nil
 	}
 	return nil, fmt.Errorf("session %s not found", sessionID)
 }
@@ -196,6 +208,11 @@ func parseJSONL(path string) (SessionInfo, error) {
 		if entry.Timestamp > info.Timestamp {
 			info.Timestamp = entry.Timestamp
 		}
+
+		// Stop early once all needed fields are populated.
+		if info.SessionID != "" && info.CWD != "" && info.AiTitle != "" {
+			break
+		}
 	}
 
 	if info.SessionID == "" {
@@ -203,4 +220,22 @@ func parseJSONL(path string) (SessionInfo, error) {
 	}
 
 	return info, nil
+}
+
+// FindRecentSessionForProject scans all codebuddy session directories
+// and returns the most recent session ID for the given project directory.
+// Returns empty string if no matching session is found.
+func FindRecentSessionForProject(projectDir string) string {
+	sessions, err := ScanAll()
+	if err != nil {
+		return ""
+	}
+
+	var best SessionInfo
+	for _, s := range sessions {
+		if s.CWD == projectDir && s.Timestamp > best.Timestamp {
+			best = s
+		}
+	}
+	return best.SessionID
 }

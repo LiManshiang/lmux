@@ -22,17 +22,29 @@ enum APIError: LocalizedError {
     }
 }
 
-@MainActor
-class APIClient: ObservableObject {
+class APIClient {
     private var baseURL: String
     private var token: String
     private let session: URLSession
+
+    private static let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        return e
+    }()
+
+    private static let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        return d
+    }()
 
     init() {
         self.baseURL = "http://127.0.0.1:19680"
         self.token = ""
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 10
+        config.httpMaximumConnectionsPerHost = 1
+        config.httpShouldUsePipelining = true
+        config.networkServiceType = .responsiveData
         self.session = URLSession(configuration: config)
     }
 
@@ -43,14 +55,13 @@ class APIClient: ObservableObject {
 
     // MARK: - Sessions
 
-    func listSessions() async throws -> (sessions: [Session], summaries: [SessionSummary]) {
+    func listSessions() async throws -> [SessionSummary] {
         let data = try await get("/api/sessions")
         struct Response: Codable {
-            let sessions: [Session]?
             let summaries: [SessionSummary]
         }
         let resp = try decode(Response.self, from: data)
-        return (resp.sessions ?? [], resp.summaries)
+        return resp.summaries
     }
 
     func getSession(id: String) async throws -> Session {
@@ -106,6 +117,34 @@ class APIClient: ObservableObject {
         return resp.restored
     }
 
+    func findCodebuddySession(projectDir: String) async throws -> String? {
+        struct Body: Codable {
+            let projectDir: String
+            enum CodingKeys: String, CodingKey {
+                case projectDir = "project_dir"
+            }
+        }
+        let data = try await post("/api/codebuddy/find-session", body: Body(projectDir: projectDir))
+        struct Response: Codable {
+            let sessionID: String?
+            enum CodingKeys: String, CodingKey {
+                case sessionID = "session_id"
+            }
+        }
+        let resp = try decode(Response.self, from: data)
+        return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
+        struct Body: Codable {
+            let cbcSessionID: String
+            enum CodingKeys: String, CodingKey {
+                case cbcSessionID = "cbc_session_id"
+            }
+        }
+        _ = try await post("/api/sessions/\(sessionID)/cbc-session", body: Body(cbcSessionID: cbcSessionID))
+    }
+
     // MARK: - Health
 
     func healthCheck() async -> Bool {
@@ -139,7 +178,7 @@ class APIClient: ObservableObject {
         var req = try buildRequest(path)
         req.httpMethod = "POST"
         if let body = body {
-            req.httpBody = try JSONEncoder().encode(body)
+            req.httpBody = try Self.encoder.encode(body)
         }
         return try await perform(req)
     }
@@ -165,7 +204,7 @@ class APIClient: ObservableObject {
         case 404:
             throw APIError.notFound
         default:
-            if let err = try? JSONDecoder().decode([String: String].self, from: data),
+            if let err = try? Self.decoder.decode([String: String].self, from: data),
                let msg = err["error"] {
                 throw APIError.serverError(msg)
             }
@@ -175,7 +214,7 @@ class APIClient: ObservableObject {
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
-            return try JSONDecoder().decode(type, from: data)
+            return try Self.decoder.decode(type, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

@@ -74,6 +74,9 @@ func (m *Manager) Create(req CreateRequest) (*Session, error) {
 		return nil, fmt.Errorf("save session: %w", err)
 	}
 
+	// Invalidate scanner cache so newly created sessions are visible.
+	codebuddy.InvalidateCache()
+
 	return sess, nil
 }
 
@@ -168,24 +171,7 @@ func (m *Manager) RestoreAll() ([]*Session, error) {
 
 // Summaries returns lightweight summaries for all sessions.
 func (m *Manager) Summaries() ([]Summary, error) {
-	sessions, err := m.List()
-	if err != nil {
-		return nil, err
-	}
-	summaries := make([]Summary, len(sessions))
-	for i, s := range sessions {
-		summaries[i] = Summary{
-			ID:           s.ID,
-			Name:         s.Name,
-			ProjectDir:   s.ProjectDir,
-			CBCSessionID: s.CBCSessionID,
-			AgentType:    s.AgentType,
-			Status:       s.Status,
-			AiTitle:      s.AiTitle,
-			GitBranch:    s.GitBranch,
-		}
-	}
-	return summaries, nil
+	return m.store.ListSummaries()
 }
 
 func getGitBranch(dir string) string {
@@ -197,4 +183,14 @@ func getGitBranch(dir string) string {
 	branch := strings.TrimSpace(string(out))
 	if branch == "HEAD" { return "" }
 	return branch
+}
+
+// SetCBCSessionID sets the codebuddy session ID for an existing session.
+func (m *Manager) SetCBCSessionID(id, cbcSessionID string) error {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return err
+	}
+	sess.CBCSessionID = cbcSessionID
+	return m.store.Save(sess)
 }

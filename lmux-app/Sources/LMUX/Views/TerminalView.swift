@@ -27,7 +27,7 @@ struct PTYTerminalView: NSViewRepresentable {
             nsView.subviews.forEach { $0.removeFromSuperview() }
             context.coordinator.clear()
             terminal.frame = nsView.bounds
-            terminal.autoresizingMask = []
+            terminal.autoresizingMask = [.width, .height]
             nsView.addSubview(terminal)
             nsView.window?.makeFirstResponder(terminal)
             return

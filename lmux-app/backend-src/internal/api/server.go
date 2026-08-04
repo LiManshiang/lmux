@@ -41,6 +41,10 @@ func (s *Server) Start() error {
 			h.RenameSession(w, r)
 			return
 		}
+		if id := extractIDFromPath(path, "cbc-session"); id != "" && r.Method == http.MethodPost {
+			h.SetCBCSessionID(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			h.GetSession(w, r)
@@ -53,6 +57,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/restore", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			h.RestoreAll(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
+	mux.HandleFunc("/api/codebuddy/find-session", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.FindCodebuddySessionByProject(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}

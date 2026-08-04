@@ -158,6 +158,8 @@ class TerminalManager: ObservableObject {
     /// LocalProcessTerminalView's process continues because we don't call terminate().
     func detach() {
         isConnected = false
+        idleTimer?.invalidate()
+        idleTimer = nil
         // Keep terminalView alive so process keeps running
     }
 
@@ -165,6 +167,7 @@ class TerminalManager: ObservableObject {
     func reattach() {
         guard terminalView != nil else { return }
         isConnected = true
+        startIdleTimer()
     }
 
     /// Formatted elapsed time since process started, or nil if not running.
@@ -249,20 +252,53 @@ class TerminalManager: ObservableObject {
 
     // MARK: - Agent Detection
 
+    /// Background queue for agent detection subprocess calls (pgrep/ps).
+    private static let detectionQueue = DispatchQueue(label: "lmux.agent-detection", qos: .utility)
+
     /// Start periodically checking the shell's child processes for known agent executables.
     private func startAgentDetection(sessionID: String, projectDir: String) {
         stopAgentDetection()
-        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.processRunning, self.processPID > 0 else { return }
-            if let detected = self.detectRunningAgent(shellPID: self.processPID) {
-                guard detected != self.detectedAgentType else { return }
-                self.detectedAgentType = detected
-                // Persist the detected agent type so the next restore uses it.
-                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
+        let pid = self.processPID
+        guard pid > 0 else { return }
+
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            guard let self, self.processRunning, self.processPID > 0 else { return }
+            let currentPID = self.processPID
+            Self.detectionQueue.async { [weak self] in
+                guard let self else { return }
+                let result = self.detectRunningAgent(shellPID: currentPID)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let result else { return }
+                    guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
+                    self.detectedAgentType = result.agentType
+                    SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                }
             }
         }
-        // Fire immediately for quick detection.
+        // Fire immediately, then again at 3s and 10s for quick detection (agent might not be running yet).
         agentDetectionTimer?.fire()
+
+        let detectionPID = self.processPID
+        let alreadyDetected = self.detectedAgentType != nil
+
+        Self.detectionQueue.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, !alreadyDetected else { return }
+            let result = self.detectRunningAgent(shellPID: detectionPID)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let result else { return }
+                self.detectedAgentType = result.agentType
+                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+            }
+        }
+        Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, !alreadyDetected else { return }
+            let result = self.detectRunningAgent(shellPID: detectionPID)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let result else { return }
+                self.detectedAgentType = result.agentType
+                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+            }
+        }
     }
 
     private func stopAgentDetection() {
@@ -272,30 +308,62 @@ class TerminalManager: ObservableObject {
     }
 
     /// Walk child processes of `shellPID` to find known agent executables.
-    private func detectRunningAgent(shellPID: Int32) -> AgentType? {
-        // Get direct children of the shell process.
-        guard let childPIDs = getChildPIDs(of: shellPID) else { return nil }
+    /// Runs on background queue; does not access main-actor state.
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?)? {
+        // Check all descendants (not just direct children) in case agent runs in a subshell.
+        guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
-        for pid in childPIDs {
+        for pid in allPIDs {
             // Check the command line of each child.
             let cmdLine = getCommandLine(of: pid) ?? ""
             let lower = cmdLine.lowercased()
 
             // Detect Claude.
             if lower.contains("claude") && !lower.contains("claudecode") {
-                return .claude
+                return (.claude, extractSessionID(from: cmdLine, agent: "claude"))
             }
             // Detect CodeBuddy.
             if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
-                return .codebuddy
+                return (.codebuddy, extractSessionID(from: cmdLine, agent: "codebuddy"))
             }
         }
 
         return nil
     }
 
+    /// Extract the --session-id argument from an agent command line.
+    nonisolated private func extractSessionID(from cmdLine: String, agent: String) -> String? {
+        // codebuddy: codebuddy-code --permission-mode auto --session-id <UUID>
+        // claude:     claude --dangerously-skip-permissions --session-id <UUID>
+        let components = cmdLine.components(separatedBy: " ")
+        for i in 0..<(components.count - 1) {
+            let arg = components[i]
+            if arg == "--session-id" || arg.hasPrefix("--session-id=") {
+                if arg.contains("=") {
+                    return arg.components(separatedBy: "=").last
+                } else {
+                    return components[i + 1]
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Returns PIDs of all descendants (children recursively) of the given parent PID.
+    nonisolated private func getDescendantPIDs(of parentPID: Int32) -> [Int32]? {
+        var all: [Int32] = []
+        var queue = [parentPID]
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            guard let children = getChildPIDs(of: current) else { continue }
+            all.append(contentsOf: children)
+            queue.append(contentsOf: children)
+        }
+        return all.isEmpty ? nil : all
+    }
+
     /// Returns PIDs of direct children of the given parent PID.
-    private func getChildPIDs(of parentPID: Int32) -> [Int32]? {
+    nonisolated private func getChildPIDs(of parentPID: Int32) -> [Int32]? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         task.arguments = ["-P", "\(parentPID)"]
@@ -316,7 +384,7 @@ class TerminalManager: ObservableObject {
     }
 
     /// Returns the full command line of a process by PID.
-    private func getCommandLine(of pid: Int32) -> String? {
+    nonisolated private func getCommandLine(of pid: Int32) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-p", "\(pid)", "-o", "command="]
@@ -335,12 +403,23 @@ class TerminalManager: ObservableObject {
         }
     }
 
+    private static var agentPathCache: [String: String] = [:]
+
     private func findAgentPath(name: String) -> String {
+        // Return cached path if still valid.
+        if let cached = Self.agentPathCache[name],
+           FileManager.default.isExecutableFile(atPath: cached) {
+            return cached
+        }
+
         // 1. Search PATH first
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
         for dir in pathDirs {
             let p = "\(dir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
+            if FileManager.default.isExecutableFile(atPath: p) {
+                Self.agentPathCache[name] = p
+                return p
+            }
         }
 
         // 2. Try common fixed paths
@@ -349,7 +428,10 @@ class TerminalManager: ObservableObject {
             "/usr/local/bin/\(name)",
         ]
         for p in candidates {
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
+            if FileManager.default.isExecutableFile(atPath: p) {
+                Self.agentPathCache[name] = p
+                return p
+            }
         }
 
         // 3. Search nvm installations across mounted volumes
@@ -359,7 +441,10 @@ class TerminalManager: ObservableObject {
             if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
                 for entry in entries {
                     let p = "\(nvmBase)/\(entry)/bin/\(name)"
-                    if FileManager.default.isExecutableFile(atPath: p) { return p }
+                    if FileManager.default.isExecutableFile(atPath: p) {
+                        Self.agentPathCache[name] = p
+                        return p
+                    }
                 }
             }
         }
@@ -368,10 +453,15 @@ class TerminalManager: ObservableObject {
         let env = ProcessInfo.processInfo.environment
         if let nvmDir = env["NVM_DIR"] {
             let p = "\(nvmDir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: p) { return p }
+            if FileManager.default.isExecutableFile(atPath: p) {
+                Self.agentPathCache[name] = p
+                return p
+            }
         }
 
-        return "/opt/homebrew/bin/\(name)"
+        let fallback = "/opt/homebrew/bin/\(name)"
+        Self.agentPathCache[name] = fallback
+        return fallback
     }
 }
 
