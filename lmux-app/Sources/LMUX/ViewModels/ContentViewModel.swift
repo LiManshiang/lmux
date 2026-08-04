@@ -461,7 +461,6 @@ class ContentViewModel: ObservableObject {
                     agentType: entry.agentType ?? .codebuddy
                 )
             } else {
-            } else {
                 mgr.connectBash(
                     sessionID: entry.sessionID,
                     projectDir: entry.projectDir,
