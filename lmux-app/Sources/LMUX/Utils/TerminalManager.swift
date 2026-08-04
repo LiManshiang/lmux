@@ -23,13 +23,16 @@ class TerminalManager: ObservableObject {
     private(set) var processPID: Int32 = 0
     private var lastActivityTime: Date = Date()
     private var idleTimer: Timer?
+    private var agentDetectionTimer: Timer?
+    private(set) var detectedAgentType: AgentType?
 
-    /// Connect by spawning codebuddy-code directly via SwiftTerm's forkpty.
-    func connect(sessionID: String, projectDir: String, cbcSessionID: String?) {
+    /// Connect by spawning an agent directly via SwiftTerm's forkpty.
+    func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
         disconnect()
 
         currentSessionID = sessionID
 
+        // ... same terminal setup ...
         let view = OutputAwareTerminalView(frame: .zero)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
@@ -50,10 +53,10 @@ class TerminalManager: ObservableObject {
         }
 
         // Build command
-        let cbcPath = findCodeBuddyPath()
-        var args = ["--permission-mode", "auto", "-y"]
+        let agentPath = findAgentPath(name: agentType.executableName)
+        var args = agentType.launchArgs
         if let id = cbcSessionID, !id.isEmpty {
-            args.append(contentsOf: ["--session-id", id])
+            args.append(contentsOf: agentType.resumeArgs(sessionID: id))
         }
 
         // Build environment
@@ -68,14 +71,14 @@ class TerminalManager: ObservableObject {
         for p in ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.local/bin"] {
             if !pathEnv.contains(p) { pathEnv = "\(p):\(pathEnv)" }
         }
-        let cbcDir = URL(fileURLWithPath: cbcPath).deletingLastPathComponent().path
-        if !pathEnv.contains(cbcDir) { pathEnv = "\(cbcDir):\(pathEnv)" }
+        let agentDir = URL(fileURLWithPath: agentPath).deletingLastPathComponent().path
+        if !pathEnv.contains(agentDir) { pathEnv = "\(agentDir):\(pathEnv)" }
         parentEnv["PATH"] = pathEnv
 
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
         // Start process
-        view.startProcess(executable: cbcPath, args: args, environment: envList, currentDirectory: projectDir)
+        view.startProcess(executable: agentPath, args: args, environment: envList, currentDirectory: projectDir)
 
         // Register OSC 777 notification handler (ESC ] 777 ; notify ; <title> ; <body> ST)
         view.getTerminal().parser.oscHandlers[777] = { [weak self] data in
@@ -91,8 +94,8 @@ class TerminalManager: ObservableObject {
             self?.sendOSCNotification(title: "Session", body: msg)
         }
 
-        // Unlimited scrollback for full session history
-        view.getTerminal().changeScrollback(1_000_000)
+        // Keep enough scrollback for a full day of conversation.
+        view.getTerminal().changeScrollback(50_000)
 
         processGeneration += 1
         let gen = processGeneration
@@ -118,7 +121,7 @@ class TerminalManager: ObservableObject {
         startIdleTimer()
 
         // Persist for session restore on app restart
-        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID)
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: .agent)
     }
 
     private func startIdleTimer() {
@@ -134,6 +137,7 @@ class TerminalManager: ObservableObject {
     func disconnect() {
         idleTimer?.invalidate()
         idleTimer = nil
+        stopAgentDetection()
         if let sid = currentSessionID {
             SessionRestore.remove(sessionID: sid)
         }
@@ -186,18 +190,156 @@ class TerminalManager: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
-    private func findCodeBuddyPath() -> String {
+    /// Connect a bash/zsh terminal in the given directory (for new sessions).
+    func connectBash(sessionID: String, projectDir: String, agentType: AgentType) {
+        disconnect()
+
+        let view = OutputAwareTerminalView(frame: .zero)
+        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
+        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
+        view.nativeForegroundColor = theme.foregroundNSColor
+        view.nativeBackgroundColor = theme.backgroundNSColor
+        view.selectedTextBackgroundColor = theme.selectionNSColor
+        view.caretColor = theme.cursorNSColor
+        view.installColors(theme.ansiSwiftTermColors)
+
+        view.onFirstOutput = { [weak self] in
+            self?.onFirstOutput?()
+        }
+        view.onActivity = { [weak self] in
+            self?.lastActivityTime = Date()
+            self?.isIdle = false
+        }
+
+        let zshPath = "/bin/zsh"
+
+        // Inherit full environment from parent process
+        var parentEnv = ProcessInfo.processInfo.environment
+        parentEnv["TERM"] = "xterm-256color"
+        parentEnv["LANG"] = "en_US.UTF-8"
+        let envList = parentEnv.map { "\($0.key)=\($0.value)" }
+
+        view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
+        view.getTerminal().changeScrollback(1_000_000)
+
+        self.terminalView = view
+        isConnected = true
+        processRunning = true
+        processStartTime = Date()
+        processPID = view.process.shellPid
+        lastActivityTime = Date()
+        startIdleTimer()
+
+        // Persist for session restore
+        SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType, launchMode: .bash)
+
+        // Start agent detection: periodically check what child processes the user
+        // runs inside the bash terminal so we can restore the correct agent type.
+        startAgentDetection(sessionID: sessionID, projectDir: projectDir)
+    }
+
+    // MARK: - Agent Detection
+
+    /// Start periodically checking the shell's child processes for known agent executables.
+    private func startAgentDetection(sessionID: String, projectDir: String) {
+        stopAgentDetection()
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.processRunning, self.processPID > 0 else { return }
+            if let detected = self.detectRunningAgent(shellPID: self.processPID) {
+                guard detected != self.detectedAgentType else { return }
+                self.detectedAgentType = detected
+                // Persist the detected agent type so the next restore uses it.
+                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: detected, launchMode: .agent)
+            }
+        }
+        // Fire immediately for quick detection.
+        agentDetectionTimer?.fire()
+    }
+
+    private func stopAgentDetection() {
+        agentDetectionTimer?.invalidate()
+        agentDetectionTimer = nil
+        detectedAgentType = nil
+    }
+
+    /// Walk child processes of `shellPID` to find known agent executables.
+    private func detectRunningAgent(shellPID: Int32) -> AgentType? {
+        // Get direct children of the shell process.
+        guard let childPIDs = getChildPIDs(of: shellPID) else { return nil }
+
+        for pid in childPIDs {
+            // Check the command line of each child.
+            let cmdLine = getCommandLine(of: pid) ?? ""
+            let lower = cmdLine.lowercased()
+
+            // Detect Claude.
+            if lower.contains("claude") && !lower.contains("claudecode") {
+                return .claude
+            }
+            // Detect CodeBuddy.
+            if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
+                return .codebuddy
+            }
+        }
+
+        return nil
+    }
+
+    /// Returns PIDs of direct children of the given parent PID.
+    private func getChildPIDs(of parentPID: Int32) -> [Int32]? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        task.arguments = ["-P", "\(parentPID)"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return output.split(separator: "\n").compactMap { Int32($0) }
+        } catch {
+            return nil
+        }
+    }
+
+    /// Returns the full command line of a process by PID.
+    private func getCommandLine(of pid: Int32) -> String? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "command="]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return nil
+        }
+    }
+
+    private func findAgentPath(name: String) -> String {
         // 1. Search PATH first
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
         for dir in pathDirs {
-            let p = "\(dir)/codebuddy-code"
+            let p = "\(dir)/\(name)"
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
 
         // 2. Try common fixed paths
         let candidates = [
-            "/opt/homebrew/bin/codebuddy-code",
-            "/usr/local/bin/codebuddy-code",
+            "/opt/homebrew/bin/\(name)",
+            "/usr/local/bin/\(name)",
         ]
         for p in candidates {
             if FileManager.default.isExecutableFile(atPath: p) { return p }
@@ -209,7 +351,7 @@ class TerminalManager: ObservableObject {
             let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"
             if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
                 for entry in entries {
-                    let p = "\(nvmBase)/\(entry)/bin/codebuddy-code"
+                    let p = "\(nvmBase)/\(entry)/bin/\(name)"
                     if FileManager.default.isExecutableFile(atPath: p) { return p }
                 }
             }
@@ -218,24 +360,19 @@ class TerminalManager: ObservableObject {
         // 4. Check NVM_DIR from environment
         let env = ProcessInfo.processInfo.environment
         if let nvmDir = env["NVM_DIR"] {
-            let p = "\(nvmDir)/codebuddy-code"
+            let p = "\(nvmDir)/\(name)"
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
 
-        return "/opt/homebrew/bin/codebuddy-code"
+        return "/opt/homebrew/bin/\(name)"
     }
 }
 
 /// A LocalProcessTerminalView that notifies on first data received from the PTY.
-/// Also filters CSI 3 J (clear scrollback) escape sequences to preserve the
-/// entire conversation history in the terminal buffer.
 private class OutputAwareTerminalView: LocalProcessTerminalView {
     var onFirstOutput: (() -> Void)?
     var onActivity: (() -> Void)?
     private var outputDetected = false
-
-    /// Remaining bytes from the previous dataReceived call (partial escape sequence).
-    private var pending = Data()
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
         if !outputDetected {
@@ -243,59 +380,7 @@ private class OutputAwareTerminalView: LocalProcessTerminalView {
             onFirstOutput?()
         }
         onActivity?()
-
-        // Prepend any pending bytes from the previous partial call.
-        var data = pending + Data(slice)
-
-        // Filter out CSI 3 J sequences. This is the escape sequence that clears
-        // the terminal's scrollback buffer. We look for ESC [ (optional private
-        // chars) 3 J and remove the entire sequence.
-        //
-        // CSI format: ESC [ (0x20-0x3F)* (0x30-0x3F)* final(0x40-0x7E)
-        // CSI 3 J:     ESC [ ... 3 ... J where 3 is a parameter
-        //
-        // Handle cross-boundary: save up to 15 trailing bytes so a sequence
-        // split across dataReceived calls is reassembled.
-        var output = Data()
-        var i = 0
-        let esc: UInt8 = 0x1B
-        let bracket: UInt8 = 0x5B
-
-        while i < data.count {
-            if data[i] == esc, i + 1 < data.count, data[i + 1] == bracket {
-                // Find the end of the CSI sequence (final byte in 0x40-0x7E).
-                var end = i + 2
-                while end < data.count && data[end] < 0x40 {
-                    end += 1
-                }
-                if end < data.count, data[end] >= 0x40, data[end] <= 0x7E {
-                    let finalByte = data[end]
-                    // Check if this is a J final byte with parameter 3.
-                    if finalByte == 0x4A {
-                        let params = data[(i + 2)..<end]
-                        let isClearScrollback = params.contains(0x33) // ASCII '3'
-                        if isClearScrollback {
-                            print("[lmux:filter] blocked CSI 3 J at offset \(i)")
-                            i = end + 1  // skip entire CSI 3 J sequence
-                            continue
-                        }
-                    }
-                }
-            }
-            output.append(data[i])
-            i += 1
-        }
-
-        // Keep the last few bytes as pending — they might be part of a split
-        // escape sequence that will complete in the next dataReceived call.
-        let keep = min(15, output.count)
-        let split = output.count - keep
-        if split > 0 {
-            super.dataReceived(slice: Array(output[..<split])[...])
-            pending = Data(output[split...])
-        } else {
-            pending = Data(output)
-        }
+        super.dataReceived(slice: slice)
     }
 }
 
