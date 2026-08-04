@@ -3,7 +3,7 @@ import SwiftUI
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
-    @State private var splitRatio: CGFloat = 0.25
+    @State private var splitRatio: CGFloat = 0.2
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,51 +51,46 @@ struct SessionDetailView: View {
 
                 Divider()
 
-                // Main terminal: uses if/else branching to avoid GeometryReader
-                // when no split pane (fixes /skills reload), but both branches
-                // share the same .id() so SwiftUI preserves the NSView across toggle.
-                if showSplitPane {
-                    GeometryReader { geo in
-                        let bottomHeight = max(60, geo.size.height * splitRatio)
-                        let topHeight = max(60, geo.size.height - bottomHeight - dividerHeight)
+            if showSplitPane {
+                GeometryReader { geo in
+                    let topHeight = max(60, geo.size.height * splitRatio)
+                    let bottomHeight = max(60, geo.size.height - topHeight - dividerHeight)
 
-                        VStack(spacing: 0) {
-                            PTYTerminalView(manager: mgr)
-                                .id("main-terminal")
-                                .frame(width: geo.size.width, height: topHeight)
-                                .clipped()
+                    VStack(spacing: 0) {
+                        PTYTerminalView(manager: mgr)
+                            .frame(width: geo.size.width, height: topHeight)
+                            .clipped()
 
-                            // Draggable divider
-                            Rectangle()
-                                .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
-                                .frame(height: dividerHeight)
-                                .contentShape(Rectangle())
-                                .gesture(
-                                    DragGesture()
-                                        .onChanged { value in
-                                            let newRatio = splitRatio - value.translation.height / geo.size.height
-                                            splitRatio = min(max(newRatio, 0.15), 0.85)
-                                        }
-                                )
-                                .onHover { inside in
-                                    if inside {
-                                        NSCursor.resizeUpDown.push()
-                                    } else {
-                                        NSCursor.pop()
+                        // Draggable divider
+                        Rectangle()
+                            .fill(Color.secondary.opacity(splitRatio > 0.16 ? 0.3 : 0.6))
+                            .frame(height: dividerHeight)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { value in
+                                        let newRatio = splitRatio + value.translation.height / geo.size.height
+                                        splitRatio = min(max(newRatio, 0.15), 0.85)
                                     }
+                            )
+                            .onHover { inside in
+                                if inside {
+                                    NSCursor.resizeUpDown.push()
+                                } else {
+                                    NSCursor.pop()
                                 }
+                            }
 
-                            PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
-                                .frame(width: geo.size.width, height: bottomHeight)
-                                .clipped()
-                        }
-                        .animation(.none, value: splitRatio)
+                        PTYTerminalView(manager: viewModel.splitTerminalManager(for: sid))
+                            .frame(width: geo.size.width, height: bottomHeight)
+                            .clipped()
                     }
-                } else {
-                    PTYTerminalView(manager: mgr)
-                        .id("main-terminal")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .animation(.none, value: splitRatio)
                 }
+            } else {
+                PTYTerminalView(manager: mgr)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             }
         }
         .onAppear {
