@@ -12,9 +12,6 @@ struct PTYTerminalView: NSViewRepresentable {
 
         let container = NSView(frame: .zero)
         container.wantsLayer = true
-        // Clip so a transiently overshooting terminal frame (e.g. during
-        // live-resize stretch) can never paint over the header row above.
-        container.clipsToBounds = true
         container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
         return container
     }
