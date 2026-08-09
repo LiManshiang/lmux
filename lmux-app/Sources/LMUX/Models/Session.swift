@@ -25,8 +25,11 @@ enum AgentType: String, Codable, CaseIterable {
         }
     }
 
+    /// Arguments that resume an existing conversation by session ID.
+    /// Both codebuddy-code (-r/--resume) and claude (--resume) use `--resume <id>`.
+    /// `--session-id` only pins the ID and does not reliably restore history.
     func resumeArgs(sessionID: String) -> [String] {
-        return ["--session-id", sessionID]
+        return ["--resume", sessionID]
     }
 }
 

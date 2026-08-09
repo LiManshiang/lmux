@@ -110,6 +110,8 @@ struct SessionDetailView: View {
             let effectiveCBC = (cbc != nil && !cbc!.isEmpty) ? cbc : restoreCBC
 
             if let effectiveCBC, !effectiveCBC.isEmpty {
+                // Explicit session ID (Resume, or agent mode detected earlier):
+                // launch the agent and resume that conversation.
                 mgr.connect(
                     sessionID: id,
                     projectDir: dir,
