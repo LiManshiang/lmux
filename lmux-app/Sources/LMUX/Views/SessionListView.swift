@@ -137,6 +137,8 @@ private struct ContextUsageView: View {
     var body: some View {
         HStack(spacing: 4) {
             if percent != nil || credit != nil {
+                Image(systemName: "text.page")
+                    .font(.system(size: 9))
                 if let percent {
                     Text("上下文 \(percent)%")
                         .font(.system(size: 10))
