@@ -364,14 +364,16 @@ class TerminalManager: ObservableObject {
         return nil
     }
 
-    /// Extract the --session-id argument from an agent command line.
+    /// Extract the resume/session ID from an agent command line.
     nonisolated private func extractSessionID(from cmdLine: String, agent: String) -> String? {
-        // codebuddy: codebuddy-code --permission-mode auto --session-id <UUID>
-        // claude:     claude --dangerously-skip-permissions --session-id <UUID>
+        // codebuddy: codebuddy-code --permission-mode auto --resume <UUID>
+        //            codebuddy-code --permission-mode auto --session-id <UUID>
+        // claude:     claude --dangerously-skip-permissions --resume <UUID>
         let components = cmdLine.components(separatedBy: " ")
         for i in 0..<(components.count - 1) {
             let arg = components[i]
-            if arg == "--session-id" || arg.hasPrefix("--session-id=") {
+            if arg == "--session-id" || arg == "--resume"
+                || arg.hasPrefix("--session-id=") || arg.hasPrefix("--resume=") {
                 if arg.contains("=") {
                     return arg.components(separatedBy: "=").last
                 } else {

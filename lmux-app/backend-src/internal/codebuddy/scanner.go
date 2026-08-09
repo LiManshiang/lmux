@@ -17,6 +17,11 @@ type SessionInfo struct {
 	CWD       string `json:"cwd"`
 	AiTitle   string `json:"ai_title"`
 	Timestamp int64  `json:"timestamp"`
+	// HasAssistant records whether the session ever received an assistant
+	// reply. Sessions with only user messages (e.g. one started then
+	// immediately resumed away from) are not real conversations and should
+	// not be picked as the "recent" session.
+	HasAssistant bool `json:"-"`
 }
 
 // Cache for scanned sessions to avoid repeated file I/O.
@@ -28,7 +33,7 @@ var (
 	cacheTime      time.Time
 )
 
-const cacheTTL = 60 * time.Second
+const cacheTTL = 30 * time.Second
 
 // InvalidateCache forces a re-scan on the next call.
 func InvalidateCache() {
@@ -185,6 +190,7 @@ func parseJSONL(path string) (SessionInfo, error) {
 			CWD       string `json:"cwd"`
 			Timestamp int64  `json:"timestamp"`
 			Type      string `json:"type"`
+			Role      string `json:"role"`
 			AiTitle   string `json:"aiTitle"`
 		}
 		if err := json.Unmarshal(line, &entry); err != nil {
@@ -204,14 +210,15 @@ func parseJSONL(path string) (SessionInfo, error) {
 			info.AiTitle = entry.AiTitle
 		}
 
-		// track latest timestamp
-		if entry.Timestamp > info.Timestamp {
-			info.Timestamp = entry.Timestamp
+		// a real conversation has at least one assistant reply
+		if entry.Type == "message" && entry.Role == "assistant" {
+			info.HasAssistant = true
 		}
 
-		// Stop early once all needed fields are populated.
-		if info.SessionID != "" && info.CWD != "" && info.AiTitle != "" {
-			break
+		// track latest timestamp (scan the whole file so Timestamp reflects
+		// the last activity, not wherever an early break happened)
+		if entry.Timestamp > info.Timestamp {
+			info.Timestamp = entry.Timestamp
 		}
 	}
 
@@ -233,7 +240,7 @@ func FindRecentSessionForProject(projectDir string) string {
 
 	var best SessionInfo
 	for _, s := range sessions {
-		if s.CWD == projectDir && s.Timestamp > best.Timestamp {
+		if s.CWD == projectDir && s.HasAssistant && s.Timestamp > best.Timestamp {
 			best = s
 		}
 	}
