@@ -88,12 +88,7 @@ private struct SessionRowObserved: View {
     @EnvironmentObject var viewModel: ContentViewModel
 
     var body: some View {
-        // SessionRowContent receives `manager` as a plain value, so SwiftUI's
-        // structural-equality pass can skip re-evaluating its body when only
-        // the manager's @Published state (isIdle/processRunning) changed.
-        // Keying on that state forces the content to rebuild in real time.
         SessionRowContent(session: session, manager: manager)
-            .id("\(manager.isIdle)-\(manager.processRunning)")
     }
 }
 
@@ -104,6 +99,27 @@ private struct SessionRowStatic: View {
 
     var body: some View {
         SessionRowContent(session: session, manager: nil)
+    }
+}
+
+/// Live idle/running status. Owns the @ObservedObject so it re-renders when
+/// the manager's @Published state changes — the content row passes the manager
+/// as a plain value and must NOT key on it (identical `.id()` across rows
+/// breaks LazyVStack, hiding rows).
+private struct SessionStatusView: View {
+    @ObservedObject var manager: TerminalManager
+
+    var body: some View {
+        if manager.processRunning {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(manager.isIdle ? Color.secondary : Color.green)
+                    .frame(width: 5, height: 5)
+                Text(manager.isIdle ? "idle" : "running")
+                    .font(.system(size: 10))
+                    .foregroundColor(manager.isIdle ? .secondary : .green)
+            }
+        }
     }
 }
 
@@ -151,16 +167,9 @@ private struct SessionRowContent: View {
                     .fontWeight(isSelected ? .semibold : .regular)
                     .lineLimit(1)
 
-                // Status line
-                if let mgr = manager, mgr.processRunning {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(mgr.isIdle ? Color.secondary : Color.green)
-                            .frame(width: 5, height: 5)
-                        Text(mgr.isIdle ? "idle" : "running")
-                            .font(.system(size: 10))
-                            .foregroundColor(mgr.isIdle ? .secondary : .green)
-                    }
+                // Status line (observed live by SessionStatusView)
+                if let mgr = manager {
+                    SessionStatusView(manager: mgr)
                 }
 
                 HStack(spacing: 4) {
