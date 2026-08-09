@@ -131,22 +131,29 @@ private struct ContextUsageView: View {
     @State private var percent: Int?
 
     var body: some View {
-        Group {
+        HStack(spacing: 4) {
             if let percent {
-                HStack(spacing: 4) {
-                    Image(systemName: "text.page")
-                        .font(.system(size: 9))
-                    Text("上下文 \(percent)%")
-                        .font(.system(size: 10))
-                        .monospacedDigit()
-                }
-                .foregroundColor(percent >= 80 ? .orange : .secondary)
+                Image(systemName: "text.page")
+                    .font(.system(size: 9))
+                Text("上下文 \(percent)%")
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+            } else {
+                // Placeholder keeps the view mounted so .task runs; an empty
+                // body would make SwiftUI skip mounting and never fetch.
+                Text("  ")
             }
         }
+        .foregroundColor((percent ?? 0) >= 80 ? .orange : .secondary)
         .task {
             while !Task.isCancelled {
-                percent = await viewModel.codebuddyContextPercent(cbcSessionID: cbcSessionID)
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                if let p = await viewModel.codebuddyContextPercent(cbcSessionID: cbcSessionID) {
+                    percent = p
+                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                } else {
+                    // Backend may not be ready yet on launch; retry quickly.
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                }
             }
         }
     }
