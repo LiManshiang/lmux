@@ -173,14 +173,18 @@ private struct SessionRowContent: View {
                 }
 
                 HStack(spacing: 4) {
-                    if viewModel.isSessionActive(session.id), let elapsed = manager?.formattedElapsed {
-                        HStack(spacing: 2) {
-                            Image(systemName: "clock")
-                                .font(.system(size: 9))
-                            Text(elapsed)
-                                .font(.system(size: 10))
+                    if viewModel.isSessionActive(session.id) {
+                        // formattedElapsed is computed on read; TimelineView
+                        // re-evaluates every second so the clock ticks live.
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            HStack(spacing: 2) {
+                                Image(systemName: "clock")
+                                    .font(.system(size: 9))
+                                Text(manager?.formattedElapsed ?? "")
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundColor(.orange)
                         }
-                        .foregroundColor(.orange)
                     }
 
                     if let branch = session.gitBranch {
