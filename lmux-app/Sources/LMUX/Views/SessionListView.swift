@@ -66,6 +66,47 @@ struct SessionRowView: View {
     let session: SessionSummary
     @EnvironmentObject var viewModel: ContentViewModel
 
+    private var manager: TerminalManager? {
+        // Read-only: don't create a TerminalManager just to render a row.
+        viewModel.terminalManagerIfExists(for: session.id)
+    }
+
+    var body: some View {
+        if let mgr = manager {
+            // Observe the manager so idle/running state updates in real time.
+            SessionRowObserved(session: session, manager: mgr)
+        } else {
+            SessionRowStatic(session: session)
+        }
+    }
+}
+
+/// Row rendered when a TerminalManager exists; observes it for live status.
+private struct SessionRowObserved: View {
+    let session: SessionSummary
+    @ObservedObject var manager: TerminalManager
+    @EnvironmentObject var viewModel: ContentViewModel
+
+    var body: some View {
+        SessionRowContent(session: session, manager: manager)
+    }
+}
+
+/// Row rendered when no TerminalManager exists yet (nothing to observe).
+private struct SessionRowStatic: View {
+    let session: SessionSummary
+    @EnvironmentObject var viewModel: ContentViewModel
+
+    var body: some View {
+        SessionRowContent(session: session, manager: nil)
+    }
+}
+
+private struct SessionRowContent: View {
+    let session: SessionSummary
+    let manager: TerminalManager?
+    @EnvironmentObject var viewModel: ContentViewModel
+
     private var isSelected: Bool {
         viewModel.selectedSession?.id == session.id
     }
@@ -79,11 +120,6 @@ struct SessionRowView: View {
             return Color.green
         }
         return Color.gray
-    }
-
-    private var manager: TerminalManager? {
-        // Read-only: don't create a TerminalManager just to render a row.
-        viewModel.terminalManagerIfExists(for: session.id)
     }
 
     var body: some View {
