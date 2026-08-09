@@ -111,13 +111,27 @@ struct SessionDetailView: View {
 
             if let effectiveCBC, !effectiveCBC.isEmpty {
                 // Explicit session ID (Resume, or agent mode detected earlier):
-                // launch the agent and resume that conversation.
-                mgr.connect(
-                    sessionID: id,
-                    projectDir: dir,
-                    cbcSessionID: effectiveCBC,
-                    agentType: agent
-                )
+                // launch the agent and resume that conversation. If the ID is
+                // stale/invalid, fall back to the directory's recent session.
+                Task {
+                    if await viewModel.isCodebuddySessionValid(effectiveCBC) {
+                        mgr.connect(
+                            sessionID: id,
+                            projectDir: dir,
+                            cbcSessionID: effectiveCBC,
+                            agentType: agent
+                        )
+                    } else if let found = await viewModel.findCodebuddySession(projectDir: dir) {
+                        mgr.connect(
+                            sessionID: id,
+                            projectDir: dir,
+                            cbcSessionID: found,
+                            agentType: agent
+                        )
+                    } else {
+                        mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
+                    }
+                }
             } else {
                 // New session without history: start a bash terminal. Agent
                 // detection will upgrade to agent mode if the user launches

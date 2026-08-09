@@ -437,6 +437,21 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Look up the most recent valid CodeBuddy conversation in a project
+    /// directory, or nil when there is no history / backend unavailable.
+    func findCodebuddySession(projectDir: String) async -> String? {
+        guard backendRunning else { return nil }
+        guard let found = try? await api.findCodebuddySession(projectDir: projectDir),
+              !found.isEmpty else { return nil }
+        return found
+    }
+
+    /// Returns true when `sessionID` refers to a real, resumable conversation.
+    func isCodebuddySessionValid(_ sessionID: String?) async -> Bool {
+        guard let sessionID, !sessionID.isEmpty, backendRunning else { return false }
+        return await api.codebuddySessionValid(sessionID: sessionID)
+    }
+
     func restoreAll() async {
         isLoading = true
         defer { isLoading = false }
@@ -498,17 +513,22 @@ class ContentViewModel: ObservableObject {
             // known to be an agent session. Scanning unconditionally would
             // match old sessions in the same directory (e.g. home dir) and
             // hijack a fresh bash session into agent mode on restore.
-            if isAgentMode, (effectiveCBC == nil || effectiveCBC!.isEmpty) {
-                if let found = try? await api.findCodebuddySession(projectDir: entry.projectDir),
-                   !found.isEmpty {
-                    effectiveCBC = found
+            // Also re-resolve when the persisted ID is stale/invalid (e.g. a
+            // stub session that was saved before having any assistant reply).
+            if isAgentMode {
+                let cbcValid = await isCodebuddySessionValid(effectiveCBC)
+                if !cbcValid {
+                    if let found = await findCodebuddySession(projectDir: entry.projectDir) {
+                        effectiveCBC = found
+                    }
                 }
             }
 
             let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
 
             // Sync cbcSessionID back to the backend so all paths (restore + connectToSession) see it.
-            if hasEffectiveCBC, let backend = backend, backend.cbcSessionID == nil || backend.cbcSessionID!.isEmpty {
+            // Also correct stale values that were re-resolved above.
+            if hasEffectiveCBC, let backend = backend, backend.cbcSessionID != effectiveCBC {
                 try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: effectiveCBC!)
             }
 

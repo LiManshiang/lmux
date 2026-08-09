@@ -135,6 +135,19 @@ class APIClient {
         return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    /// Returns true if the given codebuddy session ID is a real conversation
+    /// (has at least one assistant reply) and can be resumed.
+    func codebuddySessionValid(sessionID: String) async -> Bool {
+        struct Response: Codable {
+            let valid: Bool
+        }
+        guard let data = try? await get("/api/codebuddy/session/\(sessionID)"),
+              let resp = try? decode(Response.self, from: data) else {
+            return false
+        }
+        return resp.valid
+    }
+
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
         struct Body: Codable {
             let cbcSessionID: String

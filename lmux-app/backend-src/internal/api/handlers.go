@@ -162,6 +162,21 @@ func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.R
 	})
 }
 
+// CodebuddySessionStatus reports whether a codebuddy session ID is a real
+// conversation (has at least one assistant reply). Used to detect stale
+// session IDs persisted earlier and re-scan for the right one.
+func (h *Handler) CodebuddySessionStatus(w http.ResponseWriter, r *http.Request) {
+	id := extractID(r.URL.Path, "/api/codebuddy/session/")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+	info, err := codebuddy.GetSessionByID(id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"valid": err == nil && info.HasAssistant,
+	})
+}
+
 // SetCBCSessionID updates the codebuddy session ID on a session record.
 func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 	id := extractID(r.URL.Path, "/api/sessions/")
