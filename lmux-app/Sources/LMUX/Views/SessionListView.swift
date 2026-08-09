@@ -88,7 +88,12 @@ private struct SessionRowObserved: View {
     @EnvironmentObject var viewModel: ContentViewModel
 
     var body: some View {
+        // SessionRowContent receives `manager` as a plain value, so SwiftUI's
+        // structural-equality pass can skip re-evaluating its body when only
+        // the manager's @Published state (isIdle/processRunning) changed.
+        // Keying on that state forces the content to rebuild in real time.
         SessionRowContent(session: session, manager: manager)
+            .id("\(manager.isIdle)-\(manager.processRunning)")
     }
 }
 
