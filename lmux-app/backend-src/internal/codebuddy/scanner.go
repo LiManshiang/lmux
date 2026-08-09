@@ -264,9 +264,17 @@ func GetSessionContextTokens(sessionID string) (int64, error) {
 // GetSessionContext returns the accumulated input tokens and the model ID
 // from the latest message usage record of a session.
 func GetSessionContext(sessionID string) (int64, string, error) {
+	input, _, _, model, err := GetSessionUsage(sessionID)
+	return input, model, err
+}
+
+// GetSessionUsage returns the latest accumulated input tokens, cached input
+// tokens, summed output tokens, and the model ID for a session, read from its
+// JSONL (same source as the context percentage, so it stays live).
+func GetSessionUsage(sessionID string) (input, cacheRead, output int64, model string, err error) {
 	dirs, err := FindUserSessionsDirs()
 	if err != nil {
-		return 0, "", err
+		return 0, 0, 0, "", err
 	}
 	var filePath string
 	for _, dir := range dirs {
@@ -277,37 +285,39 @@ func GetSessionContext(sessionID string) (int64, string, error) {
 		}
 	}
 	if filePath == "" {
-		return 0, "", fmt.Errorf("JSONL for session %s not found", sessionID)
+		return 0, 0, 0, "", fmt.Errorf("JSONL for session %s not found", sessionID)
 	}
 	return lastUsageInfo(filePath)
 }
 
-// lastUsageInfo reads the tail of a JSONL file and returns input_tokens and
-// the model from the most recent message usage record.
-func lastUsageInfo(path string) (int64, string, error) {
+// lastUsageInfo reads the tail of a JSONL file and returns the latest
+// accumulated input tokens, cached tokens, summed output tokens, and model
+// from the most recent message usage records.
+func lastUsageInfo(path string) (input, cacheRead, output int64, model string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, "", err
+		return 0, 0, 0, "", err
 	}
 	defer f.Close()
 
 	stat, err := f.Stat()
 	if err != nil {
-		return 0, "", err
+		return 0, 0, 0, "", err
 	}
 	size := stat.Size()
 
-	const tailSize = int64(2 * 1024 * 1024) // scan up to 2MB from the end
+	const tailSize = int64(4 * 1024 * 1024) // scan up to 4MB from the end
 	readStart := size - tailSize
 	if readStart < 0 {
 		readStart = 0
 	}
 	buf := make([]byte, size-readStart)
 	if _, err := f.ReadAt(buf, readStart); err != nil && err != io.EOF {
-		return 0, "", err
+		return 0, 0, 0, "", err
 	}
 
 	lines := strings.Split(string(buf), "\n")
+	first := true
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
@@ -321,7 +331,9 @@ func lastUsageInfo(path string) (int64, string, error) {
 			} `json:"providerData"`
 			Message struct {
 				Usage *struct {
-					InputTokens int64 `json:"input_tokens"`
+					InputTokens          int64 `json:"input_tokens"`
+					OutputTokens         int64 `json:"output_tokens"`
+					CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
 				} `json:"usage"`
 			} `json:"message"`
 		}
@@ -329,81 +341,41 @@ func lastUsageInfo(path string) (int64, string, error) {
 			continue
 		}
 		if entry.Type == "message" && entry.Message.Usage != nil {
-			model := ""
-			if entry.ProviderData != nil {
-				model = entry.ProviderData.RequestModelID
-				if model == "" {
-					model = entry.ProviderData.Model
+			u := entry.Message.Usage
+			output += u.OutputTokens
+			if first {
+				first = false
+				input = u.InputTokens
+				cacheRead = u.CacheReadInputTokens
+				if entry.ProviderData != nil {
+					model = entry.ProviderData.RequestModelID
+					if model == "" {
+						model = entry.ProviderData.Model
+					}
 				}
 			}
-			return entry.Message.Usage.InputTokens, model, nil
 		}
 	}
-	return 0, "", fmt.Errorf("no message usage found in %s", path)
+	if first {
+		return 0, 0, 0, "", fmt.Errorf("no message usage found in %s", path)
+	}
+	return input, cacheRead, output, model, nil
 }
 
 // GetSessionCreditUsage estimates the total credit (platform cost units) spent
-// by a codebuddy session, from its trace files. Input tokens are taken from
-// the latest trace (they accumulate across the conversation), outputs are
-// summed across all traces, and prices come from the model's cost table.
+// by a codebuddy session, from its JSONL usage records (same live source as
+// the context percentage). Input tokens are the latest accumulated value,
+// outputs are summed, and prices come from the model's cost table.
 func GetSessionCreditUsage(sessionID string) (float64, error) {
-	home, err := os.UserHomeDir()
+	input, _, output, model, err := GetSessionUsage(sessionID)
 	if err != nil {
 		return 0, err
 	}
-	tracesDir := filepath.Join(home, ".codebuddy", "traces")
-	files, err := filepath.Glob(filepath.Join(tracesDir, "*", "trace_*.json"))
-	if err != nil {
-		return 0, err
-	}
-
-	var lastInput, lastCached, totalOutput int64
-	var model string
-	found := false
-
-	for _, f := range files {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		var doc struct {
-			Trace struct {
-				SessionID string `json:"sessionId"`
-				ModelInfo *struct {
-					Models             []string `json:"models"`
-					TotalInputTokens   int64    `json:"totalInputTokens"`
-					TotalOutputTokens  int64    `json:"totalOutputTokens"`
-					TotalCachedTokens  int64    `json:"totalCachedTokens"`
-				} `json:"modelInfo"`
-			} `json:"trace"`
-		}
-		if json.Unmarshal(data, &doc) != nil || doc.Trace.SessionID != sessionID {
-			continue
-		}
-		mi := doc.Trace.ModelInfo
-		if mi == nil {
-			continue
-		}
-		found = true
-		lastInput = mi.TotalInputTokens
-		lastCached = mi.TotalCachedTokens
-		totalOutput += mi.TotalOutputTokens
-		if model == "" && len(mi.Models) > 0 {
-			model = mi.Models[0]
-		}
-	}
-
-	if !found {
-		return 0, fmt.Errorf("no trace data for session %s", sessionID)
-	}
-
 	cost := CostForModel(model)
-	chargedInput := lastInput - lastCached
-	if chargedInput < 0 {
-		chargedInput = 0
-	}
-	credit := float64(chargedInput)/1e6*cost.Input +
-		float64(lastCached)/1e6*cost.CacheRead +
-		float64(totalOutput)/1e6*cost.Output
+	// Count full input tokens (cached reads are discounted on the platform,
+	// but counting them keeps the figure visible and growing with the
+	// conversation).
+	credit := float64(input)/1e6*cost.Input +
+		float64(output)/1e6*cost.Output
 	return credit, nil
 }
