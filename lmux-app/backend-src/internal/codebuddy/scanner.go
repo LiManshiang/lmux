@@ -341,3 +341,69 @@ func lastUsageInfo(path string) (int64, string, error) {
 	}
 	return 0, "", fmt.Errorf("no message usage found in %s", path)
 }
+
+// GetSessionCreditUsage estimates the total credit (platform cost units) spent
+// by a codebuddy session, from its trace files. Input tokens are taken from
+// the latest trace (they accumulate across the conversation), outputs are
+// summed across all traces, and prices come from the model's cost table.
+func GetSessionCreditUsage(sessionID string) (float64, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, err
+	}
+	tracesDir := filepath.Join(home, ".codebuddy", "traces")
+	files, err := filepath.Glob(filepath.Join(tracesDir, "*", "trace_*.json"))
+	if err != nil {
+		return 0, err
+	}
+
+	var lastInput, lastCached, totalOutput int64
+	var model string
+	found := false
+
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Trace struct {
+				SessionID string `json:"sessionId"`
+				ModelInfo *struct {
+					Models             []string `json:"models"`
+					TotalInputTokens   int64    `json:"totalInputTokens"`
+					TotalOutputTokens  int64    `json:"totalOutputTokens"`
+					TotalCachedTokens  int64    `json:"totalCachedTokens"`
+				} `json:"modelInfo"`
+			} `json:"trace"`
+		}
+		if json.Unmarshal(data, &doc) != nil || doc.Trace.SessionID != sessionID {
+			continue
+		}
+		mi := doc.Trace.ModelInfo
+		if mi == nil {
+			continue
+		}
+		found = true
+		lastInput = mi.TotalInputTokens
+		lastCached = mi.TotalCachedTokens
+		totalOutput += mi.TotalOutputTokens
+		if model == "" && len(mi.Models) > 0 {
+			model = mi.Models[0]
+		}
+	}
+
+	if !found {
+		return 0, fmt.Errorf("no trace data for session %s", sessionID)
+	}
+
+	cost := CostForModel(model)
+	chargedInput := lastInput - lastCached
+	if chargedInput < 0 {
+		chargedInput = 0
+	}
+	credit := float64(chargedInput)/1e6*cost.Input +
+		float64(lastCached)/1e6*cost.CacheRead +
+		float64(totalOutput)/1e6*cost.Output
+	return credit, nil
+}

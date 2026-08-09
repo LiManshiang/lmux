@@ -148,22 +148,25 @@ class APIClient {
         return resp.valid
     }
 
-    /// Current conversation context size (accumulated input tokens) and the
-    /// model's context window for a codebuddy session.
-    func codebuddyContext(sessionID: String) async -> (tokens: Int, contextWindow: Int)? {
+    /// Current conversation context size (accumulated input tokens), the
+    /// model's context window, and estimated credit spent, for a codebuddy
+    /// session.
+    func codebuddyContext(sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)? {
         struct Response: Codable {
             let tokens: Int
             let contextWindow: Int
+            let credit: Double
             enum CodingKeys: String, CodingKey {
                 case tokens
                 case contextWindow = "context_window"
+                case credit
             }
         }
         guard let data = try? await get("/api/codebuddy/context/\(sessionID)"),
               let resp = try? decode(Response.self, from: data) else {
             return nil
         }
-        return (resp.tokens, resp.contextWindow)
+        return (resp.tokens, resp.contextWindow, resp.credit)
     }
 
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {

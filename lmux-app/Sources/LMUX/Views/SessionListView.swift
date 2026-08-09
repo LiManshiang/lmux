@@ -132,15 +132,21 @@ private struct ContextUsageView: View {
     let projectDir: String
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var percent: Int?
+    @State private var credit: Double?
 
     var body: some View {
         HStack(spacing: 4) {
-            if let percent {
-                Image(systemName: "text.page")
-                    .font(.system(size: 9))
-                Text("上下文 \(percent)%")
-                    .font(.system(size: 10))
-                    .monospacedDigit()
+            if percent != nil || credit != nil {
+                if let percent {
+                    Text("上下文 \(percent)%")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                }
+                if let credit {
+                    Text("· ¥\(String(format: "%.2f", credit))")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                }
             } else {
                 // Placeholder keeps the view mounted so .task runs; an empty
                 // body would make SwiftUI skip mounting and never fetch.
@@ -154,8 +160,15 @@ private struct ContextUsageView: View {
                 if cbc == nil {
                     cbc = await viewModel.findCodebuddySession(projectDir: projectDir)
                 }
-                if let cbc, let p = await viewModel.codebuddyContextPercent(cbcSessionID: cbc) {
-                    percent = p
+                if let cbc {
+                    if let p = await viewModel.codebuddyContextPercent(cbcSessionID: cbc) {
+                        percent = p
+                    }
+                    if let c = await viewModel.codebuddyContextCredit(cbcSessionID: cbc) {
+                        credit = c
+                    }
+                }
+                if percent != nil || credit != nil {
                     try? await Task.sleep(nanoseconds: 60_000_000_000)
                 } else {
                     // Backend may not be ready yet on launch; retry quickly.

@@ -469,6 +469,15 @@ class ContentViewModel: ObservableObject {
         return Int((Double(info.tokens) / Double(info.contextWindow) * 100).rounded())
     }
 
+    /// Estimated credit spent on a codebuddy conversation, or nil when
+    /// unavailable (no trace data or free model).
+    func codebuddyContextCredit(cbcSessionID: String?) async -> Double? {
+        guard let cbcSessionID, !cbcSessionID.isEmpty, backendRunning else { return nil }
+        guard let info = await api.codebuddyContext(sessionID: cbcSessionID),
+              info.credit > 0 else { return nil }
+        return info.credit
+    }
+
     func restoreAll() async {
         isLoading = true
         defer { isLoading = false }
