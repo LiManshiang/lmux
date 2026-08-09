@@ -1,6 +1,60 @@
 import SwiftUI
 import SwiftTerm
 import QuartzCore
+import AppKit
+
+/// Terminal container that accepts dropped files/strings and forwards them
+/// into the terminal as typed input (e.g. dropping a file inserts its path).
+private final class TerminalContainerView: NSView {
+    var onDrop: ((String) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL, .string])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+
+        // File URLs first (multiple files → space-separated, shell-quoted).
+        if let urls = pb.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [NSURL], !urls.isEmpty {
+            let paths = urls.compactMap { $0.path }.map(Self.shellQuoted)
+            onDrop?(paths.joined(separator: " ") + " ")
+            return true
+        }
+
+        // Fallback: plain text drop.
+        if let str = pb.string(forType: .string), !str.isEmpty {
+            onDrop?(str)
+            return true
+        }
+        return false
+    }
+
+    /// Quote a path for the shell when it contains whitespace.
+    private static func shellQuoted(_ path: String) -> String {
+        if path.contains(" ") || path.contains("\t") {
+            let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
+            return "'\(escaped)'"
+        }
+        return path
+    }
+}
 
 struct PTYTerminalView: NSViewRepresentable {
     @ObservedObject var manager: TerminalManager
@@ -10,9 +64,16 @@ struct PTYTerminalView: NSViewRepresentable {
             setenv("SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE", "", 0)
         }
 
-        let container = NSView(frame: .zero)
+        let container = TerminalContainerView(frame: .zero)
         container.wantsLayer = true
+        // Clip so a transiently overshooting terminal frame (e.g. during
+        // live-resize stretch) can never paint over the header row above.
+        container.clipsToBounds = true
         container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
+        let mgr = manager
+        container.onDrop = { [weak mgr] text in
+            mgr?.sendInput(text)
+        }
         return container
     }
 

@@ -197,6 +197,12 @@ class TerminalManager: ObservableObject {
         return "\(elapsed / 3600)h \((elapsed % 3600) / 60)m"
     }
 
+    /// Send text into the terminal as if the user typed it (used by file drop).
+    func sendInput(_ text: String) {
+        guard processRunning else { return }
+        terminalView?.send(txt: text)
+    }
+
     /// Whether the session needs user attention (task completed in background).
     var needsAttention: Bool {
         !isConnected && !processRunning && terminalView != nil
