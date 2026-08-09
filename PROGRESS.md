@@ -2,7 +2,7 @@
 
 **日期:** 2026-08-04
 **分支:** 1.0.6（开发）+ fix/crash-issues（崩溃/权限修复，未合并）
-**版本:** 1.0.49
+**版本:** 1.0.53
 **Git 钩子:** pre-commit 自动升级小版本号
 
 ---
@@ -46,8 +46,12 @@
 | 26 | 终端内容覆盖 header：容器 `clipsToBounds` + stretch 的 dx/dy clamp 到 >=0 | 5679d5a | TerminalView.swift |
 | 27 | **拖拽文件到终端**：容器注册 .fileURL/.string 拖拽类型，插入 shell 引用路径（多文件空格分隔） | 9a1dda3 | TerminalView.swift, TerminalManager.swift |
 | 28 | **历史对话恢复**：resumeArgs 用 `--resume <id>` 而非 `--session-id`（后者只固定 ID 不恢复消息）；验证 codebuddy 恢复历史成功 | ab35b53 | Session.swift |
+| 29 | **find-session 只返回有效会话**：scanner 完整扫描（去掉 ai-title 提前 break）+ 仅选有 assistant 回复的会话（排除残留 stub）+ 缓存 TTL 30s；agent 检测 extractSessionID 支持 `--resume` | c560f56 | scanner.go, TerminalManager.swift |
+| 30 | **恢复前校验 cbc 有效性**：新增 `GET /api/codebuddy/session/{id}`（valid=无 assistant 回复则 false）；restore/connect 时无效 cbc 自动重新 find-session 并写回后端修正 | 7519d16 | handlers.go, server.go, APIClient.swift, ContentViewModel.swift, SessionDetailView.swift |
+| 31 | **启动只恢复最后选中的 session**（UserDefaults 持久化 lastSelectedSessionID），其余 session 点击时惰性连接；codebuddy 进程数 7→1 | ccb998c | ContentViewModel.swift |
 
 > 注：#28 排查过程中曾尝试"新建 session 自动扫描目录历史进 agent"，用户确认期望**新建 session 一律进 bash**，已撤销该方向（connectToSession 保持 无 cbc→bash / 有 cbc→agent）。
+> 注：#29-30 复现"change session aba8d82a 不恢复"：find-session 返回了残留 stub 会话（只有 user 消息，如 d217dbdb），--resume 失败后 codebuddy 自动切换提示。修复后重启自动将 cbc 从 d217dbdb 修正为 aba8d82a，恢复正常。
 
 ## 已知问题
 
@@ -81,18 +85,18 @@ lmux-app/Sources/LMUX/
   Utils/
     TerminalManager.swift    — agent 检测 + 闪退修复 + 性能优化 + 启动失败检测 + scrollback
     SessionRestore.swift     — LaunchMode 追踪 + ioQueue 缓存读
-    Version.swift            — 版本号定义（1.0.49）
+    Version.swift            — 版本号定义（1.0.53）
   Views/
     SessionDetailView.swift  — split pane overlay + 启动路由（bash/agent）+ .id()
     SessionListView.swift    — 只读 manager 查询
     ContentView.swift        — 侧边栏版本号显示
     TerminalView.swift       — frame 更新优化 + 裁剪/防溢出 + 文件拖拽
   ViewModels/
-    ContentViewModel.swift   — restore 路由 + polling 优化 + DispatchIO 防护 + 数组比较
+    ContentViewModel.swift   — restore 路由（lazy 恢复）+ cbc 校验 + polling 优化 + DispatchIO 防护
   Models/
     Session.swift            — AgentType 枚举 + resume 参数（--resume）
   Network/
-    APIClient.swift          — 性能优化（perf 分支）
+    APIClient.swift          — find-session + session 有效性校验
   Info.plist                 — About 版本号
 
 bump-version.sh             — 版本号升级脚本
@@ -102,16 +106,16 @@ bump-version.sh             — 版本号升级脚本
 ## 下次继续
 
 1. **合并 fix/crash-issues → 1.0.6**（用户确认后再合）
-2. 在 Intel macOS 12.5 真机跑修复版（Swift ABI 理论兼容，需真机验证；验证 `/skills`、窗口缩放、split pane、权限弹窗、header 覆盖、拖拽文件、历史恢复）
+2. 在 Intel macOS 12.5 真机跑修复版（Swift ABI 理论兼容，需真机验证；验证 `/skills`、窗口缩放、split pane、权限弹窗、header 覆盖、拖拽文件、历史恢复、启动速度）
 3. 12.5 机器上若改代码路径，改 `Package.swift` 为相对路径 `../SwiftTerm`
 4. K4 根治：申请 Apple Developer ID 证书，`make app` 用 `codesign --sign "Developer ID Application: ..."`（替换 Makefile 里的 ad-hoc 签名）
-5. 其他中低风险项（可选）：backend/lmux 二进制为构建产物，避免提交
+5. 其他中低风险项（可选）：backend/lmux 二进制为构建产物，避免提交；codebuddy --resume 历史渲染速度（SwiftTerm 渲染层面）
 
 ## 分支状态
 
 ```
 master ─── 最终稳定代码
 1.0.6  ─── 开发主线（bash 修复已合入 da95ae3）
-fix/crash-issues ─── 崩溃/权限/性能/渲染/功能修复（15 项，d837686..ab35b53），未合并
+fix/crash-issues ─── 崩溃/权限/性能/渲染/功能修复（18 项，d837686..ccb998c），未合并
 perf/optimize-v1 ─── 性能优化（已合并到 1.0.6）
 ```
