@@ -26,7 +26,7 @@ class TerminalManager: ObservableObject {
     private var lastActivityTime: Date = Date()
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
-    private(set) var detectedAgentType: AgentType?
+    @Published private(set) var detectedAgentType: AgentType?
 
     /// Connect by spawning an agent directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
