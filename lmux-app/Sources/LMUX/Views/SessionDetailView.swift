@@ -106,7 +106,8 @@ struct SessionDetailView: View {
             let agent = session?.agentType ?? .codebuddy
 
             // Try backend first, then restore.json (agent detection might have captured it).
-            let restoreCBC = SessionRestore.loadAll().first { $0.sessionID == id }?.cbcSessionID
+            let restoreEntry = SessionRestore.loadAll().first { $0.sessionID == id }
+            let restoreCBC = restoreEntry?.cbcSessionID
             let effectiveCBC = (cbc != nil && !cbc!.isEmpty) ? cbc : restoreCBC
 
             if let effectiveCBC, !effectiveCBC.isEmpty {
@@ -122,6 +123,22 @@ struct SessionDetailView: View {
                             agentType: agent
                         )
                     } else if let found = await viewModel.findCodebuddySession(projectDir: dir) {
+                        mgr.connect(
+                            sessionID: id,
+                            projectDir: dir,
+                            cbcSessionID: found,
+                            agentType: agent
+                        )
+                    } else {
+                        mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
+                    }
+                }
+            } else if restoreEntry?.launchMode == .agent || mgr.detectedAgentType != nil {
+                // This session previously launched an agent (e.g. the user
+                // started codebuddy inside the shell). Resolve the current
+                // conversation from the directory and resume it.
+                Task {
+                    if let found = await viewModel.findCodebuddySession(projectDir: dir) {
                         mgr.connect(
                             sessionID: id,
                             projectDir: dir,

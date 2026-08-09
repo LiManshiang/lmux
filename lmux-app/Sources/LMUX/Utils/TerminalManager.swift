@@ -20,6 +20,7 @@ class TerminalManager: ObservableObject {
     private(set) var terminalView: LocalProcessTerminalView?
 
     private var currentSessionID: String?
+    private var detachProjectDir: String?
     private var processGeneration: Int = 0
     private(set) var processStartTime: Date?
     private(set) var processPID: Int32 = 0
@@ -33,6 +34,7 @@ class TerminalManager: ObservableObject {
         disconnect()
 
         currentSessionID = sessionID
+        detachProjectDir = projectDir
 
         // ... same terminal setup ...
         let view = OutputAwareTerminalView(frame: .zero)
@@ -170,6 +172,22 @@ class TerminalManager: ObservableObject {
     /// Detach without killing: disconnect UI but keep process running.
     /// LocalProcessTerminalView's process continues because we don't call terminate().
     func detach() {
+        // If an agent is running inside the shell right now, record it so the
+        // next launch can resume it (the periodic detection may have missed it
+        // if the user started codebuddy shortly before switching away).
+        if processPID > 0,
+           detectedAgentType == nil,
+           let result = detectRunningAgent(shellPID: processPID),
+           let sid = currentSessionID {
+            detectedAgentType = result.agentType
+            SessionRestore.save(
+                sessionID: sid,
+                projectDir: detachProjectDir ?? NSHomeDirectory(),
+                cbcSessionID: result.cbcSessionID,
+                agentType: result.agentType,
+                launchMode: .agent
+            )
+        }
         isConnected = false
         idleTimer?.invalidate()
         idleTimer = nil
@@ -224,6 +242,9 @@ class TerminalManager: ObservableObject {
     /// Connect a bash/zsh terminal in the given directory (for new sessions).
     func connectBash(sessionID: String, projectDir: String, agentType: AgentType) {
         disconnect()
+
+        currentSessionID = sessionID
+        detachProjectDir = projectDir
 
         let view = OutputAwareTerminalView(frame: .zero)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -294,7 +315,7 @@ class TerminalManager: ObservableObject {
         let pid = self.processPID
         guard pid > 0 else { return }
 
-        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
             let currentPID = self.processPID
             Self.detectionQueue.async { [weak self] in
