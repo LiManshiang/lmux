@@ -126,7 +126,10 @@ private struct SessionStatusView: View {
 /// Conversation context usage percentage for an agent session, refreshed
 /// periodically from the backend.
 private struct ContextUsageView: View {
-    let cbcSessionID: String
+    /// Known codebuddy session ID, or nil to resolve via find-session from
+    /// the project directory (used for bash sessions that launched an agent).
+    let cbcSessionID: String?
+    let projectDir: String
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var percent: Int?
 
@@ -147,7 +150,11 @@ private struct ContextUsageView: View {
         .foregroundColor((percent ?? 0) >= 80 ? .orange : .secondary)
         .task {
             while !Task.isCancelled {
-                if let p = await viewModel.codebuddyContextPercent(cbcSessionID: cbcSessionID) {
+                var cbc = cbcSessionID
+                if cbc == nil {
+                    cbc = await viewModel.findCodebuddySession(projectDir: projectDir)
+                }
+                if let cbc, let p = await viewModel.codebuddyContextPercent(cbcSessionID: cbc) {
                     percent = p
                     try? await Task.sleep(nanoseconds: 60_000_000_000)
                 } else {
@@ -204,8 +211,12 @@ private struct SessionRowContent: View {
                     .lineLimit(1)
 
                 // Conversation context usage, under the session name.
+                // Show for agent sessions (known cbc) and for bash sessions
+                // that have launched an agent (resolved via find-session).
                 if let cbc = session.cbcSessionID, !cbc.isEmpty {
-                    ContextUsageView(cbcSessionID: cbc)
+                    ContextUsageView(cbcSessionID: cbc, projectDir: session.projectDir)
+                } else if let mgr = manager, mgr.detectedAgentType != nil {
+                    ContextUsageView(cbcSessionID: nil, projectDir: session.projectDir)
                 }
 
                 // Status line (observed live by SessionStatusView)
