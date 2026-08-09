@@ -32,17 +32,21 @@ struct SessionDetailView: View {
                                 }
                             }
                         }) {
-                            Text(showSplitPane ? "Close Terminal" : "Terminal").font(.system(size: 11))
+                            Image(systemName: showSplitPane ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                                .font(.system(size: 13))
                         }
                         .buttonStyle(.borderless)
-                        .help("Toggle bottom split pane")
+                        .help(showSplitPane ? "Close Terminal" : "Open Terminal")
 
                         Button(action: {
                             viewModel.killSession(id: session.id)
                         }) {
-                            Text("Stop").font(.system(size: 11))
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
                         }
                         .buttonStyle(.borderless)
+                        .help("Stop")
                     }
                 }
                 .padding(.horizontal, 12)
