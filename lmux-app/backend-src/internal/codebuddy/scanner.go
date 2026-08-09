@@ -257,9 +257,16 @@ const ContextWindowTokens int64 = 1_000_000
 // conversation context size) for a session, read from the latest message
 // usage record in its JSONL.
 func GetSessionContextTokens(sessionID string) (int64, error) {
+	tokens, _, err := GetSessionContext(sessionID)
+	return tokens, err
+}
+
+// GetSessionContext returns the accumulated input tokens and the model ID
+// from the latest message usage record of a session.
+func GetSessionContext(sessionID string) (int64, string, error) {
 	dirs, err := FindUserSessionsDirs()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	var filePath string
 	for _, dir := range dirs {
@@ -270,23 +277,23 @@ func GetSessionContextTokens(sessionID string) (int64, error) {
 		}
 	}
 	if filePath == "" {
-		return 0, fmt.Errorf("JSONL for session %s not found", sessionID)
+		return 0, "", fmt.Errorf("JSONL for session %s not found", sessionID)
 	}
-	return lastUsageInputTokens(filePath)
+	return lastUsageInfo(filePath)
 }
 
-// lastUsageInputTokens reads the tail of a JSONL file and returns
-// input_tokens from the most recent message usage record.
-func lastUsageInputTokens(path string) (int64, error) {
+// lastUsageInfo reads the tail of a JSONL file and returns input_tokens and
+// the model from the most recent message usage record.
+func lastUsageInfo(path string) (int64, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer f.Close()
 
 	stat, err := f.Stat()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	size := stat.Size()
 
@@ -297,7 +304,7 @@ func lastUsageInputTokens(path string) (int64, error) {
 	}
 	buf := make([]byte, size-readStart)
 	if _, err := f.ReadAt(buf, readStart); err != nil && err != io.EOF {
-		return 0, err
+		return 0, "", err
 	}
 
 	lines := strings.Split(string(buf), "\n")
@@ -307,7 +314,11 @@ func lastUsageInputTokens(path string) (int64, error) {
 			continue
 		}
 		var entry struct {
-			Type    string `json:"type"`
+			Type         string `json:"type"`
+			ProviderData *struct {
+				Model          string `json:"model"`
+				RequestModelID string `json:"requestModelId"`
+			} `json:"providerData"`
 			Message struct {
 				Usage *struct {
 					InputTokens int64 `json:"input_tokens"`
@@ -318,8 +329,15 @@ func lastUsageInputTokens(path string) (int64, error) {
 			continue
 		}
 		if entry.Type == "message" && entry.Message.Usage != nil {
-			return entry.Message.Usage.InputTokens, nil
+			model := ""
+			if entry.ProviderData != nil {
+				model = entry.ProviderData.RequestModelID
+				if model == "" {
+					model = entry.ProviderData.Model
+				}
+			}
+			return entry.Message.Usage.InputTokens, model, nil
 		}
 	}
-	return 0, fmt.Errorf("no message usage found in %s", path)
+	return 0, "", fmt.Errorf("no message usage found in %s", path)
 }

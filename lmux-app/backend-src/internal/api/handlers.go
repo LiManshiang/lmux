@@ -178,24 +178,28 @@ func (h *Handler) CodebuddySessionStatus(w http.ResponseWriter, r *http.Request)
 }
 
 // CodebuddyContext returns the current conversation context size (accumulated
-// input tokens) for a codebuddy session, plus the model's context window.
+// input tokens) for a codebuddy session, the model in use, and that model's
+// context window.
 func (h *Handler) CodebuddyContext(w http.ResponseWriter, r *http.Request) {
 	id := extractID(r.URL.Path, "/api/codebuddy/context/")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing session id")
 		return
 	}
-	tokens, err := codebuddy.GetSessionContextTokens(id)
+	tokens, model, err := codebuddy.GetSessionContext(id)
+	window := codebuddy.ContextWindowForModel(model)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"tokens":         0,
-			"context_window": codebuddy.ContextWindowTokens,
+			"model":          model,
+			"context_window": window,
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tokens":         tokens,
-		"context_window": codebuddy.ContextWindowTokens,
+		"model":          model,
+		"context_window": window,
 	})
 }
 
