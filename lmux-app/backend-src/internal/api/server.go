@@ -75,6 +75,13 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	mux.HandleFunc("/api/codebuddy/context/", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.CodebuddyContext(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 
 	addr := fmt.Sprintf("127.0.0.1:%d", s.cfg.Port)
 	s.server = &http.Server{Addr: addr, Handler: mux}

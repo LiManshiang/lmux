@@ -123,6 +123,35 @@ private struct SessionStatusView: View {
     }
 }
 
+/// Conversation context usage percentage for an agent session, refreshed
+/// periodically from the backend.
+private struct ContextUsageView: View {
+    let cbcSessionID: String
+    @EnvironmentObject var viewModel: ContentViewModel
+    @State private var percent: Int?
+
+    var body: some View {
+        Group {
+            if let percent {
+                HStack(spacing: 4) {
+                    Image(systemName: "text.page")
+                        .font(.system(size: 9))
+                    Text("上下文 \(percent)%")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                }
+                .foregroundColor(percent >= 80 ? .orange : .secondary)
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                percent = await viewModel.codebuddyContextPercent(cbcSessionID: cbcSessionID)
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+    }
+}
+
 private struct SessionRowContent: View {
     let session: SessionSummary
     let manager: TerminalManager?
@@ -166,6 +195,11 @@ private struct SessionRowContent: View {
                     .font(.system(size: 13))
                     .fontWeight(isSelected ? .semibold : .regular)
                     .lineLimit(1)
+
+                // Conversation context usage, under the session name.
+                if let cbc = session.cbcSessionID, !cbc.isEmpty {
+                    ContextUsageView(cbcSessionID: cbc)
+                }
 
                 // Status line (observed live by SessionStatusView)
                 if let mgr = manager {

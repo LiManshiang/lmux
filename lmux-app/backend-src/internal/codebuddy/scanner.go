@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,4 +246,80 @@ func FindRecentSessionForProject(projectDir string) string {
 		}
 	}
 	return best.SessionID
+}
+
+// ContextWindowTokens is the context window for the default model
+// (deepseek-v4-flash). Used to render the conversation context usage
+// percentage. CodeBuddy's model metadata reports contextWindow:1e6.
+const ContextWindowTokens int64 = 1_000_000
+
+// GetSessionContextTokens returns the accumulated input tokens (the current
+// conversation context size) for a session, read from the latest message
+// usage record in its JSONL.
+func GetSessionContextTokens(sessionID string) (int64, error) {
+	dirs, err := FindUserSessionsDirs()
+	if err != nil {
+		return 0, err
+	}
+	var filePath string
+	for _, dir := range dirs {
+		p := filepath.Join(dir, sessionID+".jsonl")
+		if _, err := os.Stat(p); err == nil {
+			filePath = p
+			break
+		}
+	}
+	if filePath == "" {
+		return 0, fmt.Errorf("JSONL for session %s not found", sessionID)
+	}
+	return lastUsageInputTokens(filePath)
+}
+
+// lastUsageInputTokens reads the tail of a JSONL file and returns
+// input_tokens from the most recent message usage record.
+func lastUsageInputTokens(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := stat.Size()
+
+	const tailSize = int64(2 * 1024 * 1024) // scan up to 2MB from the end
+	readStart := size - tailSize
+	if readStart < 0 {
+		readStart = 0
+	}
+	buf := make([]byte, size-readStart)
+	if _, err := f.ReadAt(buf, readStart); err != nil && err != io.EOF {
+		return 0, err
+	}
+
+	lines := strings.Split(string(buf), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var entry struct {
+			Type    string `json:"type"`
+			Message struct {
+				Usage *struct {
+					InputTokens int64 `json:"input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &entry) != nil {
+			continue
+		}
+		if entry.Type == "message" && entry.Message.Usage != nil {
+			return entry.Message.Usage.InputTokens, nil
+		}
+	}
+	return 0, fmt.Errorf("no message usage found in %s", path)
 }

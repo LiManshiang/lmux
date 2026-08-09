@@ -460,6 +460,15 @@ class ContentViewModel: ObservableObject {
         return await api.codebuddySessionValid(sessionID: sessionID)
     }
 
+    /// Percentage (0-100) of the model's context window currently used by a
+    /// codebuddy conversation, or nil when unavailable.
+    func codebuddyContextPercent(cbcSessionID: String?) async -> Int? {
+        guard let cbcSessionID, !cbcSessionID.isEmpty, backendRunning else { return nil }
+        guard let info = await api.codebuddyContext(sessionID: cbcSessionID),
+              info.contextWindow > 0, info.tokens > 0 else { return nil }
+        return Int((Double(info.tokens) / Double(info.contextWindow) * 100).rounded())
+    }
+
     func restoreAll() async {
         isLoading = true
         defer { isLoading = false }
