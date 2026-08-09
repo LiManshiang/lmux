@@ -32,7 +32,7 @@ struct SessionDetailView: View {
                                 }
                             }
                         }) {
-                            Image(systemName: showSplitPane ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
+                            Image(systemName: showSplitPane ? "rectangle.split.1x2.fill" : "rectangle.split.1x2")
                                 .font(.system(size: 13))
                         }
                         .buttonStyle(.borderless)
