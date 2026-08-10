@@ -386,11 +386,11 @@ class TerminalManager: ObservableObject {
         for pid in allPIDs {
             let cmdLine = getCommandLine(of: pid) ?? ""
             for agent in AgentType.allCases {
-                guard let sid = agent.provider.detectProcess(cmdLine: cmdLine) else { continue }
+                guard let match = agent.provider.detectProcess(cmdLine: cmdLine) else { continue }
                 // Highest detection priority wins (e.g. a leftover codebuddy
                 // process must not shadow the claude the user launched).
                 if agent.detectionPriority > bestPriority {
-                    best = (agent, sid)
+                    best = (agent, match.sessionID)
                     bestPriority = agent.detectionPriority
                 }
             }

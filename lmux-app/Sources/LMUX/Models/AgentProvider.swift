@@ -7,6 +7,13 @@ enum AgentConnectDecision {
     case bash                      // fall back to a plain shell
 }
 
+/// Result of matching a process command line against an agent. nil means the
+/// command line is not this agent; a non-nil match means it is, even when
+/// there is no resumable session ID (e.g. claude started fresh).
+struct AgentMatch {
+    let sessionID: String?
+}
+
 /// Network operations an agent provider may need. Implemented by APIClient.
 protocol AgentSessionService {
     func findAgentSession(agent: AgentType, projectDir: String) async -> String?
@@ -34,9 +41,9 @@ protocol AgentProvider {
     /// Absolute path to the agent binary, or nil if not found.
     func findBinaryPath() -> String?
 
-    /// Detect this agent from a process command line; returns the session ID
-    /// to resume, or nil when the command line is not this agent.
-    func detectProcess(cmdLine: String) -> String?
+    /// Detect this agent from a process command line. nil = not this agent;
+    /// otherwise the agent matched (sessionID may be nil for a fresh session).
+    func detectProcess(cmdLine: String) -> AgentMatch?
 }
 
 extension AgentProvider {
@@ -98,13 +105,27 @@ enum AgentBinaryLocator {
         func consider(_ p: String) -> String? {
             guard FileManager.default.isExecutableFile(atPath: p) else { return nil }
             if preferred(p) { return p }
-            return acceptable(p) ? p : nil
+            // Acceptable binaries (e.g. x86 claude) are kept as a fallback and
+            // only used when no preferred binary exists anywhere.
+            if acceptable(p) && fallback == nil { fallback = p }
+            return nil
         }
         var fallback: String?
+        let home = NSHomeDirectory()
 
-        // 1. Search PATH first
+        // 1. Local fixed install locations first (this machine, not a mounted
+        // volume), so a claude installed on another machine's shared drive
+        // doesn't shadow this machine's own install.
+        for p in ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)", "\(home)/.local/bin/\(name)"] {
+            if let found = consider(p) {
+                cache[name] = found
+                return found
+            }
+        }
+
+        // 2. PATH, preferring local directories over mounted volumes.
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
-        for dir in pathDirs {
+        for dir in pathDirs where !dir.hasPrefix("/Volumes/") {
             let p = "\(dir)/\(name)"
             if let found = consider(p) {
                 cache[name] = found
@@ -112,15 +133,20 @@ enum AgentBinaryLocator {
             }
         }
 
-        // 2. Try common fixed paths
-        for p in ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"] {
-            if let found = consider(p) {
-                cache[name] = found
-                return found
+        // 3. Local nvm (~/.nvm).
+        let localNvm = "\(home)/.nvm/versions/node"
+        if let entries = try? FileManager.default.contentsOfDirectory(atPath: localNvm) {
+            for entry in entries {
+                let p = "\(localNvm)/\(entry)/bin/\(name)"
+                if let found = consider(p) {
+                    cache[name] = found
+                    return found
+                }
             }
         }
 
-        // 3. Search nvm installations across mounted volumes
+        // 4. nvm installations on mounted volumes (shared drives, other
+        // machines). Last resort before PATH's volume entries.
         let volumes = (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []
         for vol in volumes where vol != "Macintosh HD" && !vol.hasPrefix(".") {
             let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"
@@ -135,7 +161,16 @@ enum AgentBinaryLocator {
             }
         }
 
-        // 4. Check NVM_DIR from environment
+        // 5. PATH entries on mounted volumes.
+        for dir in pathDirs where dir.hasPrefix("/Volumes/") {
+            let p = "\(dir)/\(name)"
+            if let found = consider(p) {
+                cache[name] = found
+                return found
+            }
+        }
+
+        // 6. Check NVM_DIR from environment.
         if let nvmDir = ProcessInfo.processInfo.environment["NVM_DIR"] {
             if let found = consider("\(nvmDir)/\(name)") {
                 cache[name] = found
@@ -143,7 +178,7 @@ enum AgentBinaryLocator {
             }
         }
 
-        // 5. Any acceptable fallback seen along the way (e.g. x86 claude).
+        // 7. Any acceptable fallback seen along the way (e.g. x86 claude).
         if let fallback {
             cache[name] = fallback
             return fallback
@@ -217,10 +252,10 @@ struct CodebuddyProvider: AgentProvider {
         AgentBinaryLocator.findAgentPath(name: executableName)
     }
 
-    func detectProcess(cmdLine: String) -> String? {
+    func detectProcess(cmdLine: String) -> AgentMatch? {
         let lower = cmdLine.lowercased()
         if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
-            return extractSessionID(from: cmdLine)
+            return AgentMatch(sessionID: extractSessionID(from: cmdLine))
         }
         return nil
     }
@@ -273,10 +308,10 @@ struct ClaudeProvider: AgentProvider {
         )
     }
 
-    func detectProcess(cmdLine: String) -> String? {
+    func detectProcess(cmdLine: String) -> AgentMatch? {
         let lower = cmdLine.lowercased()
         if lower.contains("claude") && !lower.contains("claudecode") {
-            return extractSessionID(from: cmdLine)
+            return AgentMatch(sessionID: extractSessionID(from: cmdLine))
         }
         return nil
     }
