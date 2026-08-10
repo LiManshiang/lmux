@@ -102,6 +102,32 @@ private struct SessionRowStatic: View {
     }
 }
 
+/// Small badge showing which agent a session runs.
+private struct AgentBadge: View {
+    let agent: AgentType
+
+    private var color: Color {
+        switch agent {
+        case .codebuddy: return .blue
+        case .claude: return .orange
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: agent.symbolName)
+                .font(.system(size: 8))
+            Text(agent.displayName)
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.12)))
+        .help("Agent: \(agent.displayName)")
+    }
+}
+
 /// Live idle/running status. Owns the @ObservedObject so it re-renders when
 /// the manager's @Published state changes — the content row passes the manager
 /// as a plain value and must NOT key on it (identical `.id()` across rows
@@ -217,10 +243,19 @@ private struct SessionRowContent: View {
             .onAppear { attentionPulse = needsAttention }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.name)
-                    .font(.system(size: 13))
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(session.name)
+                        .font(.system(size: 13))
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .lineLimit(1)
+                    // Current agent badge: prefer the live-detected agent
+                    // (e.g. claude started inside a bash session), else the
+                    // session's configured agent type.
+                    if manager?.detectedAgentType != nil
+                        || (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty) {
+                        AgentBadge(agent: manager?.detectedAgentType ?? session.agentType)
+                    }
+                }
 
                 // Conversation context usage, under the session name.
                 // Show for agent sessions (known cbc) and for bash sessions

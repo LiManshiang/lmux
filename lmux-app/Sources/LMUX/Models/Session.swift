@@ -11,6 +11,13 @@ enum AgentType: String, Codable, CaseIterable {
         }
     }
 
+    var symbolName: String {
+        switch self {
+        case .codebuddy: return "hammer.fill"
+        case .claude: return "sparkle"
+        }
+    }
+
     var executableName: String {
         switch self {
         case .codebuddy: return "codebuddy-code"
