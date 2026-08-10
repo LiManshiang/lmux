@@ -183,6 +183,11 @@ struct SessionDetailView: View {
                         // never pass it to claude. Start fresh instead.
                         claudeCBC = nil
                     }
+                    if claudeCBC == nil || claudeCBC!.isEmpty {
+                        // No recorded claude conversation: resume the most
+                        // recent one from the directory's claude history.
+                        claudeCBC = await viewModel.findClaudeSession(projectDir: dir)
+                    }
                     mgr.connect(
                         sessionID: id,
                         projectDir: dir,

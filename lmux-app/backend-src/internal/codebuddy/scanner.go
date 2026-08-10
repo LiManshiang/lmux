@@ -253,6 +253,42 @@ func FindRecentSessionForProject(projectDir string) string {
 // percentage. CodeBuddy's model metadata reports contextWindow:1e6.
 const ContextWindowTokens int64 = 1_000_000
 
+// encodeClaudeProjectDir converts a filesystem path to claude's project
+// directory name, e.g. /Users/limanshiang -> -Users-limanshiang.
+func encodeClaudeProjectDir(dir string) string {
+	return strings.ReplaceAll(dir, "/", "-")
+}
+
+// FindRecentClaudeSession returns the most recent non-empty claude
+// conversation ID for a project directory, or "" when there is none.
+func FindRecentClaudeSession(projectDir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	projDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
+	entries, err := os.ReadDir(projDir)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestTime time.Time
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.Size() < 100 {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestTime) {
+			best = strings.TrimSuffix(e.Name(), ".jsonl")
+			bestTime = info.ModTime()
+		}
+	}
+	return best
+}
+
 // GetSessionContextTokens returns the accumulated input tokens (the current
 // conversation context size) for a session, read from the latest message
 // usage record in its JSONL.

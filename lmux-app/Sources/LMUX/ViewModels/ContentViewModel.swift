@@ -454,6 +454,15 @@ class ContentViewModel: ObservableObject {
         return found
     }
 
+    /// Look up the most recent claude conversation in a project directory,
+    /// or nil when there is none.
+    func findClaudeSession(projectDir: String) async -> String? {
+        guard backendRunning else { return nil }
+        guard let found = try? await api.findClaudeSession(projectDir: projectDir),
+              !found.isEmpty else { return nil }
+        return found
+    }
+
     /// Returns true when `sessionID` refers to a real, resumable conversation.
     func isCodebuddySessionValid(_ sessionID: String?) async -> Bool {
         guard let sessionID, !sessionID.isEmpty, backendRunning else { return false }
@@ -596,6 +605,11 @@ class ContentViewModel: ObservableObject {
                     // from a wrongly-launched claude --resume <codebuddy-id>);
                     // never pass it to claude. Start fresh instead.
                     claudeCBC = nil
+                }
+                if claudeCBC == nil || claudeCBC!.isEmpty {
+                    // No recorded claude conversation: resume the most recent
+                    // one from the directory's claude history.
+                    claudeCBC = await self.findClaudeSession(projectDir: entry.projectDir)
                 }
                 mgr.connect(
                     sessionID: entry.sessionID,

@@ -68,6 +68,13 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	mux.HandleFunc("/api/claude/find-session", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.FindClaudeSessionByProject(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	mux.HandleFunc("/api/codebuddy/session/", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			h.CodebuddySessionStatus(w, r)

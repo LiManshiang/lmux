@@ -162,6 +162,23 @@ func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.R
 	})
 }
 
+// FindClaudeSessionByProject looks up the most recent claude conversation ID
+// for a project directory.
+func (h *Handler) FindClaudeSessionByProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ProjectDir string `json:"project_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectDir == "" {
+		writeError(w, http.StatusBadRequest, "invalid project_dir")
+		return
+	}
+
+	sessionID := codebuddy.FindRecentClaudeSession(body.ProjectDir)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id": sessionID,
+	})
+}
+
 // CodebuddySessionStatus reports whether a codebuddy session ID is a real
 // conversation (has at least one assistant reply). Used to detect stale
 // session IDs persisted earlier and re-scan for the right one.

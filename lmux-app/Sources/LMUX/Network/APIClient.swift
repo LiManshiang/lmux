@@ -135,6 +135,25 @@ class APIClient {
         return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
     }
 
+    /// Look up the most recent claude conversation ID for a project directory.
+    func findClaudeSession(projectDir: String) async throws -> String? {
+        struct Body: Codable {
+            let projectDir: String
+            enum CodingKeys: String, CodingKey {
+                case projectDir = "project_dir"
+            }
+        }
+        let data = try await post("/api/claude/find-session", body: Body(projectDir: projectDir))
+        struct Response: Codable {
+            let sessionID: String?
+            enum CodingKeys: String, CodingKey {
+                case sessionID = "session_id"
+            }
+        }
+        let resp = try decode(Response.self, from: data)
+        return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// Returns true if the given codebuddy session ID is a real conversation
     /// (has at least one assistant reply) and can be resumed.
     func codebuddySessionValid(sessionID: String) async -> Bool {
