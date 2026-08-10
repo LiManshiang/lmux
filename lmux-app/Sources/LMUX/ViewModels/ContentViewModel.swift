@@ -59,6 +59,101 @@ class ContentViewModel: ObservableObject {
             if !Task.isCancelled { toastMessage = nil }
         }
     }
+
+    // MARK: - Export / import
+
+    /// Present a save panel and export sessions + agent data to a tar.gz.
+    func promptExportSessions() {
+        let panel = NSSavePanel()
+        panel.title = "Export lmux Sessions"
+        panel.nameFieldStringValue = "lmux-backup-\(Self.dateStamp()).tar.gz"
+        panel.allowedContentTypes = [.gzip]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            let ok = await exportSessions(to: url)
+            showToast(ok ? "Exported to \(url.lastPathComponent)" : "Export failed")
+        }
+    }
+
+    /// Present an open panel, import a tar.gz, and reload the backend.
+    func promptImportSessions() {
+        let panel = NSOpenPanel()
+        panel.title = "Import lmux Sessions"
+        panel.allowedContentTypes = [.gzip]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            let ok = await importSessions(from: url)
+            showToast(ok ? "Import complete" : "Import failed")
+        }
+    }
+
+    /// Pack lmux data (sessions.db, restore.json, codebuddy/claude settings +
+    /// conversation projects) into a tar.gz for migration to another machine.
+    func exportSessions(to url: URL) async -> Bool {
+        let home = NSHomeDirectory()
+        let args = [
+            "-czf", url.path,
+            "\(home)/.lmux",
+            "\(home)/Library/Application Support/lmux/restore.json",
+            "\(home)/.codebuddy/settings.json",
+            "\(home)/.codebuddy/projects",
+            "\(home)/.claude/settings.json",
+            "\(home)/.claude/projects",
+        ]
+        let ok = await Self.runTar(args)
+        if !ok {
+            errorMessage = "Export failed. Make sure the source data exists."
+        }
+        return ok
+    }
+
+    /// Restore lmux data from a tar.gz and restart the backend to reload it.
+    func importSessions(from url: URL) async -> Bool {
+        let ok = await Self.runTar(["-xzf", url.path, "-C", "/"])
+        if ok {
+            await restartBackend()
+        } else {
+            errorMessage = "Import failed. The file may be corrupt or not an lmux backup."
+        }
+        return ok
+    }
+
+    /// Run /usr/bin/tar with the given arguments, returning whether it succeeded.
+    private static func runTar(_ args: [String]) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            p.arguments = args
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            p.terminationHandler = { proc in
+                continuation.resume(returning: proc.terminationStatus == 0)
+            }
+            do {
+                try p.run()
+            } catch {
+                continuation.resume(returning: false)
+            }
+        }
+    }
+
+    private static func dateStamp() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyyMMdd-HHmm"
+        return f.string(from: Date())
+    }
+
+    /// Restart the backend so it re-reads the (possibly replaced) sessions.db.
+    func restartBackend() async {
+        if backendProcess?.isRunning == true {
+            backendProcess?.terminate()
+        }
+        backendProcess = nil
+        backendRunning = false
+        await launchBackend()
+    }
     private var backendProcess: Process?
     private var pollTimer: Timer?
     /// DispatchIO reading the backend's stdout/stderr pipe. Kept as a property so
