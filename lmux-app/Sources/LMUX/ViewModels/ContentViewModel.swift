@@ -102,7 +102,7 @@ class ContentViewModel: ObservableObject {
             "\(home)/.claude/settings.json",
             "\(home)/.claude/projects",
         ]
-        let ok = await Self.runTar(args)
+        let ok = await Self.runProcess("/usr/bin/tar", args)
         if !ok {
             errorMessage = "Export failed. Make sure the source data exists."
         }
@@ -110,21 +110,114 @@ class ContentViewModel: ObservableObject {
     }
 
     /// Restore lmux data from a tar.gz and restart the backend to reload it.
+    /// If the backup was made under a different username, project paths and
+    /// codebuddy/claude project directories are migrated to the current user.
     func importSessions(from url: URL) async -> Bool {
-        let ok = await Self.runTar(["-xzf", url.path, "-C", "/"])
-        if ok {
-            await restartBackend()
-        } else {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("lmux-import-\(UUID().uuidString)")
+        try? fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        let ok = await Self.runProcess("/usr/bin/tar", ["-xzf", url.path, "-C", tmp.path])
+        guard ok else {
+            try? fm.removeItem(at: tmp)
             errorMessage = "Import failed. The file may be corrupt or not an lmux backup."
+            return false
         }
-        return ok
+
+        // Stop the backend so the imported sessions.db can be replaced safely.
+        if backendProcess?.isRunning == true {
+            backendProcess?.terminate()
+        }
+        backendProcess = nil
+        backendRunning = false
+
+        // Locate the backup's user directory (Users/<name>/...).
+        let usersDir = tmp.appendingPathComponent("Users")
+        let backupName = (try? fm.contentsOfDirectory(atPath: usersDir.path))?.first(where: {
+            $0 != ".DS_Store"
+        })
+        let currentName = NSUserName()
+
+        if let backupName, let backupHome = usersDir.appendingPathComponent(backupName) as URL?, backupName != currentName {
+            await Self.migrateImportedPaths(from: backupHome, fromUser: backupName, toUser: currentName)
+        }
+
+        // Move the imported data into the current user's home directory.
+        let home = NSHomeDirectory()
+        if let backupName, let backupHome = usersDir.appendingPathComponent(backupName) as URL? {
+            Self.moveItemIfExists(from: backupHome.appendingPathComponent(".lmux"), to: "\(home)/.lmux")
+            Self.moveItemIfExists(
+                from: backupHome.appendingPathComponent("Library/Application Support/lmux/restore.json"),
+                to: "\(home)/Library/Application Support/lmux/restore.json"
+            )
+            Self.moveItemIfExists(from: backupHome.appendingPathComponent(".codebuddy"), to: "\(home)/.codebuddy")
+            Self.moveItemIfExists(from: backupHome.appendingPathComponent(".claude"), to: "\(home)/.claude")
+        }
+
+        try? fm.removeItem(at: tmp)
+
+        await launchBackend()
+        return true
+    }
+
+    /// Migrate a backup made under `fromUser` to the current user: rename
+    /// codebuddy/claude project dirs, rewrite project paths in sessions.db and
+    /// restore.json, and rewrite cwd references inside conversation JSONLs.
+    private static func migrateImportedPaths(from backupHome: URL, fromUser: String, toUser: String) async {
+        let fm = FileManager.default
+
+        // 1. Rename codebuddy/claude project directories (encoded with the
+        //    old username).
+        let renames = [
+            ".codebuddy/projects/Users-\(fromUser)": ".codebuddy/projects/Users-\(toUser)",
+            ".claude/projects/-Users-\(fromUser)": ".claude/projects/-Users-\(toUser)",
+        ]
+        for (relSrc, relDst) in renames {
+            let s = backupHome.appendingPathComponent(relSrc)
+            if fm.fileExists(atPath: s.path) {
+                try? fm.moveItem(at: s, to: backupHome.appendingPathComponent(relDst))
+            }
+        }
+
+        // 2. Rewrite project paths in sessions.db.
+        let dbPath = backupHome.appendingPathComponent(".lmux/sessions.db").path
+        _ = await runProcess("/usr/bin/sqlite3", [
+            dbPath,
+            "UPDATE sessions SET project_dir = replace(project_dir, '/Users/\(fromUser)', '/Users/\(toUser)');",
+        ])
+
+        // 3. Rewrite restore.json.
+        let restorePath = backupHome.appendingPathComponent("Library/Application Support/lmux/restore.json").path
+        if let text = try? String(contentsOfFile: restorePath, encoding: .utf8) {
+            let replaced = text.replacingOccurrences(of: "/Users/\(fromUser)", with: "/Users/\(toUser)")
+            try? replaced.write(toFile: restorePath, atomically: true, encoding: .utf8)
+        }
+
+        // 4. Rewrite cwd references inside codebuddy/claude conversation JSONLs.
+        for rel in [".codebuddy/projects", ".claude/projects"] {
+            let dir = backupHome.appendingPathComponent(rel).path
+            if fm.fileExists(atPath: dir) {
+                let script = "find \"\(dir)\" -name '*.jsonl' -exec sed -i '' 's|/Users/\(fromUser)|/Users/\(toUser)|g' {} +"
+                _ = await runProcess("/bin/bash", ["-lc", script])
+            }
+        }
+    }
+
+    private static func moveItemIfExists(from: URL, to: String) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: from.path) else { return }
+        let dest = URL(fileURLWithPath: to)
+        if fm.fileExists(atPath: to) {
+            try? fm.removeItem(at: dest)
+        }
+        try? fm.moveItem(at: from, to: dest)
     }
 
     /// Run /usr/bin/tar with the given arguments, returning whether it succeeded.
-    private static func runTar(_ args: [String]) async -> Bool {
+    private static func runProcess(_ executable: String, _ args: [String]) async -> Bool {
         await withCheckedContinuation { continuation in
             let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            p.executableURL = URL(fileURLWithPath: executable)
             p.arguments = args
             p.standardOutput = FileHandle.nullDevice
             p.standardError = FileHandle.nullDevice
