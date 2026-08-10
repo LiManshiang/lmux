@@ -71,7 +71,7 @@ class TerminalManager: ObservableObject {
         let provider = agentType.provider
         guard let agentPath = provider.findBinaryPath(),
               FileManager.default.isExecutableFile(atPath: agentPath) else {
-            onConnectError?("Agent executable not found: \(agentType.executableName)")
+            onConnectError?("\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH.")
             return
         }
         var args = provider.launchArgs
@@ -107,7 +107,7 @@ class TerminalManager: ObservableObject {
         // SwiftTerm keeps shellPid == 0 silently when forkpty fails; don't
         // enter a fake "running" state in that case.
         guard view.process.shellPid > 0 else {
-            onConnectError?("Failed to launch \(agentType.executableName)")
+            onConnectError?("Failed to launch \(agentType.displayName). Check the executable and try again.")
             return
         }
 
@@ -284,7 +284,7 @@ class TerminalManager: ObservableObject {
 
         let zshPath = "/bin/zsh"
         guard FileManager.default.isExecutableFile(atPath: zshPath) else {
-            onConnectError?("Shell not found: \(zshPath)")
+            onConnectError?("Shell not found at \(zshPath). This system may be missing zsh.")
             return
         }
 
@@ -297,7 +297,7 @@ class TerminalManager: ObservableObject {
         view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
 
         guard view.process.shellPid > 0 else {
-            onConnectError?("Failed to launch shell")
+            onConnectError?("Failed to launch the shell. Try again; if it persists, check system shell state.")
             return
         }
         view.getTerminal().changeScrollback(200_000)
