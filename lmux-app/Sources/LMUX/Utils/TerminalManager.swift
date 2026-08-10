@@ -3,6 +3,7 @@ import LMUXCore
 import AppKit
 import SwiftTerm
 import UserNotifications
+import Darwin
 
 @MainActor
 class TerminalManager: ObservableObject {
@@ -461,7 +462,12 @@ class TerminalManager: ObservableObject {
         Self.commandLineLock.lock()
         defer { Self.commandLineLock.unlock() }
         if let cached = Self.commandLineCache[pid], Date().timeIntervalSince1970 - cached.1 < 5 {
-            return cached.0
+            // Guard against PID reuse: only trust the cache while the process
+            // still exists.
+            if kill(pid, 0) == 0 {
+                return cached.0
+            }
+            Self.commandLineCache.removeValue(forKey: pid)
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")

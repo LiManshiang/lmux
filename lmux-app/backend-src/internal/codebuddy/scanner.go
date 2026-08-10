@@ -303,7 +303,16 @@ type cachedFind struct {
 	at        time.Time
 }
 
-const findCacheTTL = 5 * time.Second
+const findCacheTTL = 3 * time.Second
+
+// ClearFindSessionCache drops all cached find-session results. Called when
+// sessions are created/deleted so a fresh session isn't shadowed by a cached
+// result.
+func ClearFindSessionCache() {
+	sessionFindCache.Lock()
+	defer sessionFindCache.Unlock()
+	sessionFindCache.m = nil
+}
 
 func cachedFindSession(dir string) (string, bool) {
 	sessionFindCache.Lock()

@@ -54,6 +54,9 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// A new session may create agent conversation files; drop cached
+	// find-session results so the new session is picked up immediately.
+	codebuddy.ClearFindSessionCache()
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"session": sess,
@@ -89,6 +92,9 @@ func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Deleted sessions may remove agent conversation files; drop cached
+	// find-session results so they don't point at a removed conversation.
+	codebuddy.ClearFindSessionCache()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
