@@ -126,4 +126,23 @@ enum SessionRestore {
         writeWorkItem = work
         ioQueue.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
+
+    /// Mark a directory as trusted in ~/.claude.json so `claude` skips its
+    /// workspace trust dialog when lmux launches it (the dialog can't be
+    /// answered from the embedded terminal).
+    static func acceptClaudeTrust(directory: String) {
+        let url = URL(fileURLWithPath: NSHomeDirectory() + "/.claude.json")
+        guard let data = try? Data(contentsOf: url),
+              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        var projects = json["projects"] as? [String: Any] ?? [:]
+        var entry = projects[directory] as? [String: Any] ?? [:]
+        entry["hasTrustDialogAccepted"] = true
+        projects[directory] = entry
+        json["projects"] = projects
+        if let out = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+            try? out.write(to: url)
+        }
+    }
 }

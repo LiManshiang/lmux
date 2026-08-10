@@ -60,6 +60,12 @@ class TerminalManager: ObservableObject {
         }
 
         // Build command
+        if agentType == .claude {
+            // claude shows a workspace trust dialog on first run in a
+            // directory; pre-accept it so it doesn't block the embedded
+            // terminal (the dialog can't be answered there).
+            SessionRestore.acceptClaudeTrust(directory: projectDir)
+        }
         let agentPath = findAgentPath(name: agentType.executableName)
         guard FileManager.default.isExecutableFile(atPath: agentPath) else {
             onConnectError?("Agent executable not found: \(agentPath)")
