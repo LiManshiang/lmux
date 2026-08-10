@@ -107,12 +107,15 @@ struct SessionDetailView: View {
             let session = viewModel.sessions.first { $0.id == id }
             let dir = session?.projectDir ?? NSHomeDirectory()
             let cbc = session?.cbcSessionID
-            let agent = session?.agentType ?? .codebuddy
 
             // Try backend first, then restore.json (agent detection might have captured it).
             let restoreEntry = SessionRestore.loadAll().first { $0.sessionID == id }
             let restoreCBC = restoreEntry?.cbcSessionID
             let effectiveCBC = (cbc != nil && !cbc!.isEmpty) ? cbc : restoreCBC
+
+            // Prefer the agent type recorded by detection (e.g. claude when the
+            // user launched claude inside the shell) over the session's default.
+            let agent = restoreEntry?.agentType ?? session?.agentType ?? .codebuddy
 
             if let effectiveCBC, !effectiveCBC.isEmpty {
                 // Explicit session ID (Resume, or agent mode detected earlier):

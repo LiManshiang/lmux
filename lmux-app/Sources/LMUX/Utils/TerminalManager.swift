@@ -368,22 +368,24 @@ class TerminalManager: ObservableObject {
         // Check all descendants (not just direct children) in case agent runs in a subshell.
         guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
+        var codebuddyMatch: (AgentType, String?)? = nil
         for pid in allPIDs {
             // Check the command line of each child.
             let cmdLine = getCommandLine(of: pid) ?? ""
             let lower = cmdLine.lowercased()
 
-            // Detect Claude.
+            // Detect Claude. Claude wins when present: a leftover codebuddy
+            // process must not shadow the agent the user actually launched.
             if lower.contains("claude") && !lower.contains("claudecode") {
                 return (.claude, extractSessionID(from: cmdLine, agent: "claude"))
             }
             // Detect CodeBuddy.
-            if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
-                return (.codebuddy, extractSessionID(from: cmdLine, agent: "codebuddy"))
+            if (lower.contains("codebuddy-code") || lower.contains("codebuddy")) && codebuddyMatch == nil {
+                codebuddyMatch = (.codebuddy, extractSessionID(from: cmdLine, agent: "codebuddy"))
             }
         }
 
-        return nil
+        return codebuddyMatch
     }
 
     /// Extract the resume/session ID from an agent command line.
