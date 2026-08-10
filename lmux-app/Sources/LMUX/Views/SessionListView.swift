@@ -102,17 +102,20 @@ private struct SessionRowStatic: View {
     }
 }
 
-/// Small badge showing which agent a session runs. When a manager exists it
-/// observes it so the badge updates live when an agent is detected inside a
-/// bash session (same fix as SessionStatusView).
+/// Small badge showing which agent a session runs. Always mounted so it can
+/// observe the manager: when an agent is detected inside a bash session the
+/// badge appears live instead of waiting for a list rebuild.
 private struct AgentBadge: View {
     let manager: TerminalManager?
     let configuredAgent: AgentType
+    /// Static condition (cbc present or restore launchMode==agent); the
+    /// live-detected agent is observed separately.
+    let isAgentSession: Bool
 
     var body: some View {
         if let mgr = manager {
-            AgentBadgeObserved(manager: mgr, fallback: configuredAgent)
-        } else {
+            AgentBadgeObserved(manager: mgr, fallback: configuredAgent, showIf: isAgentSession)
+        } else if isAgentSession {
             AgentBadgeContent(agent: configuredAgent)
         }
     }
@@ -121,9 +124,12 @@ private struct AgentBadge: View {
 private struct AgentBadgeObserved: View {
     @ObservedObject var manager: TerminalManager
     let fallback: AgentType
+    let showIf: Bool
 
     var body: some View {
-        AgentBadgeContent(agent: manager.detectedAgentType ?? fallback)
+        if manager.detectedAgentType != nil || showIf {
+            AgentBadgeContent(agent: manager.detectedAgentType ?? fallback)
+        }
     }
 }
 
@@ -272,17 +278,15 @@ private struct SessionRowContent: View {
                         .font(.system(size: 13))
                         .fontWeight(isSelected ? .semibold : .regular)
                         .lineLimit(1)
-                    // Agent badge: only for sessions that are (or were) agent
-                    // sessions — a plain bash session shows nothing. Observes
-                    // the manager so it flips live when an agent is detected.
-                    if manager?.detectedAgentType != nil
-                        || (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
-                        || viewModel.isAgentMode(for: session.id) {
-                        AgentBadge(
-                            manager: manager,
-                            configuredAgent: viewModel.configuredAgentType(for: session.id)
-                        )
-                    }
+                    // Agent badge, always mounted so it observes the manager:
+                    // appears live when an agent is detected in the shell,
+                    // hidden for plain bash sessions.
+                    AgentBadge(
+                        manager: manager,
+                        configuredAgent: viewModel.configuredAgentType(for: session.id),
+                        isAgentSession: (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
+                            || viewModel.isAgentMode(for: session.id)
+                    )
                 }
 
                 // Conversation context usage, under the session name.
