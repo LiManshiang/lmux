@@ -115,85 +115,42 @@ struct SessionDetailView: View {
             // Prefer the agent type recorded by detection (e.g. claude when the
             // user launched claude inside the shell) over the session's default.
             let agent = restoreEntry?.agentType ?? session?.agentType ?? .codebuddy
+            let provider = agent.provider
 
-            // A session ID is tied to its agent: the backend stores the
-            // codebuddy conversation ID, which must never be passed to claude.
+            // A session ID is tied to its agent; the provider validates it and
+            // decides whether to look up the agent's history (e.g. a backend
+            // codebuddy ID is discarded for claude).
             let effectiveCBC: String?
-            if agent == .codebuddy {
-                effectiveCBC = (cbc != nil && !cbc!.isEmpty) ? cbc : restoreCBC
-            } else {
-                effectiveCBC = restoreCBC
-            }
+            effectiveCBC = (cbc != nil && !cbc!.isEmpty) ? cbc : restoreCBC
+            let isAgentSession = restoreEntry?.launchMode == .agent || mgr.detectedAgentType != nil || (effectiveCBC != nil && !effectiveCBC!.isEmpty)
 
-            if agent == .codebuddy {
-                if let effectiveCBC, !effectiveCBC.isEmpty {
-                    // Explicit session ID (Resume, or agent mode detected earlier):
-                    // launch the agent and resume that conversation. If the ID is
-                    // stale/invalid, fall back to the directory's recent session.
-                    Task {
-                        if await viewModel.isCodebuddySessionValid(effectiveCBC) {
-                            mgr.connect(
-                                sessionID: id,
-                                projectDir: dir,
-                                cbcSessionID: effectiveCBC,
-                                agentType: agent
-                            )
-                        } else if let found = await viewModel.findCodebuddySession(projectDir: dir) {
-                            mgr.connect(
-                                sessionID: id,
-                                projectDir: dir,
-                                cbcSessionID: found,
-                                agentType: agent
-                            )
-                        } else {
-                            mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
-                        }
-                    }
-                } else if restoreEntry?.launchMode == .agent || mgr.detectedAgentType != nil {
-                    // This session previously launched an agent (e.g. the user
-                    // started codebuddy inside the shell). Resolve the current
-                    // conversation from the directory and resume it.
-                    Task {
-                        if let found = await viewModel.findCodebuddySession(projectDir: dir) {
-                            mgr.connect(
-                                sessionID: id,
-                                projectDir: dir,
-                                cbcSessionID: found,
-                                agentType: agent
-                            )
-                        } else {
-                            mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
-                        }
-                    }
-                } else {
-                    // New session without history: start a bash terminal. Agent
-                    // detection will upgrade to agent mode if the user launches
-                    // codebuddy/claude manually inside the shell.
-                    mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
-                }
-            } else {
-                // claude and other non-codebuddy agents: resume the conversation
-                // recorded by detection, or start a fresh one when there is none.
-                Task {
-                    var claudeCBC = effectiveCBC
-                    if let cbc = claudeCBC, !cbc.isEmpty,
-                       await viewModel.isCodebuddySessionValid(cbc) {
-                        // The ID is a valid codebuddy conversation (saved from
-                        // a wrongly-launched claude --resume <codebuddy-id>);
-                        // never pass it to claude. Start fresh instead.
-                        claudeCBC = nil
-                    }
-                    if claudeCBC == nil || claudeCBC!.isEmpty {
-                        // No recorded claude conversation: resume the most
-                        // recent one from the directory's claude history.
-                        claudeCBC = await viewModel.findClaudeSession(projectDir: dir)
-                    }
+            Task {
+                let decision = await provider.resolveSession(
+                    cbcSessionID: effectiveCBC,
+                    projectDir: dir,
+                    allowHistoryLookup: isAgentSession,
+                    service: viewModel.api
+                )
+                switch decision {
+                case .resume(let sessionID):
                     mgr.connect(
                         sessionID: id,
                         projectDir: dir,
-                        cbcSessionID: claudeCBC,
+                        cbcSessionID: sessionID,
                         agentType: agent
                     )
+                case .fresh:
+                    mgr.connect(
+                        sessionID: id,
+                        projectDir: dir,
+                        cbcSessionID: nil,
+                        agentType: agent
+                    )
+                case .bash:
+                    // New session without history: start a bash terminal. Agent
+                    // detection will upgrade to agent mode if the user launches
+                    // an agent manually inside the shell.
+                    mgr.connectBash(sessionID: id, projectDir: dir, agentType: agent)
                 }
             }
         } else if !mgr.isConnected {

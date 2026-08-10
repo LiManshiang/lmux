@@ -145,6 +145,52 @@ func extractIDFromPath(path, action string) string {
 	return ""
 }
 
+// AgentFindSession looks up the most recent conversation for an agent
+// ("codebuddy" | "claude") in a project directory.
+func (h *Handler) AgentFindSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent      string `json:"agent"`
+		ProjectDir string `json:"project_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectDir == "" || body.Agent == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/project_dir")
+		return
+	}
+
+	var sessionID string
+	switch body.Agent {
+	case "codebuddy":
+		sessionID = codebuddy.FindRecentSessionForProject(body.ProjectDir)
+	case "claude":
+		sessionID = codebuddy.FindRecentClaudeSession(body.ProjectDir)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown agent")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id": sessionID,
+	})
+}
+
+// AgentSessionValid reports whether a session ID belongs to the given agent.
+// Only codebuddy currently supports validation.
+func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/agent/session-valid/")
+	parts := strings.SplitN(rest, "/", 2)
+	agent := parts[0]
+	id := ""
+	if len(parts) > 1 {
+		id = parts[1]
+	}
+	valid := false
+	if agent == "codebuddy" {
+		if info, err := codebuddy.GetSessionByID(id); err == nil {
+			valid = info.HasAssistant
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
+}
+
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
 // for a project directory by scanning JSONL files.
 func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {

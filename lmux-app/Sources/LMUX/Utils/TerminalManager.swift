@@ -67,21 +67,16 @@ class TerminalManager: ObservableObject {
             }
         }
 
-        // Build command
-        if agentType == .claude {
-            // claude shows a workspace trust dialog on first run in a
-            // directory; pre-accept it so it doesn't block the embedded
-            // terminal (the dialog can't be answered there).
-            SessionRestore.acceptClaudeTrust(directory: projectDir)
-        }
-        let agentPath = findAgentPath(name: agentType.executableName)
-        guard FileManager.default.isExecutableFile(atPath: agentPath) else {
-            onConnectError?("Agent executable not found: \(agentPath)")
+        // Build command (agent-specific behavior lives in its provider)
+        let provider = agentType.provider
+        guard let agentPath = provider.findBinaryPath(),
+              FileManager.default.isExecutableFile(atPath: agentPath) else {
+            onConnectError?("Agent executable not found: \(agentType.executableName)")
             return
         }
-        var args = agentType.launchArgs
+        var args = provider.launchArgs
         if let id = cbcSessionID, !id.isEmpty {
-            args.append(contentsOf: agentType.resumeArgs(sessionID: id))
+            args.append(contentsOf: provider.resumeArgs(sessionID: id))
         }
 
         // Build environment
@@ -100,15 +95,9 @@ class TerminalManager: ObservableObject {
         if !pathEnv.contains(agentDir) { pathEnv = "\(agentDir):\(pathEnv)" }
         parentEnv["PATH"] = pathEnv
 
-        if agentType == .claude {
-            // The app inherits CLAUDE_*/CODEBUDDY_* variables from codebuddy
-            // (notably CLAUDE_SESSION_ID pointing at a codebuddy conversation).
-            // claude sees those and refuses to render its TUI (it only emits
-            // the setup sequence). Strip them for claude.
-            parentEnv = parentEnv.filter { key, _ in
-                !key.hasPrefix("CLAUDE_") && !key.hasPrefix("CODEBUDDY")
-            }
-        }
+        // Agent-specific env/trust preparation (e.g. claude strips codebuddy
+        // env vars and pre-accepts the workspace trust dialog).
+        provider.prepareEnvironment(projectDir: projectDir, env: &parentEnv)
 
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
@@ -392,44 +381,21 @@ class TerminalManager: ObservableObject {
         // Check all descendants (not just direct children) in case agent runs in a subshell.
         guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
-        var codebuddyMatch: (AgentType, String?)? = nil
+        var best: (AgentType, String?)? = nil
+        var bestPriority = -1
         for pid in allPIDs {
-            // Check the command line of each child.
             let cmdLine = getCommandLine(of: pid) ?? ""
-            let lower = cmdLine.lowercased()
-
-            // Detect Claude. Claude wins when present: a leftover codebuddy
-            // process must not shadow the agent the user actually launched.
-            if lower.contains("claude") && !lower.contains("claudecode") {
-                return (.claude, extractSessionID(from: cmdLine, agent: "claude"))
-            }
-            // Detect CodeBuddy.
-            if (lower.contains("codebuddy-code") || lower.contains("codebuddy")) && codebuddyMatch == nil {
-                codebuddyMatch = (.codebuddy, extractSessionID(from: cmdLine, agent: "codebuddy"))
-            }
-        }
-
-        return codebuddyMatch
-    }
-
-    /// Extract the resume/session ID from an agent command line.
-    nonisolated private func extractSessionID(from cmdLine: String, agent: String) -> String? {
-        // codebuddy: codebuddy-code --permission-mode auto --resume <UUID>
-        //            codebuddy-code --permission-mode auto --session-id <UUID>
-        // claude:     claude --dangerously-skip-permissions --resume <UUID>
-        let components = cmdLine.components(separatedBy: " ")
-        for i in 0..<(components.count - 1) {
-            let arg = components[i]
-            if arg == "--session-id" || arg == "--resume"
-                || arg.hasPrefix("--session-id=") || arg.hasPrefix("--resume=") {
-                if arg.contains("=") {
-                    return arg.components(separatedBy: "=").last
-                } else {
-                    return components[i + 1]
+            for agent in AgentType.allCases {
+                guard let sid = agent.provider.detectProcess(cmdLine: cmdLine) else { continue }
+                // Highest detection priority wins (e.g. a leftover codebuddy
+                // process must not shadow the claude the user launched).
+                if agent.detectionPriority > bestPriority {
+                    best = (agent, sid)
+                    bestPriority = agent.detectionPriority
                 }
             }
         }
-        return nil
+        return best
     }
 
     /// Returns PIDs of all descendants (children recursively) of the given parent PID.
@@ -484,134 +450,6 @@ class TerminalManager: ObservableObject {
         } catch {
             return nil
         }
-    }
-
-    private static var agentPathCache: [String: String] = [:]
-
-    private func findAgentPath(name: String) -> String {
-        // Return cached path if still valid.
-        if let cached = Self.agentPathCache[name],
-           FileManager.default.isExecutableFile(atPath: cached) {
-            return cached
-        }
-
-        // 1. Search PATH first
-        var nonArm64Fallback: String?
-        let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
-        for dir in pathDirs {
-            let p = "\(dir)/\(name)"
-            guard FileManager.default.isExecutableFile(atPath: p) else { continue }
-            if name == "claude" {
-                // Skip broken postinstall stubs; prefer a native arm64 binary
-                // over a Rosetta x86_64 one (x86 claude warns about AVX and
-                // can crash).
-                if Self.isArm64ClaudeBinary(p) {
-                    Self.agentPathCache[name] = p
-                    return p
-                }
-                if Self.isRealClaudeBinary(p), nonArm64Fallback == nil {
-                    nonArm64Fallback = p
-                }
-            } else {
-                Self.agentPathCache[name] = p
-                return p
-            }
-        }
-        if let nonArm64Fallback {
-            Self.agentPathCache[name] = nonArm64Fallback
-            return nonArm64Fallback
-        }
-
-        // 2. Try common fixed paths
-        let candidates = [
-            "/opt/homebrew/bin/\(name)",
-            "/usr/local/bin/\(name)",
-        ]
-        for p in candidates {
-            if FileManager.default.isExecutableFile(atPath: p) {
-                Self.agentPathCache[name] = p
-                return p
-            }
-        }
-
-        // 3. Search nvm installations across mounted volumes
-        var nonArm64Fallback2: String?
-        let volumes = (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []
-        for vol in volumes where vol != "Macintosh HD" && !vol.hasPrefix(".") {
-            let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"
-            if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
-                for entry in entries {
-                    let p = "\(nvmBase)/\(entry)/bin/\(name)"
-                    guard FileManager.default.isExecutableFile(atPath: p) else { continue }
-                    if name == "claude" {
-                        if Self.isArm64ClaudeBinary(p) {
-                            Self.agentPathCache[name] = p
-                            return p
-                        }
-                        if Self.isRealClaudeBinary(p), nonArm64Fallback2 == nil {
-                            nonArm64Fallback2 = p
-                        }
-                    } else {
-                        Self.agentPathCache[name] = p
-                        return p
-                    }
-                }
-            }
-        }
-        if let nonArm64Fallback2 {
-            Self.agentPathCache[name] = nonArm64Fallback2
-            return nonArm64Fallback2
-        }
-
-        // 4. Check NVM_DIR from environment
-        let env = ProcessInfo.processInfo.environment
-        if let nvmDir = env["NVM_DIR"] {
-            let p = "\(nvmDir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: p) {
-                if name == "claude" && !Self.isRealClaudeBinary(p) {
-                    // fall through
-                } else {
-                    Self.agentPathCache[name] = p
-                    return p
-                }
-            }
-        }
-
-        let fallback = "/opt/homebrew/bin/\(name)"
-        Self.agentPathCache[name] = fallback
-        return fallback
-    }
-
-    /// claude is a symlink to .../claude.exe. A failed npm postinstall leaves
-    /// a ~500-byte stub that errors at launch ("native binary not installed");
-    /// only accept a real native binary (>1MB).
-    private static func isRealClaudeBinary(_ path: String) -> Bool {
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolved),
-              let size = attrs[.size] as? Int else {
-            return false
-        }
-        return size > 1_000_000
-    }
-
-    /// True when claude.exe is a native arm64 Mach-O (or a universal binary).
-    /// x86_64 builds run under Rosetta and warn about AVX / can crash.
-    private static func isArm64ClaudeBinary(_ path: String) -> Bool {
-        guard isRealClaudeBinary(path) else { return false }
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: resolved)) else {
-            return false
-        }
-        defer { try? handle.close() }
-        let data = handle.readData(ofLength: 8)
-        guard data.count >= 8 else { return false }
-        let b = [UInt8](data)
-        // Mach-O 64-bit magic: 0xFEEDFACF (big-endian on disk) / 0xCFFAEDFE (LE).
-        let magic = UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
-        if magic == 0xCAFEBABE { return true } // universal binary
-        guard magic == 0xFEEDFACF || magic == 0xCFFAEDFE else { return false }
-        let cputype = UInt32(b[4]) | UInt32(b[5]) << 8 | UInt32(b[6]) << 16 | UInt32(b[7]) << 24
-        return cputype == 0x0100_000C // CPU_TYPE_ARM64
     }
 }
 
