@@ -102,8 +102,32 @@ private struct SessionRowStatic: View {
     }
 }
 
-/// Small badge showing which agent a session runs.
+/// Small badge showing which agent a session runs. When a manager exists it
+/// observes it so the badge updates live when an agent is detected inside a
+/// bash session (same fix as SessionStatusView).
 private struct AgentBadge: View {
+    let manager: TerminalManager?
+    let configuredAgent: AgentType
+
+    var body: some View {
+        if let mgr = manager {
+            AgentBadgeObserved(manager: mgr, fallback: configuredAgent)
+        } else {
+            AgentBadgeContent(agent: configuredAgent)
+        }
+    }
+}
+
+private struct AgentBadgeObserved: View {
+    @ObservedObject var manager: TerminalManager
+    let fallback: AgentType
+
+    var body: some View {
+        AgentBadgeContent(agent: manager.detectedAgentType ?? fallback)
+    }
+}
+
+private struct AgentBadgeContent: View {
     let agent: AgentType
 
     private var color: Color {
@@ -248,11 +272,12 @@ private struct SessionRowContent: View {
                         .font(.system(size: 13))
                         .fontWeight(isSelected ? .semibold : .regular)
                         .lineLimit(1)
-                    // Current agent badge: live-detected agent wins, then the
-                    // detection recorded in restore.json, then the backend
-                    // agent type. Always shown so a freshly created session
-                    // indicates its configured agent.
-                    AgentBadge(agent: viewModel.currentAgentType(for: session.id))
+                    // Current agent badge: observes the manager so it flips
+                    // live when an agent is detected inside the shell.
+                    AgentBadge(
+                        manager: manager,
+                        configuredAgent: viewModel.configuredAgentType(for: session.id)
+                    )
                 }
 
                 // Conversation context usage, under the session name.

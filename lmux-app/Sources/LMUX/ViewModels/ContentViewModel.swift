@@ -79,6 +79,13 @@ class ContentViewModel: ObservableObject {
         if let mgr = terminalManagers[sessionID], let detected = mgr.detectedAgentType {
             return detected
         }
+        return configuredAgentType(for: sessionID)
+    }
+
+    /// The agent configured for a session (restore.json detection, then the
+    /// backend agent type), without live-detection. Used as a fallback by
+    /// views that observe the manager themselves.
+    func configuredAgentType(for sessionID: String) -> AgentType {
         if let entry = SessionRestore.loadAll().first(where: { $0.sessionID == sessionID }),
            let at = entry.agentType {
             return at
