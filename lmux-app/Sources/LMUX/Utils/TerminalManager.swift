@@ -1,7 +1,6 @@
 import Foundation
 import LMUXCore
 import AppKit
-import SwiftTerm
 import UserNotifications
 import Darwin
 
@@ -11,15 +10,16 @@ class TerminalManager: ObservableObject {
     @Published var processRunning: Bool = false
     @Published var isIdle: Bool = true
 
-    /// Called on main actor when the codebuddy-code process exits.
+    /// Called on main actor when the agent process exits.
     var onProcessExit: (() -> Void)?
-    /// Called on main actor when codebuddy-code produces first terminal output.
+    /// Called on main actor when the agent produces first terminal output.
     var onFirstOutput: (() -> Void)?
     /// Called on main actor when starting a process fails (e.g. executable not found).
     var onConnectError: ((String) -> Void)?
 
-    /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
-    private(set) var terminalView: LocalProcessTerminalView?
+    /// The active rendering backend (SwiftTerm or Ghostty). Nil while detached
+    /// or before the first connect; the instance is preserved across detach.
+    private(set) var backend: TerminalBackend?
 
     private var currentSessionID: String?
     private var detachProjectDir: String?
@@ -52,22 +52,16 @@ class TerminalManager: ObservableObject {
 
     /// Apply a terminal theme to the running terminal view immediately.
     func applyTheme(_ themeId: String) {
-        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }),
-              let view = terminalView else { return }
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-        view.needsDisplay = true
+        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }) else { return }
+        backend?.applyTheme(theme)
     }
 
-    /// Connect by spawning an agent directly via SwiftTerm's forkpty.
+    /// Connect by spawning an agent via the active backend.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
         // restore and connectToSession can race (both call connect for the
         // same session at startup); restarting would kill the just-launched
         // process. If this session is already running, reuse it.
-        if currentSessionID == sessionID, processRunning, terminalView != nil {
+        if currentSessionID == sessionID, processRunning, backend != nil {
             isConnected = true
             startIdleTimer()
             return
@@ -76,29 +70,6 @@ class TerminalManager: ObservableObject {
 
         currentSessionID = sessionID
         detachProjectDir = projectDir
-
-        // ... same terminal setup ...
-        let view = OutputAwareTerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-
-        // Apply selected theme
-        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
-        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-        view.onFirstOutput = { [weak self] in
-            DispatchQueue.main.async {
-                self?.onFirstOutput?()
-            }
-        }
-        view.onActivity = { [weak self] in
-            DispatchQueue.main.async {
-                self?.lastActivityTime = Date()
-            }
-        }
 
         // Build command (agent-specific behavior lives in its provider)
         let provider = agentType.provider
@@ -137,55 +108,49 @@ class TerminalManager: ObservableObject {
 
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
-        // Start process
-        view.startProcess(executable: agentPath, args: args, environment: envList, currentDirectory: projectDir)
+        // Create the backend and wire callbacks.
+        let backend = TerminalBackendFactory.make()
+        self.backend = backend
+        wireCallbacks(backend: backend)
 
-        // SwiftTerm keeps shellPid == 0 silently when forkpty fails; don't
-        // enter a fake "running" state in that case.
-        guard view.process.shellPid > 0 else {
-            let msg = "Failed to launch \(agentType.displayName). Check the executable and try again."
-            connectErrorMessage = msg
-            onConnectError?(msg)
+        let ok = backend.startAgent(
+            executable: agentPath,
+            args: args,
+            env: envList,
+            cwd: projectDir
+        )
+        guard ok else {
+            // SwiftTerm: startAgent returns false only when forkpty fails and
+            // already called onConnectError. Ghostty is async — returns true.
+            disconnect()
             return
         }
-
-        // Register OSC 777 notification handler (ESC ] 777 ; notify ; <title> ; <body> ST)
-        view.getTerminal().parser.oscHandlers[777] = { [weak self] data in
-            guard let text = String(bytes: data, encoding: .utf8) else { return }
-            let parts = text.components(separatedBy: ";")
-            guard parts.count >= 3, parts[0] == "notify" else { return }
-            self?.sendOSCNotification(title: parts[1], body: parts[2...].joined(separator: ";"))
-        }
-
-        // Register OSC 9 handler for simple attention notifications
-        view.getTerminal().parser.oscHandlers[9] = { [weak self] data in
-            guard let msg = String(bytes: data, encoding: .utf8), !msg.isEmpty else { return }
-            self?.sendOSCNotification(title: "Session", body: msg)
-        }
-
-        // Keep enough scrollback for a full day of conversation.
-        view.getTerminal().changeScrollback(50_000)
 
         processGeneration += 1
         let gen = processGeneration
 
         // Track process exit
-        view.processDelegate = Delegate { [weak self] in
+        backend.onProcessExit = { [weak self] in
             DispatchQueue.main.async {
                 // Only fire exit callback for the current process generation,
                 // not stale callbacks from previously-terminated processes.
-                guard self?.processGeneration == gen else { return }
-                self?.isConnected = false
-                self?.processRunning = false
-                self?.onProcessExit?()
+                guard let self, self.processGeneration == gen else { return }
+                self.isConnected = false
+                self.processRunning = false
+                self.onProcessExit?()
             }
         }
 
-        self.terminalView = view
+        // Register OSC 777/9 notification via backend.onNotify (Ghostty) or
+        // its internal handlers (SwiftTerm). Both funnel to this callback.
+        backend.onNotify = { [weak self] title, body in
+            self?.sendOSCNotification(title: title, body: body)
+        }
+
         isConnected = true
         processRunning = true
         processStartTime = Date()
-        processPID = view.process.shellPid
+        processPID = backend.processPID
         lastActivityTime = Date()
         startIdleTimer()
 
@@ -193,10 +158,44 @@ class TerminalManager: ObservableObject {
         SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: .agent)
     }
 
+    private func wireCallbacks(backend: TerminalBackend) {
+        backend.onFirstOutput = { [weak self] in
+            DispatchQueue.main.async {
+                self?.onFirstOutput?()
+            }
+        }
+        backend.onActivity = { [weak self] in
+            DispatchQueue.main.async {
+                self?.lastActivityTime = Date()
+            }
+        }
+        backend.onConnectError = { [weak self] message in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Ghostty reports spawn failure asynchronously (surface closes
+                // before the process ever produced a PID). Roll back the
+                // optimistic running state so the ConnectionErrorView shows.
+                if self.processRunning, !backend.isProcessRunning {
+                    self.isConnected = false
+                    self.processRunning = false
+                    self.idleTimer?.invalidate()
+                    self.idleTimer = nil
+                }
+                self.connectErrorMessage = message
+                self.onConnectError?(message)
+            }
+        }
+    }
+
     private func startIdleTimer() {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self, self.processRunning else { return }
+            // Sync PID from the backend (Ghostty's surface is created
+            // asynchronously once its view attaches; SwiftTerm's is immediate).
+            if let backend = self.backend, backend.processPID != self.processPID, backend.processPID > 0 {
+                self.processPID = backend.processPID
+            }
             let idle = Date().timeIntervalSince(self.lastActivityTime) > 3.0
             if self.isIdle != idle {
                 self.isIdle = idle
@@ -212,8 +211,8 @@ class TerminalManager: ObservableObject {
         if let sid = currentSessionID {
             SessionRestore.remove(sessionID: sid)
         }
-        terminalView?.process.terminate()
-        terminalView = nil
+        backend?.terminate()
+        backend = nil
         currentSessionID = nil
         isConnected = false
         processRunning = false
@@ -222,11 +221,11 @@ class TerminalManager: ObservableObject {
     }
 
     /// Detach without killing: disconnect UI but keep process running.
-    /// LocalProcessTerminalView's process continues because we don't call terminate().
+    /// The backend's view/process continues because we don't call terminate().
     func detach() {
         // If an agent is running inside the shell right now, record it so the
         // next launch can resume it (the periodic detection may have missed it
-        // if the user started codebuddy shortly before switching away).
+        // if the user started the agent shortly before switching away).
         if processPID > 0,
            detectedAgentType == nil,
            let result = detectRunningAgent(shellPID: processPID),
@@ -243,18 +242,20 @@ class TerminalManager: ObservableObject {
         isConnected = false
         // Keep the idle timer running: the process is still alive after
         // detach, so its idle/running state must keep updating in the
-        // sidebar. startIdleTimer() invalidates+reschedules on reattach.
+        // sidebar. StartIdleTimer() invalidates+reschedules on reattach.
         // Stop the agent-detection timer so it doesn't linger after switching
         // sessions; it restarts on the next connectBash(). detectedAgentType
         // is preserved for reattach.
         agentDetectionTimer?.invalidate()
         agentDetectionTimer = nil
-        // Keep terminalView alive so process keeps running
+        // Keep backend alive so process keeps running
+        backend?.detach()
     }
 
-    /// Re-attach: terminalView and process are still alive, just mark connected.
+    /// Re-attach: backend and process are still alive, just mark connected.
     func reattach() {
-        guard terminalView != nil else { return }
+        guard backend != nil else { return }
+        backend?.reattach()
         isConnected = true
         startIdleTimer()
     }
@@ -271,12 +272,12 @@ class TerminalManager: ObservableObject {
     /// Send text into the terminal as if the user typed it (used by file drop).
     func sendInput(_ text: String) {
         guard processRunning else { return }
-        terminalView?.send(txt: text)
+        backend?.sendInput(text)
     }
 
     /// Whether the session needs user attention (task completed in background).
     var needsAttention: Bool {
-        !isConnected && !processRunning && terminalView != nil
+        !isConnected && !processRunning && backend != nil
     }
 
     private func sendOSCNotification(title: String, body: String) {
@@ -299,57 +300,42 @@ class TerminalManager: ObservableObject {
         currentSessionID = sessionID
         detachProjectDir = projectDir
 
-        let view = OutputAwareTerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-
-        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
-        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-
-        view.onFirstOutput = { [weak self] in
-            DispatchQueue.main.async {
-                self?.onFirstOutput?()
-            }
-        }
-        view.onActivity = { [weak self] in
-            DispatchQueue.main.async {
-                self?.lastActivityTime = Date()
-            }
-        }
-
-        let zshPath = "/bin/zsh"
-        guard FileManager.default.isExecutableFile(atPath: zshPath) else {
-            let msg = "Shell not found at \(zshPath). This system may be missing zsh."
-            connectErrorMessage = msg
-            onConnectError?(msg)
-            return
-        }
-
-        // Inherit full environment from parent process
+        // Build environment (inherit full environment from parent process)
         var parentEnv = ProcessInfo.processInfo.environment
         parentEnv["TERM"] = "xterm-256color"
         parentEnv["LANG"] = "en_US.UTF-8"
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
-        view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
+        let backend = TerminalBackendFactory.make()
+        self.backend = backend
+        wireCallbacks(backend: backend)
 
-        guard view.process.shellPid > 0 else {
-            let msg = "Failed to launch the shell. Try again; if it persists, check system shell state."
-            connectErrorMessage = msg
-            onConnectError?(msg)
+        guard backend.startBash(cwd: projectDir, env: envList) else {
+            // Backend already reported the error via onConnectError.
+            disconnect()
             return
         }
-        view.getTerminal().changeScrollback(200_000)
 
-        self.terminalView = view
+        processGeneration += 1
+        let gen = processGeneration
+        backend.onProcessExit = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.processGeneration == gen else { return }
+                self.isConnected = false
+                self.processRunning = false
+                self.onProcessExit?()
+            }
+        }
+        backend.onNotify = { [weak self] title, body in
+            self?.sendOSCNotification(title: title, body: body)
+        }
+
+        self.backend?.setScrollback(200_000)
+
         isConnected = true
         processRunning = true
         processStartTime = Date()
-        processPID = view.process.shellPid
+        processPID = backend.processPID
         lastActivityTime = Date()
         startIdleTimer()
 
@@ -514,29 +500,4 @@ class TerminalManager: ObservableObject {
         }
         return result
     }
-}
-
-/// A LocalProcessTerminalView that notifies on first data received from the PTY.
-private class OutputAwareTerminalView: LocalProcessTerminalView {
-    var onFirstOutput: (() -> Void)?
-    var onActivity: (() -> Void)?
-    private var outputDetected = false
-
-    override func dataReceived(slice: ArraySlice<UInt8>) {
-        if !outputDetected {
-            outputDetected = true
-            onFirstOutput?()
-        }
-        onActivity?()
-        super.dataReceived(slice: slice)
-    }
-}
-
-private class Delegate: NSObject, LocalProcessTerminalViewDelegate {
-    let onExit: () -> Void
-    init(onExit: @escaping () -> Void) { self.onExit = onExit }
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
-    func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) { onExit() }
 }

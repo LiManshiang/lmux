@@ -4,13 +4,14 @@ import PackageDescription
 let package = Package(
     name: "lmux",
     platforms: [
-        .macOS(.v12)
+        .macOS(.v13)
     ],
     products: [
         .executable(name: "lmux", targets: ["LMUX"])
     ],
     dependencies: [
         .package(path: "/Volumes/Developer/CodeBuddy/Projects/lmux/SwiftTerm"),
+        .package(path: "/Volumes/Developer/CodeBuddy/Projects/lmux/libghostty-spm"),
     ],
     targets: [
         .target(
@@ -19,7 +20,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "LMUX",
-            dependencies: ["SwiftTerm", "LMUXCore"],
+            dependencies: [
+                "SwiftTerm",
+                "LMUXCore",
+                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+            ],
             path: "Sources/LMUX"
         ),
         .testTarget(

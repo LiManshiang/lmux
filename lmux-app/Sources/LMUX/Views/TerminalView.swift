@@ -1,5 +1,4 @@
 import SwiftUI
-import SwiftTerm
 import QuartzCore
 import AppKit
 
@@ -78,7 +77,7 @@ struct PTYTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        guard let terminal = manager.terminalView, manager.isConnected else {
+        guard let terminal = manager.backend?.view, manager.isConnected else {
             nsView.subviews.forEach { $0.removeFromSuperview() }
             context.coordinator.clear()
             return

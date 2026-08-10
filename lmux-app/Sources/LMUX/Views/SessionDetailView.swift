@@ -28,7 +28,7 @@ struct SessionDetailView: View {
                             showSplitPane.toggle()
                             if showSplitPane {
                                 let splitMgr = viewModel.splitTerminalManager(for: sid)
-                                if splitMgr.terminalView == nil {
+                                if splitMgr.backend == nil {
                                     splitMgr.connectBash(sessionID: sid, projectDir: session.projectDir, agentType: session.agentType)
                                 }
                             }
@@ -113,7 +113,7 @@ struct SessionDetailView: View {
     private func connectToSession(id: String) {
         let mgr = viewModel.terminalManager(for: id)
 
-        if mgr.terminalView == nil {
+        if mgr.backend == nil {
             let session = viewModel.sessions.first { $0.id == id }
             let dir = session?.projectDir ?? NSHomeDirectory()
             let cbc = session?.cbcSessionID
