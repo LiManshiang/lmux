@@ -535,51 +535,64 @@ class ContentViewModel: ObservableObject {
 
         // Re-fetch the backend session so we can fall back to its cbcSessionID
         let backend = sessions.first(where: { $0.id == entry.sessionID })
-
-        // Prefer restore.json cbcSessionID, but fall back to backend if missing.
-        let restoreCBC = entry.cbcSessionID
-        let backendCBC = backend?.cbcSessionID
-        var effectiveCBC = (restoreCBC != nil && !restoreCBC!.isEmpty) ? restoreCBC : backendCBC
+        let agent = entry.agentType ?? .codebuddy
 
         let mgr = terminalManager(for: entry.sessionID)
         let isAgentMode = entry.launchMode == .agent
 
-        // Only look up a codebuddy session ID from JSONL when this is
-        // known to be an agent session. Also re-resolve when the persisted
-        // ID is stale/invalid (e.g. a stub session saved before it had any
-        // assistant reply).
-        if isAgentMode {
-            let cbcValid = await isCodebuddySessionValid(effectiveCBC)
-            if !cbcValid {
-                if let found = await findCodebuddySession(projectDir: entry.projectDir) {
-                    effectiveCBC = found
+        if agent == .codebuddy {
+            // Prefer restore.json cbcSessionID, but fall back to backend if missing.
+            let restoreCBC = entry.cbcSessionID
+            let backendCBC = backend?.cbcSessionID
+            var effectiveCBC = (restoreCBC != nil && !restoreCBC!.isEmpty) ? restoreCBC : backendCBC
+
+            // Only look up a codebuddy session ID from JSONL when this is
+            // known to be an agent session. Also re-resolve when the persisted
+            // ID is stale/invalid (e.g. a stub session saved before it had any
+            // assistant reply).
+            if isAgentMode {
+                let cbcValid = await isCodebuddySessionValid(effectiveCBC)
+                if !cbcValid {
+                    if let found = await findCodebuddySession(projectDir: entry.projectDir) {
+                        effectiveCBC = found
+                    }
                 }
             }
-        }
 
-        let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
+            let hasEffectiveCBC = (effectiveCBC != nil && !effectiveCBC!.isEmpty)
 
-        // Sync cbcSessionID back to the backend so all paths (restore + connectToSession) see it.
-        // Also correct stale values that were re-resolved above.
-        if hasEffectiveCBC, let backend = backend, backend.cbcSessionID != effectiveCBC {
-            try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: effectiveCBC!)
-        }
+            // Sync cbcSessionID back to the backend so all paths (restore + connectToSession) see it.
+            // Also correct stale values that were re-resolved above.
+            if hasEffectiveCBC, let backend = backend, backend.cbcSessionID != effectiveCBC {
+                try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: effectiveCBC!)
+            }
 
-        if isAgentMode || hasEffectiveCBC {
+            if isAgentMode || hasEffectiveCBC {
+                mgr.connect(
+                    sessionID: entry.sessionID,
+                    projectDir: entry.projectDir,
+                    cbcSessionID: effectiveCBC,
+                    agentType: agent
+                )
+            } else {
+                // New session without history: start a bash terminal. Agent
+                // detection will upgrade to agent mode if the user launches
+                // codebuddy/claude manually inside the shell.
+                mgr.connectBash(
+                    sessionID: entry.sessionID,
+                    projectDir: entry.projectDir,
+                    agentType: agent
+                )
+            }
+        } else {
+            // claude and other non-codebuddy agents: resume the conversation
+            // recorded by detection (its own ID, not the backend's codebuddy
+            // one), or start a fresh session when there is none.
             mgr.connect(
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
-                cbcSessionID: effectiveCBC,
-                agentType: entry.agentType ?? .codebuddy
-            )
-        } else {
-            // New session without history: start a bash terminal. Agent
-            // detection will upgrade to agent mode if the user launches
-            // codebuddy/claude manually inside the shell.
-            mgr.connectBash(
-                sessionID: entry.sessionID,
-                projectDir: entry.projectDir,
-                agentType: entry.agentType ?? .codebuddy
+                cbcSessionID: entry.cbcSessionID,
+                agentType: agent
             )
         }
 
