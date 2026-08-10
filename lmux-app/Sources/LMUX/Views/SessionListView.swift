@@ -248,20 +248,24 @@ private struct SessionRowContent: View {
                         .font(.system(size: 13))
                         .fontWeight(isSelected ? .semibold : .regular)
                         .lineLimit(1)
-                    // Current agent badge: prefer the live-detected agent
-                    // (e.g. claude started inside a bash session), else the
-                    // session's configured agent type.
+                    // Current agent badge: live-detected agent wins, then the
+                    // detection recorded in restore.json, then the backend
+                    // agent type.
                     if manager?.detectedAgentType != nil
                         || (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty) {
-                        AgentBadge(agent: manager?.detectedAgentType ?? session.agentType)
+                        AgentBadge(agent: viewModel.currentAgentType(for: session.id))
                     }
                 }
 
                 // Conversation context usage, under the session name.
                 // Show for agent sessions (known cbc) and for bash sessions
                 // that have launched an agent (resolved via find-session).
+                // The agent type must match the cbc (a backend cbc may hold a
+                // claude session ID while the backend agent_type is still the
+                // default), so use the actual agent for the session.
+                let currentAgent = viewModel.currentAgentType(for: session.id)
                 if let cbc = session.cbcSessionID, !cbc.isEmpty {
-                    ContextUsageView(agent: session.agentType, cbcSessionID: cbc, projectDir: session.projectDir)
+                    ContextUsageView(agent: currentAgent, cbcSessionID: cbc, projectDir: session.projectDir)
                 } else if let mgr = manager, let detected = mgr.detectedAgentType {
                     ContextUsageView(agent: detected, cbcSessionID: nil, projectDir: session.projectDir)
                 }

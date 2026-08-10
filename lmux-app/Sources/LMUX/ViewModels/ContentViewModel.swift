@@ -72,6 +72,20 @@ class ContentViewModel: ObservableObject {
         terminalManagers[sessionID]
     }
 
+    /// The agent a session actually uses: live-detected first (e.g. claude
+    /// started inside a bash session), then the detection recorded in
+    /// restore.json, then the backend-configured agent type.
+    func currentAgentType(for sessionID: String) -> AgentType {
+        if let mgr = terminalManagers[sessionID], let detected = mgr.detectedAgentType {
+            return detected
+        }
+        if let entry = SessionRestore.loadAll().first(where: { $0.sessionID == sessionID }),
+           let at = entry.agentType {
+            return at
+        }
+        return sessions.first(where: { $0.id == sessionID })?.agentType ?? .codebuddy
+    }
+
     /// Release a terminal manager when its session is deleted.
     func releaseTerminalManager(for sessionID: String) {
         if let mgr = terminalManagers[sessionID] {
