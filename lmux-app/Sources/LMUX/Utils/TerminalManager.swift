@@ -189,8 +189,9 @@ class TerminalManager: ObservableObject {
             )
         }
         isConnected = false
-        idleTimer?.invalidate()
-        idleTimer = nil
+        // Keep the idle timer running: the process is still alive after
+        // detach, so its idle/running state must keep updating in the
+        // sidebar. startIdleTimer() invalidates+reschedules on reattach.
         // Stop the agent-detection timer so it doesn't linger after switching
         // sessions; it restarts on the next connectBash(). detectedAgentType
         // is preserved for reattach.
