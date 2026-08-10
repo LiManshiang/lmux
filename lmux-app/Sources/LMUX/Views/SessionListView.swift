@@ -23,7 +23,7 @@ struct SessionListView: View {
                                 showRenameAlert(session)
                             }
                             Button("Delete", role: .destructive) {
-                                Task { await viewModel.deleteSession(id: session.id) }
+                                confirmDelete(session)
                             }
                         }
                 }
@@ -58,6 +58,19 @@ struct SessionListView: View {
 
         if alert.runModal() == .alertFirstButtonReturn {
             Task { await viewModel.renameSession(id: session.id, name: input.stringValue) }
+        }
+    }
+
+    /// Confirm before deleting a session (destructive, removes history).
+    private func confirmDelete(_ session: SessionSummary) {
+        let alert = NSAlert()
+        alert.messageText = "Delete Session"
+        alert.informativeText = "Delete '\(session.name)'? This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            Task { await viewModel.deleteSession(id: session.id) }
         }
     }
 }
