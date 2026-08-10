@@ -250,11 +250,9 @@ private struct SessionRowContent: View {
                         .lineLimit(1)
                     // Current agent badge: live-detected agent wins, then the
                     // detection recorded in restore.json, then the backend
-                    // agent type.
-                    if manager?.detectedAgentType != nil
-                        || (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty) {
-                        AgentBadge(agent: viewModel.currentAgentType(for: session.id))
-                    }
+                    // agent type. Always shown so a freshly created session
+                    // indicates its configured agent.
+                    AgentBadge(agent: viewModel.currentAgentType(for: session.id))
                 }
 
                 // Conversation context usage, under the session name.

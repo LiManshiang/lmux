@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -230,22 +231,18 @@ func parseJSONL(path string) (SessionInfo, error) {
 	return info, nil
 }
 
-// FindRecentSessionForProject scans all codebuddy session directories
-// and returns the most recent session ID for the given project directory.
-// Returns empty string if no matching session is found.
+// FindRecentSessionForProject returns the most recently created codebuddy
+// conversation in a project directory, or "" when there is none. It includes
+// empty sessions: a freshly launched codebuddy creates a 0-byte JSONL before
+// any message, and resuming it behaves like a new conversation.
 func FindRecentSessionForProject(projectDir string) string {
-	sessions, err := ScanAll()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-
-	var best SessionInfo
-	for _, s := range sessions {
-		if s.CWD == projectDir && s.HasAssistant && s.Timestamp > best.Timestamp {
-			best = s
-		}
-	}
-	return best.SessionID
+	encoded := strings.TrimPrefix(projectDir, "/")
+	encoded = strings.ReplaceAll(encoded, "/", "-")
+	return latestSessionFile(filepath.Join(home, ".codebuddy", "projects", encoded))
 }
 
 // ContextWindowTokens is the context window for the default model
@@ -259,15 +256,21 @@ func encodeClaudeProjectDir(dir string) string {
 	return strings.ReplaceAll(dir, "/", "-")
 }
 
-// FindRecentClaudeSession returns the most recent non-empty claude
-// conversation ID for a project directory, or "" when there is none.
-func FindRecentClaudeSession(projectDir string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+// creationTime returns a file's creation (birth) time. Used to pick the
+// session the user most recently started, rather than the one most recently
+// written to (a long-lived session is touched on every run).
+func creationTime(path string) time.Time {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return time.Time{}
 	}
-	projDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
-	entries, err := os.ReadDir(projDir)
+	return time.Unix(st.Birthtimespec.Sec, st.Birthtimespec.Nsec)
+}
+
+// latestSessionFile returns the most recently created *.jsonl in a directory,
+// or "" when there is none.
+func latestSessionFile(dir string) string {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
@@ -277,16 +280,24 @@ func FindRecentClaudeSession(projectDir string) string {
 		if !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil || info.Size() < 100 {
-			continue
-		}
-		if best == "" || info.ModTime().After(bestTime) {
+		t := creationTime(filepath.Join(dir, e.Name()))
+		if best == "" || t.After(bestTime) {
 			best = strings.TrimSuffix(e.Name(), ".jsonl")
-			bestTime = info.ModTime()
+			bestTime = t
 		}
 	}
 	return best
+}
+
+// FindRecentClaudeSession returns the most recently created claude
+// conversation ID for a project directory, or "" when there is none.
+func FindRecentClaudeSession(projectDir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	projDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
+	return latestSessionFile(projDir)
 }
 
 // GetClaudeContextTokens estimates the conversation context size (tokens)
