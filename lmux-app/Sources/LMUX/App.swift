@@ -47,6 +47,10 @@ struct LmuxApp: App {
                 Button("Export Sessions…") { viewModel.promptExportSessions() }
                 Button("Import Sessions…") { viewModel.promptImportSessions() }
             }
+            CommandGroup(replacing: .help) {
+                Button("Usage & Shortcuts") { viewModel.showHelp = true }
+                    .keyboardShortcut("?", modifiers: .command)
+            }
         }
 
         Settings {

@@ -14,6 +14,7 @@ class ContentViewModel: ObservableObject {
     @Published var connectedSessionId: String?
     @Published var selectedFullSession: Session?
     @Published var showNewSessionSheet = false
+    @Published var showHelp = false
     @Published var backendRunning = false
     @Published var backendStarting = false
     @Published var isLoading = false

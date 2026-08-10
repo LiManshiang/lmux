@@ -69,6 +69,9 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: viewModel.toastMessage)
+        .sheet(isPresented: $viewModel.showHelp) {
+            HelpView()
+        }
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
