@@ -31,6 +31,14 @@ class TerminalManager: ObservableObject {
 
     /// Connect by spawning an agent directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
+        // restore and connectToSession can race (both call connect for the
+        // same session at startup); restarting would kill the just-launched
+        // process. If this session is already running, reuse it.
+        if currentSessionID == sessionID, processRunning, terminalView != nil {
+            isConnected = true
+            startIdleTimer()
+            return
+        }
         disconnect()
 
         currentSessionID = sessionID
@@ -91,6 +99,16 @@ class TerminalManager: ObservableObject {
         let agentDir = URL(fileURLWithPath: agentPath).deletingLastPathComponent().path
         if !pathEnv.contains(agentDir) { pathEnv = "\(agentDir):\(pathEnv)" }
         parentEnv["PATH"] = pathEnv
+
+        if agentType == .claude {
+            // The app inherits CLAUDE_*/CODEBUDDY_* variables from codebuddy
+            // (notably CLAUDE_SESSION_ID pointing at a codebuddy conversation).
+            // claude sees those and refuses to render its TUI (it only emits
+            // the setup sequence). Strip them for claude.
+            parentEnv = parentEnv.filter { key, _ in
+                !key.hasPrefix("CLAUDE_") && !key.hasPrefix("CODEBUDDY")
+            }
+        }
 
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
@@ -478,13 +496,30 @@ class TerminalManager: ObservableObject {
         }
 
         // 1. Search PATH first
+        var nonArm64Fallback: String?
         let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":")
         for dir in pathDirs {
             let p = "\(dir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: p) {
+            guard FileManager.default.isExecutableFile(atPath: p) else { continue }
+            if name == "claude" {
+                // Skip broken postinstall stubs; prefer a native arm64 binary
+                // over a Rosetta x86_64 one (x86 claude warns about AVX and
+                // can crash).
+                if Self.isArm64ClaudeBinary(p) {
+                    Self.agentPathCache[name] = p
+                    return p
+                }
+                if Self.isRealClaudeBinary(p), nonArm64Fallback == nil {
+                    nonArm64Fallback = p
+                }
+            } else {
                 Self.agentPathCache[name] = p
                 return p
             }
+        }
+        if let nonArm64Fallback {
+            Self.agentPathCache[name] = nonArm64Fallback
+            return nonArm64Fallback
         }
 
         // 2. Try common fixed paths
@@ -500,18 +535,32 @@ class TerminalManager: ObservableObject {
         }
 
         // 3. Search nvm installations across mounted volumes
+        var nonArm64Fallback2: String?
         let volumes = (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? []
         for vol in volumes where vol != "Macintosh HD" && !vol.hasPrefix(".") {
             let nvmBase = "/Volumes/\(vol)/OpenSource/nvm/versions/node"
             if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmBase) {
                 for entry in entries {
                     let p = "\(nvmBase)/\(entry)/bin/\(name)"
-                    if FileManager.default.isExecutableFile(atPath: p) {
+                    guard FileManager.default.isExecutableFile(atPath: p) else { continue }
+                    if name == "claude" {
+                        if Self.isArm64ClaudeBinary(p) {
+                            Self.agentPathCache[name] = p
+                            return p
+                        }
+                        if Self.isRealClaudeBinary(p), nonArm64Fallback2 == nil {
+                            nonArm64Fallback2 = p
+                        }
+                    } else {
                         Self.agentPathCache[name] = p
                         return p
                     }
                 }
             }
+        }
+        if let nonArm64Fallback2 {
+            Self.agentPathCache[name] = nonArm64Fallback2
+            return nonArm64Fallback2
         }
 
         // 4. Check NVM_DIR from environment
@@ -519,14 +568,50 @@ class TerminalManager: ObservableObject {
         if let nvmDir = env["NVM_DIR"] {
             let p = "\(nvmDir)/\(name)"
             if FileManager.default.isExecutableFile(atPath: p) {
-                Self.agentPathCache[name] = p
-                return p
+                if name == "claude" && !Self.isRealClaudeBinary(p) {
+                    // fall through
+                } else {
+                    Self.agentPathCache[name] = p
+                    return p
+                }
             }
         }
 
         let fallback = "/opt/homebrew/bin/\(name)"
         Self.agentPathCache[name] = fallback
         return fallback
+    }
+
+    /// claude is a symlink to .../claude.exe. A failed npm postinstall leaves
+    /// a ~500-byte stub that errors at launch ("native binary not installed");
+    /// only accept a real native binary (>1MB).
+    private static func isRealClaudeBinary(_ path: String) -> Bool {
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolved),
+              let size = attrs[.size] as? Int else {
+            return false
+        }
+        return size > 1_000_000
+    }
+
+    /// True when claude.exe is a native arm64 Mach-O (or a universal binary).
+    /// x86_64 builds run under Rosetta and warn about AVX / can crash.
+    private static func isArm64ClaudeBinary(_ path: String) -> Bool {
+        guard isRealClaudeBinary(path) else { return false }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: resolved)) else {
+            return false
+        }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: 8)
+        guard data.count >= 8 else { return false }
+        let b = [UInt8](data)
+        // Mach-O 64-bit magic: 0xFEEDFACF (big-endian on disk) / 0xCFFAEDFE (LE).
+        let magic = UInt32(b[0]) | UInt32(b[1]) << 8 | UInt32(b[2]) << 16 | UInt32(b[3]) << 24
+        if magic == 0xCAFEBABE { return true } // universal binary
+        guard magic == 0xFEEDFACF || magic == 0xCFFAEDFE else { return false }
+        let cputype = UInt32(b[4]) | UInt32(b[5]) << 8 | UInt32(b[6]) << 16 | UInt32(b[7]) << 24
+        return cputype == 0x0100_000C // CPU_TYPE_ARM64
     }
 }
 
