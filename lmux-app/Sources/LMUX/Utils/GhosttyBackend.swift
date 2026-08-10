@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyTerminal
+import LMUXCore
 
 /// libghostty-backed implementation of `TerminalBackend` (macOS 13+).
 ///
@@ -273,25 +274,15 @@ final class GhosttyBackend: TerminalBackend {
 // MARK: - Theme bridge (lmux TerminalTheme -> Ghostty TerminalConfiguration)
 
 extension TerminalTheme {
-    /// Convert a 0...1 double component to a 2-digit hex byte.
-    private func hexComponent(_ v: Double) -> String {
-        let byte = Int((v * 255).rounded())
-        return String(format: "%02X", byte)
-    }
-
-    private func hex(_ rgb: (Double, Double, Double)) -> String {
-        "#\(hexComponent(rgb.0))\(hexComponent(rgb.1))\(hexComponent(rgb.2))"
-    }
-
     /// Bridge this lmux theme into a Ghostty TerminalConfiguration.
     func ghosttyConfiguration() -> TerminalConfiguration {
         TerminalConfiguration {
-            $0.withBackground(hex(background))
-            $0.withForeground(hex(foreground))
-            $0.withSelectionBackground(hex(selection))
-            $0.withCursorColor(hex(cursor))
+            $0.withBackground(TerminalColorBridge.hex(background))
+            $0.withForeground(TerminalColorBridge.hex(foreground))
+            $0.withSelectionBackground(TerminalColorBridge.hex(selection))
+            $0.withCursorColor(TerminalColorBridge.hex(cursor))
             for (index, color) in ansi.enumerated() {
-                $0.withPalette(index, color: "#\(String(format: "%02X", color.0 >> 8))\(String(format: "%02X", color.1 >> 8))\(String(format: "%02X", color.2 >> 8))")
+                $0.withPalette(index, color: TerminalColorBridge.hex(color))
             }
         }
     }
