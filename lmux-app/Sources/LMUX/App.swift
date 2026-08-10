@@ -32,6 +32,18 @@ struct LmuxApp: App {
                 Button("New Session") { viewModel.showNewSessionSheet = true }
                     .keyboardShortcut("n", modifiers: .command)
             }
+            CommandMenu("Session") {
+                Button("Search Sessions") { viewModel.focusSearch() }
+                    .keyboardShortcut("f", modifiers: .command)
+                Divider()
+                Button("Next Session") { viewModel.selectNextSession() }
+                    .keyboardShortcut(.downArrow, modifiers: .command)
+                Button("Previous Session") { viewModel.selectPreviousSession() }
+                    .keyboardShortcut(.upArrow, modifiers: .command)
+                Divider()
+                Button("Stop Session") { viewModel.stopCurrentSession() }
+                    .keyboardShortcut("k", modifiers: .command)
+            }
         }
 
         Settings {

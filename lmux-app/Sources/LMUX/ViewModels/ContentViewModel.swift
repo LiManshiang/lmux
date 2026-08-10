@@ -8,6 +8,9 @@ import UserNotifications
 class ContentViewModel: ObservableObject {
     @Published var sessions: [SessionSummary] = []
     @Published var selectedSession: SessionSummary?
+    @Published var searchText = ""
+    /// Token bumped to request focus on the session search field (Cmd+F).
+    @Published var searchFocusToken = UUID()
     @Published var connectedSessionId: String?
     @Published var selectedFullSession: Session?
     @Published var showNewSessionSheet = false
@@ -420,6 +423,41 @@ class ContentViewModel: ObservableObject {
         selectedSession = session
         lastSelectedSessionID = session.id
         clearSessionAttention(session.id)
+    }
+
+    // MARK: - Session navigation (keyboard shortcuts)
+
+    /// Sessions filtered by the current search text.
+    var visibleSessions: [SessionSummary] {
+        guard !searchText.isEmpty else { return sessions }
+        return sessions.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    func selectNextSession() {
+        let list = visibleSessions
+        guard !list.isEmpty else { return }
+        let currentID = selectedSession?.id
+        let idx = list.firstIndex(where: { $0.id == currentID }) ?? -1
+        selectSession(list[(idx + 1) % list.count])
+    }
+
+    func selectPreviousSession() {
+        let list = visibleSessions
+        guard !list.isEmpty else { return }
+        let currentID = selectedSession?.id
+        let idx = list.firstIndex(where: { $0.id == currentID }) ?? 0
+        selectSession(list[(idx - 1 + list.count) % list.count])
+    }
+
+    /// Stop the currently selected session's process.
+    func stopCurrentSession() {
+        guard let id = selectedSession?.id else { return }
+        killSession(id: id)
+    }
+
+    /// Request focus on the session search field.
+    func focusSearch() {
+        searchFocusToken = UUID()
     }
 
     func createSession(projectDir: String, name: String?, cbcSessionID: String?, agentType: AgentType = .codebuddy) async {

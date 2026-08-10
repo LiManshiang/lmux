@@ -3,46 +3,78 @@ import LMUXCore
 
 struct SessionListView: View {
     @EnvironmentObject var viewModel: ContentViewModel
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(viewModel.sessions) { session in
-                    SessionRowView(session: session)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.selectSession(session)
-                        }
-                        .contextMenu {
-                            Button("Attach in Terminal") {
-                                Task { await viewModel.attachToSession(session) }
-                            }
-                            Divider()
-                            Button("Rename...") {
-                                showRenameAlert(session)
-                            }
-                            Button("Delete", role: .destructive) {
-                                confirmDelete(session)
-                            }
-                        }
+        VStack(spacing: 0) {
+            // Session search
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                TextField("Search sessions", text: $viewModel.searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($searchFocused)
+                if !viewModel.searchText.isEmpty {
+                    Button {
+                        viewModel.searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(viewModel.visibleSessions) { session in
+                        SessionRowView(session: session)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                viewModel.selectSession(session)
+                            }
+                            .contextMenu {
+                                Button("Attach in Terminal") {
+                                    Task { await viewModel.attachToSession(session) }
+                                }
+                                Divider()
+                                Button("Rename...") {
+                                    showRenameAlert(session)
+                                }
+                                Button("Delete", role: .destructive) {
+                                    confirmDelete(session)
+                                }
+                            }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
         }
         .background(Color(NSColor.windowBackgroundColor))
         .overlay {
-            if viewModel.sessions.isEmpty && !viewModel.isLoading {
+            if viewModel.visibleSessions.isEmpty && !viewModel.isLoading {
                 VStack {
-                    Text("No sessions")
+                    Text(viewModel.searchText.isEmpty ? "No sessions" : "No matching sessions")
                         .foregroundColor(.secondary)
-                    Button("Restore from History") {
-                        Task { await viewModel.restoreAll() }
+                    if viewModel.searchText.isEmpty {
+                        Button("Restore from History") {
+                            Task { await viewModel.restoreAll() }
+                        }
+                        .padding(.top, 8)
                     }
-                    .padding(.top, 8)
                 }
             }
+        }
+        .onChange(of: viewModel.searchFocusToken) { _ in
+            searchFocused = true
         }
     }
 
