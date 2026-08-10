@@ -289,6 +289,60 @@ func FindRecentClaudeSession(projectDir string) string {
 	return best
 }
 
+// GetClaudeContextTokens estimates the conversation context size (tokens)
+// for a claude session. claude's JSONL has no usage counters, so we estimate
+// from the message text length (~2 chars per token for mixed CJK/Latin).
+func GetClaudeContextTokens(projectDir, sessionID string) int64 {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	dir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
+	data, err := os.ReadFile(filepath.Join(dir, sessionID+".jsonl"))
+	if err != nil {
+		return 0
+	}
+	var totalChars int64
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var entry struct {
+			Message *struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &entry) != nil || entry.Message == nil {
+			continue
+		}
+		totalChars += estimateContentChars(entry.Message.Content)
+	}
+	return totalChars / 2
+}
+
+// estimateContentChars returns the character count of a claude message
+// content field, which may be a plain string or an array of blocks.
+func estimateContentChars(raw json.RawMessage) int64 {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return int64(len([]rune(s)))
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) == nil {
+		var n int64
+		for _, p := range parts {
+			if p.Type == "text" {
+				n += int64(len([]rune(p.Text)))
+			}
+		}
+		return n
+	}
+	return 0
+}
+
 // GetSessionContextTokens returns the accumulated input tokens (the current
 // conversation context size) for a session, read from the latest message
 // usage record in its JSONL.

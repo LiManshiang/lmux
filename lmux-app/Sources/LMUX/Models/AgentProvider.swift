@@ -14,10 +14,21 @@ struct AgentMatch {
     let sessionID: String?
 }
 
+/// Context usage for the sidebar (percentage + estimated credit).
+struct ContextUsageInfo {
+    let tokens: Int
+    let contextWindow: Int
+    let credit: Double?
+    var percent: Int {
+        contextWindow > 0 ? Int((Double(tokens) / Double(contextWindow) * 100).rounded()) : 0
+    }
+}
+
 /// Network operations an agent provider may need. Implemented by APIClient.
 protocol AgentSessionService {
     func findAgentSession(agent: AgentType, projectDir: String) async -> String?
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)?
 }
 
 /// Encapsulates everything that is agent-specific. Main flow (connect,
@@ -44,6 +55,10 @@ protocol AgentProvider {
     /// Detect this agent from a process command line. nil = not this agent;
     /// otherwise the agent matched (sessionID may be nil for a fresh session).
     func detectProcess(cmdLine: String) -> AgentMatch?
+
+    /// Context usage (tokens / window / credit) for a conversation of this
+    /// agent, or nil when unavailable. Implementation is agent-specific.
+    func contextUsage(cbcSessionID: String?, projectDir: String, service: AgentSessionService) async -> ContextUsageInfo?
 }
 
 extension AgentProvider {
@@ -259,6 +274,15 @@ struct CodebuddyProvider: AgentProvider {
         }
         return nil
     }
+
+    func contextUsage(cbcSessionID: String?, projectDir: String, service: AgentSessionService) async -> ContextUsageInfo? {
+        guard let cbcSessionID, !cbcSessionID.isEmpty,
+              let info = await service.agentContext(agent: .codebuddy, projectDir: projectDir, sessionID: cbcSessionID),
+              info.contextWindow > 0, info.tokens > 0 else {
+            return nil
+        }
+        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, credit: info.credit > 0 ? info.credit : nil)
+    }
 }
 
 // MARK: - Claude
@@ -314,5 +338,14 @@ struct ClaudeProvider: AgentProvider {
             return AgentMatch(sessionID: extractSessionID(from: cmdLine))
         }
         return nil
+    }
+
+    func contextUsage(cbcSessionID: String?, projectDir: String, service: AgentSessionService) async -> ContextUsageInfo? {
+        guard let cbcSessionID, !cbcSessionID.isEmpty,
+              let info = await service.agentContext(agent: .claude, projectDir: projectDir, sessionID: cbcSessionID),
+              info.contextWindow > 0, info.tokens > 0 else {
+            return nil
+        }
+        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, credit: nil)
     }
 }

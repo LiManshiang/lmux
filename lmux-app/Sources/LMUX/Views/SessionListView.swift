@@ -126,8 +126,9 @@ private struct SessionStatusView: View {
 /// Conversation context usage percentage for an agent session, refreshed
 /// periodically from the backend.
 private struct ContextUsageView: View {
-    /// Known codebuddy session ID, or nil to resolve via find-session from
-    /// the project directory (used for bash sessions that launched an agent).
+    let agent: AgentType
+    /// Known agent session ID, or nil to resolve via find-session from the
+    /// project directory (used for bash sessions that launched an agent).
     let cbcSessionID: String?
     let projectDir: String
     @EnvironmentObject var viewModel: ContentViewModel
@@ -160,15 +161,11 @@ private struct ContextUsageView: View {
             while !Task.isCancelled {
                 var cbc = cbcSessionID
                 if cbc == nil {
-                    cbc = await viewModel.findCodebuddySession(projectDir: projectDir)
+                    cbc = await viewModel.findAgentSession(agent: agent, projectDir: projectDir)
                 }
-                if let cbc {
-                    if let p = await viewModel.codebuddyContextPercent(cbcSessionID: cbc) {
-                        percent = p
-                    }
-                    if let c = await viewModel.codebuddyContextCredit(cbcSessionID: cbc) {
-                        credit = c
-                    }
+                if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
+                    percent = usage.percent
+                    credit = usage.credit
                 }
                 if percent != nil || credit != nil {
                     try? await Task.sleep(nanoseconds: 60_000_000_000)
@@ -229,9 +226,9 @@ private struct SessionRowContent: View {
                 // Show for agent sessions (known cbc) and for bash sessions
                 // that have launched an agent (resolved via find-session).
                 if let cbc = session.cbcSessionID, !cbc.isEmpty {
-                    ContextUsageView(cbcSessionID: cbc, projectDir: session.projectDir)
-                } else if let mgr = manager, mgr.detectedAgentType != nil {
-                    ContextUsageView(cbcSessionID: nil, projectDir: session.projectDir)
+                    ContextUsageView(agent: session.agentType, cbcSessionID: cbc, projectDir: session.projectDir)
+                } else if let mgr = manager, let detected = mgr.detectedAgentType {
+                    ContextUsageView(agent: detected, cbcSessionID: nil, projectDir: session.projectDir)
                 }
 
                 // Status line (observed live by SessionStatusView)

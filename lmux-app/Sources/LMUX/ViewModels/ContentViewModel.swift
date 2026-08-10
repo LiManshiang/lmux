@@ -445,31 +445,19 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    /// Look up the most recent valid CodeBuddy conversation in a project
-    /// directory, or nil when there is no history / backend unavailable.
-    func findCodebuddySession(projectDir: String) async -> String? {
+    /// Context usage (percentage + credit) for any agent's conversation,
+    /// computed by that agent's provider.
+    func agentContextUsage(agent: AgentType, cbcSessionID: String?, projectDir: String) async -> ContextUsageInfo? {
         guard backendRunning else { return nil }
-        guard let found = try? await api.findCodebuddySession(projectDir: projectDir),
+        return await agent.provider.contextUsage(cbcSessionID: cbcSessionID, projectDir: projectDir, service: api)
+    }
+
+    /// Look up the most recent conversation for any agent in a project dir.
+    func findAgentSession(agent: AgentType, projectDir: String) async -> String? {
+        guard backendRunning else { return nil }
+        guard let found = await api.findAgentSession(agent: agent, projectDir: projectDir),
               !found.isEmpty else { return nil }
         return found
-    }
-
-    /// Percentage (0-100) of the model's context window currently used by a
-    /// codebuddy conversation, or nil when unavailable.
-    func codebuddyContextPercent(cbcSessionID: String?) async -> Int? {
-        guard let cbcSessionID, !cbcSessionID.isEmpty, backendRunning else { return nil }
-        guard let info = await api.codebuddyContext(sessionID: cbcSessionID),
-              info.contextWindow > 0, info.tokens > 0 else { return nil }
-        return Int((Double(info.tokens) / Double(info.contextWindow) * 100).rounded())
-    }
-
-    /// Estimated credit spent on a codebuddy conversation, or nil when
-    /// unavailable (no trace data or free model).
-    func codebuddyContextCredit(cbcSessionID: String?) async -> Double? {
-        guard let cbcSessionID, !cbcSessionID.isEmpty, backendRunning else { return nil }
-        guard let info = await api.codebuddyContext(sessionID: cbcSessionID),
-              info.credit > 0 else { return nil }
-        return info.credit
     }
 
     func restoreAll() async {

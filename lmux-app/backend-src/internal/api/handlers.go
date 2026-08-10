@@ -240,6 +240,41 @@ func (h *Handler) CodebuddySessionStatus(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// AgentContext returns context usage for any agent. codebuddy uses its JSONL
+// usage records; claude's context size is estimated from message text.
+func (h *Handler) AgentContext(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent      string `json:"agent"`
+		ProjectDir string `json:"project_dir"`
+		SessionID  string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Agent == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/session_id")
+		return
+	}
+
+	switch body.Agent {
+	case "codebuddy":
+		tokens, model, _ := codebuddy.GetSessionContext(body.SessionID)
+		window := codebuddy.ContextWindowForModel(model)
+		credit, _ := codebuddy.GetSessionCreditUsage(body.SessionID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"tokens":         tokens,
+			"context_window": window,
+			"credit":         credit,
+		})
+	case "claude":
+		tokens := codebuddy.GetClaudeContextTokens(body.ProjectDir, body.SessionID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"tokens":         tokens,
+			"context_window": codebuddy.ContextWindowTokens, // claude maps to deepseek-v4-flash
+			"credit":         0,
+		})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown agent")
+	}
+}
+
 // CodebuddyContext returns the current conversation context size (accumulated
 // input tokens) for a codebuddy session, the model in use, that model's
 // context window, and the estimated credit spent on the session.

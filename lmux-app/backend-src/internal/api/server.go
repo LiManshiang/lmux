@@ -82,6 +82,13 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	mux.HandleFunc("/api/agent/context", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.AgentContext(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	mux.HandleFunc("/api/agent/session-valid/", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			h.AgentSessionValid(w, r)

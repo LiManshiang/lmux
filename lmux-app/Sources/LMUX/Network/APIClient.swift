@@ -117,24 +117,6 @@ class APIClient: AgentSessionService {
         return resp.restored
     }
 
-    func findCodebuddySession(projectDir: String) async throws -> String? {
-        struct Body: Codable {
-            let projectDir: String
-            enum CodingKeys: String, CodingKey {
-                case projectDir = "project_dir"
-            }
-        }
-        let data = try await post("/api/codebuddy/find-session", body: Body(projectDir: projectDir))
-        struct Response: Codable {
-            let sessionID: String?
-            enum CodingKeys: String, CodingKey {
-                case sessionID = "session_id"
-            }
-        }
-        let resp = try decode(Response.self, from: data)
-        return resp.sessionID.flatMap { $0.isEmpty ? nil : $0 }
-    }
-
     // MARK: - AgentSessionService (unified agent endpoints)
 
     func findAgentSession(agent: AgentType, projectDir: String) async -> String? {
@@ -170,10 +152,17 @@ class APIClient: AgentSessionService {
         return resp.valid
     }
 
-    /// Current conversation context size (accumulated input tokens), the
-    /// model's context window, and estimated credit spent, for a codebuddy
-    /// session.
-    func codebuddyContext(sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)? {
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)? {
+        struct Body: Codable {
+            let agent: String
+            let projectDir: String
+            let sessionID: String
+            enum CodingKeys: String, CodingKey {
+                case agent
+                case projectDir = "project_dir"
+                case sessionID = "session_id"
+            }
+        }
         struct Response: Codable {
             let tokens: Int
             let contextWindow: Int
@@ -184,7 +173,7 @@ class APIClient: AgentSessionService {
                 case credit
             }
         }
-        guard let data = try? await get("/api/codebuddy/context/\(sessionID)"),
+        guard let data = try? await post("/api/agent/context", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
               let resp = try? decode(Response.self, from: data) else {
             return nil
         }
