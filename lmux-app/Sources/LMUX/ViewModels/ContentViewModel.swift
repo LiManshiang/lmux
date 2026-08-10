@@ -588,12 +588,22 @@ class ContentViewModel: ObservableObject {
             // claude and other non-codebuddy agents: resume the conversation
             // recorded by detection (its own ID, not the backend's codebuddy
             // one), or start a fresh session when there is none.
-            mgr.connect(
-                sessionID: entry.sessionID,
-                projectDir: entry.projectDir,
-                cbcSessionID: entry.cbcSessionID,
-                agentType: agent
-            )
+            Task {
+                var claudeCBC = entry.cbcSessionID
+                if let cbc = claudeCBC, !cbc.isEmpty,
+                   await self.isCodebuddySessionValid(cbc) {
+                    // This ID is a valid codebuddy conversation (e.g. saved
+                    // from a wrongly-launched claude --resume <codebuddy-id>);
+                    // never pass it to claude. Start fresh instead.
+                    claudeCBC = nil
+                }
+                mgr.connect(
+                    sessionID: entry.sessionID,
+                    projectDir: entry.projectDir,
+                    cbcSessionID: claudeCBC,
+                    agentType: agent
+                )
+            }
         }
 
         // Select the restored session so its terminal shows.

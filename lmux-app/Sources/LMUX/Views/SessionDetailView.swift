@@ -174,12 +174,22 @@ struct SessionDetailView: View {
             } else {
                 // claude and other non-codebuddy agents: resume the conversation
                 // recorded by detection, or start a fresh one when there is none.
-                mgr.connect(
-                    sessionID: id,
-                    projectDir: dir,
-                    cbcSessionID: effectiveCBC,
-                    agentType: agent
-                )
+                Task {
+                    var claudeCBC = effectiveCBC
+                    if let cbc = claudeCBC, !cbc.isEmpty,
+                       await viewModel.isCodebuddySessionValid(cbc) {
+                        // The ID is a valid codebuddy conversation (saved from
+                        // a wrongly-launched claude --resume <codebuddy-id>);
+                        // never pass it to claude. Start fresh instead.
+                        claudeCBC = nil
+                    }
+                    mgr.connect(
+                        sessionID: id,
+                        projectDir: dir,
+                        cbcSessionID: claudeCBC,
+                        agentType: agent
+                    )
+                }
             }
         } else if !mgr.isConnected {
             mgr.reattach()
