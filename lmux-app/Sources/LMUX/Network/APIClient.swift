@@ -1,4 +1,5 @@
 import Foundation
+import LMUXCore
 
 enum APIError: LocalizedError {
     case invalidURL

@@ -1,4 +1,5 @@
 import SwiftUI
+import LMUXCore
 import Combine
 import AppKit
 import UserNotifications

@@ -1,4 +1,5 @@
 import Foundation
+import LMUXCore
 import AppKit
 import SwiftTerm
 import UserNotifications

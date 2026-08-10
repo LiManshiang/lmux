@@ -13,10 +13,19 @@ let package = Package(
         .package(path: "/Volumes/Developer/CodeBuddy/Projects/lmux/SwiftTerm"),
     ],
     targets: [
+        .target(
+            name: "LMUXCore",
+            path: "Sources/LMUXCore"
+        ),
         .executableTarget(
             name: "LMUX",
-            dependencies: ["SwiftTerm"],
+            dependencies: ["SwiftTerm", "LMUXCore"],
             path: "Sources/LMUX"
+        ),
+        .testTarget(
+            name: "LMUXCoreTests",
+            dependencies: ["LMUXCore"],
+            path: "Sources/LMUXCoreTests"
         )
     ]
 )

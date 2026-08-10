@@ -1,4 +1,5 @@
 import SwiftUI
+import LMUXCore
 
 struct SessionListView: View {
     @EnvironmentObject var viewModel: ContentViewModel

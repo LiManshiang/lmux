@@ -1,44 +1,5 @@
 import Foundation
-
-enum AgentType: String, Codable, CaseIterable {
-    case codebuddy
-    case claude
-
-    var displayName: String {
-        switch self {
-        case .codebuddy: return "CodeBuddy"
-        case .claude: return "Claude Code"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .codebuddy: return "hammer.fill"
-        case .claude: return "sparkle"
-        }
-    }
-
-    var executableName: String {
-        switch self {
-        case .codebuddy: return "codebuddy-code"
-        case .claude: return "claude"
-        }
-    }
-
-    var launchArgs: [String] {
-        switch self {
-        case .codebuddy: return ["--permission-mode", "auto", "-y"]
-        case .claude: return ["--dangerously-skip-permissions"]
-        }
-    }
-
-    /// Arguments that resume an existing conversation by session ID.
-    /// Both codebuddy-code (-r/--resume) and claude (--resume) use `--resume <id>`.
-    /// `--session-id` only pins the ID and does not reliably restore history.
-    func resumeArgs(sessionID: String) -> [String] {
-        return ["--resume", sessionID]
-    }
-}
+import LMUXCore
 
 struct Session: Codable, Identifiable, Equatable {
     let id: String

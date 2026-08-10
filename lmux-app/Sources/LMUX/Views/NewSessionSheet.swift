@@ -1,4 +1,5 @@
 import SwiftUI
+import LMUXCore
 
 struct NewSessionSheet: View {
     @EnvironmentObject var viewModel: ContentViewModel
