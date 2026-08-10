@@ -6,6 +6,8 @@
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>lmux</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.manshiangli.lmux</string>
 	<key>CFBundleInfoDictionaryVersion</key>
@@ -15,20 +17,20 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.96</string>
+	<string>1.0.97</string>
 	<key>CFBundleVersion</key>
-	<string>96</string>
+	<string>97</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>lmux does not access Apple Music or your media library.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>lmux does not access your photo library.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<true/>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSAppleMusicUsageDescription</key>
-	<string>lmux does not access Apple Music or your media library.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>lmux does not access your photo library.</string>
 </dict>
 </plist>
