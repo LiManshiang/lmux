@@ -28,6 +28,14 @@ class TerminalManager: ObservableObject {
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
     @Published private(set) var detectedAgentType: AgentType?
+    /// Set when the last connect/connectBash attempt failed (e.g. agent
+    /// binary missing). Shown in the terminal area instead of a blank view.
+    @Published private(set) var connectErrorMessage: String?
+
+    /// Clear a connection error shown in the terminal area.
+    func clearConnectError() {
+        connectErrorMessage = nil
+    }
 
     /// Connect by spawning an agent directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
@@ -69,9 +77,12 @@ class TerminalManager: ObservableObject {
 
         // Build command (agent-specific behavior lives in its provider)
         let provider = agentType.provider
+        connectErrorMessage = nil
         guard let agentPath = provider.findBinaryPath(),
               FileManager.default.isExecutableFile(atPath: agentPath) else {
-            onConnectError?("\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH.")
+            let msg = "\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH."
+            connectErrorMessage = msg
+            onConnectError?(msg)
             return
         }
         var args = provider.launchArgs
@@ -107,7 +118,9 @@ class TerminalManager: ObservableObject {
         // SwiftTerm keeps shellPid == 0 silently when forkpty fails; don't
         // enter a fake "running" state in that case.
         guard view.process.shellPid > 0 else {
-            onConnectError?("Failed to launch \(agentType.displayName). Check the executable and try again.")
+            let msg = "Failed to launch \(agentType.displayName). Check the executable and try again."
+            connectErrorMessage = msg
+            onConnectError?(msg)
             return
         }
 
@@ -170,6 +183,7 @@ class TerminalManager: ObservableObject {
         idleTimer?.invalidate()
         idleTimer = nil
         stopAgentDetection()
+        connectErrorMessage = nil
         if let sid = currentSessionID {
             SessionRestore.remove(sessionID: sid)
         }
@@ -284,7 +298,9 @@ class TerminalManager: ObservableObject {
 
         let zshPath = "/bin/zsh"
         guard FileManager.default.isExecutableFile(atPath: zshPath) else {
-            onConnectError?("Shell not found at \(zshPath). This system may be missing zsh.")
+            let msg = "Shell not found at \(zshPath). This system may be missing zsh."
+            connectErrorMessage = msg
+            onConnectError?(msg)
             return
         }
 
@@ -297,7 +313,9 @@ class TerminalManager: ObservableObject {
         view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
 
         guard view.process.shellPid > 0 else {
-            onConnectError?("Failed to launch the shell. Try again; if it persists, check system shell state.")
+            let msg = "Failed to launch the shell. Try again; if it persists, check system shell state."
+            connectErrorMessage = msg
+            onConnectError?(msg)
             return
         }
         view.getTerminal().changeScrollback(200_000)

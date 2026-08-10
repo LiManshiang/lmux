@@ -64,6 +64,15 @@ struct SessionDetailView: View {
                 PTYTerminalView(manager: mgr)
                     .id("main-terminal-\(sid)")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        // Show a connection failure in the terminal area
+                        // instead of a blank screen (e.g. agent binary missing).
+                        if let err = mgr.connectErrorMessage, !mgr.processRunning {
+                            ConnectionErrorView(message: err) {
+                                mgr.clearConnectError()
+                            }
+                        }
+                    }
                     .overlay(alignment: .bottom) {
                         if showSplitPane {
                             VStack(spacing: 0) {
@@ -158,5 +167,32 @@ struct SessionDetailView: View {
         }
 
         viewModel.connectedSessionId = id
+    }
+}
+
+/// Shown in the terminal area when a session fails to connect (agent binary
+/// missing, launch failure, etc.) instead of a blank screen.
+private struct ConnectionErrorView: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 26))
+                .foregroundColor(.orange)
+            Text("Connection Failed")
+                .font(.headline)
+            Text(message)
+                .font(.system(size: 12))
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+            Button("Dismiss") { onDismiss() }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
     }
 }
