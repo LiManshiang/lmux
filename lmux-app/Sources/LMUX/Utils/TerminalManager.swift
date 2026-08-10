@@ -39,6 +39,29 @@ class TerminalManager: ObservableObject {
         connectErrorMessage = nil
     }
 
+    init() {
+        // Apply terminal theme changes live to any running terminal.
+        NotificationCenter.default.addObserver(
+            forName: .lmuxTerminalThemeChanged,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let id = note.userInfo?["themeId"] as? String else { return }
+            self?.applyTheme(id)
+        }
+    }
+
+    /// Apply a terminal theme to the running terminal view immediately.
+    func applyTheme(_ themeId: String) {
+        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }),
+              let view = terminalView else { return }
+        view.nativeForegroundColor = theme.foregroundNSColor
+        view.nativeBackgroundColor = theme.backgroundNSColor
+        view.selectedTextBackgroundColor = theme.selectionNSColor
+        view.caretColor = theme.cursorNSColor
+        view.installColors(theme.ansiSwiftTermColors)
+        view.needsDisplay = true
+    }
+
     /// Connect by spawning an agent directly via SwiftTerm's forkpty.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
         // restore and connectToSession can race (both call connect for the

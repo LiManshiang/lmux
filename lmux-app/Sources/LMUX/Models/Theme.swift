@@ -178,3 +178,9 @@ struct TerminalTheme: Identifiable {
         ]
     )
 }
+
+extension Notification.Name {
+    /// Posted with `userInfo["themeId"]` when the terminal theme changes, so
+    /// running terminals can apply it live without a restart.
+    static let lmuxTerminalThemeChanged = Notification.Name("lmuxTerminalThemeChanged")
+}

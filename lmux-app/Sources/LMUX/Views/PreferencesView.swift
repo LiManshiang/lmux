@@ -27,7 +27,15 @@ struct PreferencesView: View {
                 }
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
-                .onTapGesture { selectedThemeId = theme.id }
+                .onTapGesture {
+                    selectedThemeId = theme.id
+                    // Apply the theme live to running terminals.
+                    NotificationCenter.default.post(
+                        name: .lmuxTerminalThemeChanged,
+                        object: nil,
+                        userInfo: ["themeId": theme.id]
+                    )
+                }
             }
             .listStyle(.plain)
         }
