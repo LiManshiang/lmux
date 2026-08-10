@@ -93,6 +93,12 @@ class ContentViewModel: ObservableObject {
         return sessions.first(where: { $0.id == sessionID })?.agentType ?? .codebuddy
     }
 
+    /// True when the session is (or was) an agent session per restore.json,
+    /// as opposed to a plain bash session.
+    func isAgentMode(for sessionID: String) -> Bool {
+        SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.launchMode == .agent
+    }
+
     /// Release a terminal manager when its session is deleted.
     func releaseTerminalManager(for sessionID: String) {
         if let mgr = terminalManagers[sessionID] {

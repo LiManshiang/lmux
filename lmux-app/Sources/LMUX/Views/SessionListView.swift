@@ -272,12 +272,17 @@ private struct SessionRowContent: View {
                         .font(.system(size: 13))
                         .fontWeight(isSelected ? .semibold : .regular)
                         .lineLimit(1)
-                    // Current agent badge: observes the manager so it flips
-                    // live when an agent is detected inside the shell.
-                    AgentBadge(
-                        manager: manager,
-                        configuredAgent: viewModel.configuredAgentType(for: session.id)
-                    )
+                    // Agent badge: only for sessions that are (or were) agent
+                    // sessions — a plain bash session shows nothing. Observes
+                    // the manager so it flips live when an agent is detected.
+                    if manager?.detectedAgentType != nil
+                        || (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
+                        || viewModel.isAgentMode(for: session.id) {
+                        AgentBadge(
+                            manager: manager,
+                            configuredAgent: viewModel.configuredAgentType(for: session.id)
+                        )
+                    }
                 }
 
                 // Conversation context usage, under the session name.
