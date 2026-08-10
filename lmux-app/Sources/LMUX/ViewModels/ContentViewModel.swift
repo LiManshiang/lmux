@@ -19,8 +19,46 @@ class ContentViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var statusMessage: String?
+    @Published var toastMessage: String?
+    private var toastTask: Task<Void, Never>?
 
     let api = APIClient()
+
+    init() {
+        // Ensure agent/shell processes are terminated when the app quits, so
+        // no orphaned codebuddy/claude processes are left behind.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.terminateAllProcesses()
+        }
+    }
+
+    /// Terminate every running terminal/agent process and clear restore state.
+    func terminateAllProcesses() {
+        for mgr in terminalManagers.values {
+            mgr.disconnect()
+        }
+        terminalManagers.removeAll()
+        for mgr in splitTerminalManagers.values {
+            mgr.disconnect()
+        }
+        splitTerminalManagers.removeAll()
+        completedSessionIds.removeAll()
+        activeSessionIds.removeAll()
+        attentionSessionIds.removeAll()
+    }
+
+    /// Show a transient non-blocking toast (auto-dismisses after ~2.5s).
+    func showToast(_ message: String) {
+        toastTask?.cancel()
+        toastMessage = message
+        toastTask = Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            if !Task.isCancelled { toastMessage = nil }
+        }
+    }
     private var backendProcess: Process?
     private var pollTimer: Timer?
     /// DispatchIO reading the backend's stdout/stderr pipe. Kept as a property so
@@ -52,6 +90,9 @@ class ContentViewModel: ObservableObject {
         let mgr = TerminalManager()
         mgr.onFirstOutput = { [weak self] in
             self?.activeSessionIds.insert(sessionID)
+            if self?.selectedSession?.id == sessionID {
+                self?.showToast("Connected")
+            }
         }
         mgr.onProcessExit = { [weak self] in
             self?.activeSessionIds.remove(sessionID)
@@ -140,6 +181,7 @@ class ContentViewModel: ObservableObject {
         if connectedSessionId == id {
             connectedSessionId = nil
         }
+        showToast("Session stopped")
         if selectedSession?.id == id {
             selectedSession = nil
         }
@@ -472,6 +514,7 @@ class ContentViewModel: ObservableObject {
                 agentType: agentType
             )
             await refreshSessions()
+            showToast("Session created")
             // auto-select the new session so terminal connects immediately
             if let created = sessions.first(where: { $0.projectDir == projectDir && $0.name == (name ?? "") }) {
                 selectedSession = created
@@ -497,6 +540,7 @@ class ContentViewModel: ObservableObject {
                 selectedSession = nil
             }
             await refreshSessions()
+            showToast("Session deleted")
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -506,6 +550,7 @@ class ContentViewModel: ObservableObject {
         do {
             _ = try await api.renameSession(id: id, name: name)
             await refreshSessions()
+            showToast("Session renamed")
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -55,6 +55,20 @@ struct ContentView: View {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .overlay(alignment: .top) {
+            if let msg = viewModel.toastMessage {
+                Text(msg)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color(NSColor.controlBackgroundColor)))
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.35)))
+                    .shadow(color: .black.opacity(0.15), radius: 4)
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: viewModel.toastMessage)
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }

@@ -242,7 +242,7 @@ func FindRecentSessionForProject(projectDir string) string {
 	}
 	encoded := strings.TrimPrefix(projectDir, "/")
 	encoded = strings.ReplaceAll(encoded, "/", "-")
-	return latestSessionFile(filepath.Join(home, ".codebuddy", "projects", encoded))
+	return findRecentCached(filepath.Join(home, ".codebuddy", "projects", encoded))
 }
 
 // ContextWindowTokens is the context window for the default model
@@ -289,6 +289,49 @@ func latestSessionFile(dir string) string {
 	return best
 }
 
+// Recent find-session results are cached briefly: the sidebar queries context
+// on a timer, and re-scanning every project directory each time is wasteful.
+// A short TTL is fine because resuming a just-started session is rare within
+// a few seconds of a scan.
+var sessionFindCache struct {
+	sync.Mutex
+	m map[string]cachedFind
+}
+
+type cachedFind struct {
+	sessionID string
+	at        time.Time
+}
+
+const findCacheTTL = 5 * time.Second
+
+func cachedFindSession(dir string) (string, bool) {
+	sessionFindCache.Lock()
+	defer sessionFindCache.Unlock()
+	if c, ok := sessionFindCache.m[dir]; ok && time.Since(c.at) < findCacheTTL {
+		return c.sessionID, true
+	}
+	return "", false
+}
+
+func rememberFindSession(dir, sessionID string) {
+	sessionFindCache.Lock()
+	defer sessionFindCache.Unlock()
+	if sessionFindCache.m == nil {
+		sessionFindCache.m = make(map[string]cachedFind)
+	}
+	sessionFindCache.m[dir] = cachedFind{sessionID: sessionID, at: time.Now()}
+}
+
+func findRecentCached(dir string) string {
+	if id, ok := cachedFindSession(dir); ok {
+		return id
+	}
+	id := latestSessionFile(dir)
+	rememberFindSession(dir, id)
+	return id
+}
+
 // FindRecentClaudeSession returns the most recently created claude
 // conversation ID for a project directory, or "" when there is none.
 func FindRecentClaudeSession(projectDir string) string {
@@ -297,7 +340,7 @@ func FindRecentClaudeSession(projectDir string) string {
 		return ""
 	}
 	projDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
-	return latestSessionFile(projDir)
+	return findRecentCached(projDir)
 }
 
 // GetClaudeContextTokens estimates the conversation context size (tokens)

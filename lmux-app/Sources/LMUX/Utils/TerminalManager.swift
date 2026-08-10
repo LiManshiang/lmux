@@ -451,8 +451,18 @@ class TerminalManager: ObservableObject {
         }
     }
 
+    /// Short-lived cache of process command lines so repeated detection scans
+    /// (every 10s) don't shell out to ps for the same PIDs.
+    nonisolated(unsafe) private static var commandLineCache: [Int32: (String, TimeInterval)] = [:]
+    nonisolated(unsafe) private static let commandLineLock = NSLock()
+
     /// Returns the full command line of a process by PID.
     nonisolated private func getCommandLine(of pid: Int32) -> String? {
+        Self.commandLineLock.lock()
+        defer { Self.commandLineLock.unlock() }
+        if let cached = Self.commandLineCache[pid], Date().timeIntervalSince1970 - cached.1 < 5 {
+            return cached.0
+        }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-p", "\(pid)", "-o", "command="]
@@ -461,14 +471,19 @@ class TerminalManager: ObservableObject {
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
 
+        var result: String?
         do {
             try task.run()
             task.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            result = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
-            return nil
+            result = nil
         }
+        if let result {
+            Self.commandLineCache[pid] = (result, Date().timeIntervalSince1970)
+        }
+        return result
     }
 }
 
