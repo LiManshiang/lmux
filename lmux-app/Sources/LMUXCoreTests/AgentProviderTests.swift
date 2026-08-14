@@ -158,16 +158,18 @@ final class ClaudeProviderTests: XCTestCase {
         XCTAssertEqual(id, "recent-convo")
     }
 
-    func testDetectionNoStartTimeDoesNotResumeOtherSession() async {
-        // Regression: a fresh claude (no --resume) whose process start time
-        // could not be resolved must NOT pick up the project's most recent
-        // claude conversation — that would resume another session's work.
-        // (observed: two lmux sessions both ended up restoring 729f0f9e)
-        let svc = MockAgentService(findResults: [.claude: "other-session-convo"])
+    func testDetectionNoStartTimeFallsBackToProjectHistory() async {
+        // When the process start time cannot be resolved, detection still binds
+        // to the project's most recent conversation. This is the detection
+        // phase (the agent is running right now), so the most recent
+        // conversation is the one the user just started — binding it lets the
+        // session restore on next launch. (Without this fallback the session
+        // had no cbc and could never resume.)
+        let svc = MockAgentService(findResults: [.claude: "recent-convo"])
         let id = await ClaudeProvider().detectionSessionID(
             cmdLineSessionID: nil, allowHistoryLookup: true,
             projectDir: "/p", notBefore: nil, service: svc)
-        XCTAssertNil(id, "fresh claude without a resolvable start time must stay fresh")
+        XCTAssertEqual(id, "recent-convo")
     }
 
     func testResolutionEmptyCBCDoesNotResumeOtherSession() async {

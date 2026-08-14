@@ -582,7 +582,15 @@ class TerminalManager: ObservableObject {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
-            return formatter.date(from: text)
+            let date = formatter.date(from: text)
+            if date == nil {
+                // Fall back to `ps -o lstart` with the default output even if
+                // trimming removed a trailing tab; some locale/ps versions
+                // emit a trailing tab after the year.
+                let alt = text.replacingOccurrences(of: "\t", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                return formatter.date(from: alt)
+            }
+            return date
         } catch {
             return nil
         }
