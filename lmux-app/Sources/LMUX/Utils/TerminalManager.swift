@@ -270,9 +270,11 @@ class TerminalManager: ObservableObject {
         memoryMB = nil
         stopAgentDetection()
         connectErrorMessage = nil
-        if let sid = currentSessionID {
-            SessionRestore.remove(sessionID: sid)
-        }
+        // Do NOT remove the restore binding here: disconnect() is also called
+        // on app quit (terminateAllProcesses) and on user "Stop". The binding
+        // tells the next launch which conversation to resume for this session
+        // ("再进恢复"), so it must survive until the session itself is deleted
+        // (releaseTerminalManager removes it).
         terminalView?.process.terminate()
         terminalView = nil
         currentSessionID = nil
@@ -441,7 +443,16 @@ class TerminalManager: ObservableObject {
                 let result = self.detectRunningAgent(shellPID: currentPID)
                 DispatchQueue.main.async { [weak self] in
                     guard let self, let result, self.currentSessionID == sessionID else { return }
-                    guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
+                    // Persist on agent-type change, or whenever the command line
+                    // carries a resumable ID, or while the restore entry has no
+                    // cbc yet. The last case is the retry window: a freshly
+                    // launched agent may not have created its conversation file
+                    // when detection first runs, so the cbc is still nil — we
+                    // must keep trying so the bind eventually lands.
+                    let alreadyBound = self.detectedAgentType == result.agentType
+                        && result.cbcSessionID == nil
+                        && SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID != nil
+                    guard !alreadyBound else { return }
                     self.detectedAgentType = result.agentType
                     self.persistAgentDetection(
                         agentType: result.agentType,
