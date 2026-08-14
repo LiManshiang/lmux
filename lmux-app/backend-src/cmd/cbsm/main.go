@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/manshiangli/cbsm/internal/api"
-	"github.com/manshiangli/cbsm/internal/config"
-	"github.com/manshiangli/cbsm/internal/session"
+	"lmux/cbsm/internal/api"
+	"lmux/cbsm/internal/config"
+	"lmux/cbsm/internal/session"
 )
 
 func main() {

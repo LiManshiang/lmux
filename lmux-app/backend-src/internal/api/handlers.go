@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/manshiangli/cbsm/internal/codebuddy"
-	"github.com/manshiangli/cbsm/internal/session"
+	"lmux/cbsm/internal/codebuddy"
+	"lmux/cbsm/internal/session"
 )
 
 type Handler struct {

@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/manshiangli/cbsm/internal/config"
-	"github.com/manshiangli/cbsm/internal/session"
+	"lmux/cbsm/internal/config"
+	"lmux/cbsm/internal/session"
 )
 
 type Server struct {

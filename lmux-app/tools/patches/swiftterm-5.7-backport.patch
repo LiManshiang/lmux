@@ -1,0 +1,301 @@
+From 44339a2ca2b3956cff7b9ebaf5159d037559f3fd Mon Sep 17 00:00:00 2001
+From: manshiangli <liminxiang@testin.cn>
+Date: Mon, 3 Aug 2026 10:13:58 +0800
+Subject: [PATCH] chore: backport to Swift 5.7 compatibility
+
+- Lower swift-tools-version from 5.9 to 5.7
+- Remove visionOS platform (not available in Swift 5.7)
+- Swap swift-argument-parser to local path dependency
+- Remove borrowing keyword (Swift 5.9+ only)
+- Comment out #Preview macros (Swift 5.9+ only)
+- Replace if-expression with ternary operator (Swift 5.9+ only)
+- Replace clipsToBounds with wantsLayer (macOS 14+ API)
+- Adapt UnsafeMutableBufferPointer 5.9 APIs to 5.7 equivalents:
+  initialize(fromContentsOf:) -> initialize(from: UnsafeBufferPointer(...))
+  deinitialize() -> baseAddress?.deinitialize(count:)
+  update(repeating:) -> manual for-loop
+---
+ Package.swift                                 |  7 +++---
+ .../SwiftTerm/Apple/AppleTerminalView.swift   |  5 ++++-
+ Sources/SwiftTerm/BufferLine.swift            | 22 +++++++++----------
+ Sources/SwiftTerm/Mac/MacTerminalView.swift   |  4 +++-
+ Sources/SwiftTerm/SelectionService.swift      |  6 +----
+ Sources/SwiftTerm/Terminal.swift              | 16 +++++++-------
+ Sources/SwiftTerm/iOS/iOSTerminalView.swift   |  5 +++++
+ 7 files changed, 35 insertions(+), 30 deletions(-)
+
+diff --git a/Package.swift b/Package.swift
+index 3750179..3378e96 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -1,4 +1,4 @@
+-// swift-tools-version:5.9
++// swift-tools-version:5.7
+ 
+ import PackageDescription
+ import Foundation
+@@ -120,12 +120,11 @@ let package = Package(
+     platforms: [
+         .iOS(.v14),
+         (disableBenchmark ? .macOS(.v11) : .macOS(.v13)),
+-        .tvOS(.v13),
+-        .visionOS(.v1)
++        .tvOS(.v13)
+     ],
+     products: products,
+     dependencies: [
+-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.0.0"),
++        .package(path: "/Volumes/Developer/CodeBuddy/Projects/lmux/swift-argument-parser"),
+         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.3"),
+     ] + benchmarkDependencies,
+ //        .package(url: "https://github.com/swiftlang/swift-subprocess", revision: "426790f3f24afa60b418450da0afaa20a8b3bdd4")
+diff --git a/Sources/SwiftTerm/Apple/AppleTerminalView.swift b/Sources/SwiftTerm/Apple/AppleTerminalView.swift
+index 22f08ed..49a9126 100644
+--- a/Sources/SwiftTerm/Apple/AppleTerminalView.swift
++++ b/Sources/SwiftTerm/Apple/AppleTerminalView.swift
+@@ -931,7 +931,7 @@ extension TerminalView {
+         guard screenRow >= 0 && screenRow < terminal.rows else {
+             return
+         }
+-        terminal.updateRange(borrowing: displayBuffer, screenRow)
++        terminal.updateRange(displayBuffer, screenRow)
+     }
+ 
+     func linkVisibleForClick(match: Terminal.LinkMatch, hasCommandModifier: Bool) -> Bool
+@@ -2601,6 +2601,8 @@ extension TerminalView {
+ }
+ 
+ #if canImport(UIKit) && DEBUG
++// #Preview is not available in Swift 5.7
++/*
+ #Preview {
+     SwiftUITerminalView { t in
+         t.nativeBackgroundColor = UIColor.black
+@@ -2609,6 +2611,7 @@ extension TerminalView {
+         t.feed(text: "م اَلْفِرَاق\n\rbbفِaa\n\r123456\n\r🖐🏾 or 👩‍👩‍👦‍👦")
+     }
+ }
++*/
+ #endif
+ 
+ #endif
+diff --git a/Sources/SwiftTerm/BufferLine.swift b/Sources/SwiftTerm/BufferLine.swift
+index 71d2d30..b337bb1 100644
+--- a/Sources/SwiftTerm/BufferLine.swift
++++ b/Sources/SwiftTerm/BufferLine.swift
+@@ -64,7 +64,7 @@ public final class BufferLine: CustomDebugStringConvertible {
+             buf.initializeElement(at: i, to: other.data[i])
+         }
+         #else
+-        _ = buf.initialize(fromContentsOf: other.data[0..<otherSize])
++        _ = buf.initialize(from: UnsafeBufferPointer(start: other.data.baseAddress, count: otherSize))
+         #endif
+         
+         data = buf
+@@ -72,7 +72,7 @@ public final class BufferLine: CustomDebugStringConvertible {
+     }
+ 
+     deinit {
+-        data.deinitialize()
++        data.baseAddress?.deinitialize(count: data.count)
+         data.deallocate()
+     }
+ 
+@@ -119,7 +119,7 @@ public final class BufferLine: CustomDebugStringConvertible {
+ 
+     func clear(with attribute: Attribute) {
+         let empty = CharData(attribute: attribute)
+-        data.update(repeating: empty)
++        for i in 0..<dataSize { data[i] = empty }
+         images = nil
+         bump()
+     }
+@@ -216,13 +216,13 @@ public final class BufferLine: CustomDebugStringConvertible {
+             }
+ #else
+             if len > 0 {
+-                _ = newBuf.initialize(fromContentsOf: data[0..<len])
++                _ = newBuf.initialize(from: UnsafeBufferPointer(start: data.baseAddress, count: len))
+             }
+ #endif
+             
+             // Fill remainder with fillData
+             for i in len..<cols {
+-                newBuf.initializeElement(at: i, to: fillData)
++                newBuf.baseAddress!.advanced(by: i).initialize(to: fillData)
+             }
+             data.deallocate()
+             data = newBuf
+@@ -235,14 +235,14 @@ public final class BufferLine: CustomDebugStringConvertible {
+                     newBuf.initializeElement(at: i, to: data[i])
+                 }
+ #else
+-                _ = newBuf.initialize(fromContentsOf: data[0..<cols])
++                _ = newBuf.initialize(from: UnsafeBufferPointer(start: data.baseAddress, count: cols))
+ #endif
+-                data.deinitialize()
++                data.baseAddress?.deinitialize(count: data.count)
+                 data.deallocate()
+                 data = newBuf
+                 dataSize = cols
+             } else {
+-                data.deinitialize()
++                data.baseAddress?.deinitialize(count: data.count)
+                 data.deallocate()
+                 data = UnsafeMutableBufferPointer<CharData>.allocate(capacity: 0)
+                 dataSize = 0
+@@ -253,7 +253,7 @@ public final class BufferLine: CustomDebugStringConvertible {
+     /// Fills the entire bufferline with the specified ``CharData``
+     public func fill (with: CharData)
+     {
+-        data.update(repeating: with)
++        for i in 0..<dataSize { data[i] = with }
+         bump()
+     }
+ 
+@@ -275,7 +275,7 @@ public final class BufferLine: CustomDebugStringConvertible {
+     {
+         let srcSize = line.dataSize
+         if data.count < srcSize {
+-            data.deinitialize()
++            data.baseAddress?.deinitialize(count: data.count)
+             data.deallocate()
+             let newBuf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: srcSize)
+ #if os(Linux) || os(Windows)
+@@ -283,7 +283,7 @@ public final class BufferLine: CustomDebugStringConvertible {
+                 newBuf.initializeElement(at: i, to: line.data[i])
+             }
+ #else
+-            _ = newBuf.initialize(fromContentsOf: line.data[0..<srcSize])
++            _ = newBuf.initialize(from: UnsafeBufferPointer(start: line.data.baseAddress, count: srcSize))
+ #endif
+             data = newBuf
+         } else {
+diff --git a/Sources/SwiftTerm/Mac/MacTerminalView.swift b/Sources/SwiftTerm/Mac/MacTerminalView.swift
+index d5e1e8b..4a93e91 100644
+--- a/Sources/SwiftTerm/Mac/MacTerminalView.swift
++++ b/Sources/SwiftTerm/Mac/MacTerminalView.swift
+@@ -346,7 +346,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations,
+             disableFullRedrawOnAnyChanges = true
+         }
+         if #available(macOS 14, *) {
+-            self.clipsToBounds = true
++            // clipsToBounds not available in Swift 5.7
++            // self.clipsToBounds = true
++            self.wantsLayer = true
+         }
+         setupScroller()
+         setupOptions()
+diff --git a/Sources/SwiftTerm/SelectionService.swift b/Sources/SwiftTerm/SelectionService.swift
+index e1ceb63..daf565a 100644
+--- a/Sources/SwiftTerm/SelectionService.swift
++++ b/Sources/SwiftTerm/SelectionService.swift
+@@ -569,11 +569,7 @@ class SelectionService: CustomDebugStringConvertible {
+     }
+     
+     public func getSelectedText () -> String {
+-        let (min, max) = if Position.compare(start, end) == .before {
+-            (start, end)
+-        } else {
+-            (end, start)
+-        }
++        let (min, max) = Position.compare(start, end) == .before ? (start, end) : (end, start)
+         let r = terminal.getDisplayText(start: min, end: max)
+         return r
+     }
+diff --git a/Sources/SwiftTerm/Terminal.swift b/Sources/SwiftTerm/Terminal.swift
+index d3fbab4..f8203b7 100644
+--- a/Sources/SwiftTerm/Terminal.swift
++++ b/Sources/SwiftTerm/Terminal.swift
+@@ -1207,10 +1207,10 @@ open class Terminal {
+                 if byte >= 0x80 { allAscii = false; break }
+             }
+             if allAscii {
+-                updateRange(borrowing: buffer, buffer.y)
++                updateRange(buffer, buffer.y)
+                 let consumed = buffer.insertAsciiRun(data, attribute: curAttr)
+                 if consumed == data.count {
+-                    updateRange(borrowing: buffer, buffer.y)
++                    updateRange(buffer, buffer.y)
+                     return
+                 }
+                 // Partial consume (insertMode active) — fall through to per-char path
+@@ -1219,7 +1219,7 @@ open class Terminal {
+ 
+         readingBuffer.prepare(data)
+ 
+-        updateRange(borrowing: buffer, buffer.y)
++        updateRange(buffer, buffer.y)
+         while readingBuffer.hasNext() {
+             var ch: Character = " "
+             var chWidth: Int = 0
+@@ -1423,7 +1423,7 @@ open class Terminal {
+                                     }
+                                 }
+                                 existingLine [lastx] = cd
+-                                updateRange(borrowing: buffer, last.y)
++                                updateRange(buffer, last.y)
+                                 continue
+                             }
+                         }
+@@ -1441,7 +1441,7 @@ open class Terminal {
+             let charData = makeCharData (attribute: curAttr, char: ch, size: Int8 (chWidth))
+             buffer.insertCharacter(charData)
+         }
+-        updateRange(borrowing: buffer, buffer.y)
++        updateRange(buffer, buffer.y)
+         readingBuffer.done ()
+     }
+ 
+@@ -2277,7 +2277,7 @@ open class Terminal {
+             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
+             : min (rows - 1, max (0, buffer.y))
+ 
+-        updateRange(borrowing: buffer, buffer.y)
++        updateRange(buffer, buffer.y)
+     }
+ 
+     //
+@@ -2292,7 +2292,7 @@ open class Terminal {
+     func setCursor (col: Int, row: Int)
+     {
+         let buffer = self.buffer
+-        updateRange(borrowing: buffer, buffer.y)
++        updateRange(buffer, buffer.y)
+         if originMode {
+             buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
+             buffer.y = buffer.scrollTop + row
+@@ -5062,7 +5062,7 @@ open class Terminal {
+         }
+     }
+ 
+-    func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
++    func updateRange (_ buffer: Buffer, _ y: Int, scrolling: Bool = false)
+     {
+         if !scrolling {
+             let effectiveY = buffer._yDisp + y
+diff --git a/Sources/SwiftTerm/iOS/iOSTerminalView.swift b/Sources/SwiftTerm/iOS/iOSTerminalView.swift
+index 8b88126..44e5c4d 100644
+--- a/Sources/SwiftTerm/iOS/iOSTerminalView.swift
++++ b/Sources/SwiftTerm/iOS/iOSTerminalView.swift
+@@ -3257,6 +3257,9 @@ extension TerminalView: UIAccessibilityReadingContent {
+ 
+ 
+ #if canImport(UIKit) && DEBUG
++// #Preview is not available in Swift 5.7
++/*
++#if swift(>=5.9)
+ #Preview {
+     SwiftUITerminalView { t in
+         t.nativeBackgroundColor = UIColor.blue
+@@ -3266,5 +3269,7 @@ extension TerminalView: UIAccessibilityReadingContent {
+     }
+ }
+ #endif
++*/
++#endif
+ 
+ #endif
+-- 
+2.50.1 (Apple Git-155)
+

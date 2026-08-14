@@ -10,7 +10,9 @@ let package = Package(
         .executable(name: "lmux", targets: ["LMUX"])
     ],
     dependencies: [
-        .package(path: "/Volumes/Developer/CodeBuddy/Projects/lmux/SwiftTerm"),
+        // SwiftTerm (MIT). A Swift 5.7 backport patch is applied locally; see
+        // the README for how to clone + patch it.
+        .package(path: "../SwiftTerm"),
     ],
     targets: [
         .target(

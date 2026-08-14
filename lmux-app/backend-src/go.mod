@@ -1,4 +1,4 @@
-module github.com/manshiangli/cbsm
+module lmux/cbsm
 
 go 1.26.5
 

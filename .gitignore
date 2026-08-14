@@ -4,3 +4,9 @@
 *.db-journal
 *.db-wal
 *.db-shm
+
+# build artifacts and local state
+backend/lmux
+backend-src/bin/
+.swiftpm/
+STAGE_SUMMARY.md

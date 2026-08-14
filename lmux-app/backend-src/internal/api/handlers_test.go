@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/manshiangli/cbsm/internal/codebuddy"
-	"github.com/manshiangli/cbsm/internal/session"
+	"lmux/cbsm/internal/codebuddy"
+	"lmux/cbsm/internal/session"
 )
 
 func newTestHandler(t *testing.T) *Handler {

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/manshiangli/cbsm/internal/codebuddy"
+	"lmux/cbsm/internal/codebuddy"
 )
 
 // Manager orchestrates session lifecycle.
