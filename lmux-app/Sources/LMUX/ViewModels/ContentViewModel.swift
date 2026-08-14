@@ -866,23 +866,19 @@ class ContentViewModel: ObservableObject {
 
     /// Re-launch sessions that were running before the app was last quit.
     private func restoreRunningSessions() async {
-        let entries = SessionRestore.loadAll()
+        var entries = SessionRestore.loadAll()
         guard !entries.isEmpty else { return }
 
-        // Batch-create any sessions missing from the backend.
-        var needsRefresh = false
-        for entry in entries {
-            if sessions.first(where: { $0.id == entry.sessionID }) == nil {
-                _ = try? await api.createSession(
-                    projectDir: entry.projectDir,
-                    name: nil,
-                    cbcSessionID: entry.cbcSessionID,
-                    agentType: entry.agentType ?? .codebuddy
-                )
-                needsRefresh = true
-            }
+        // Only restore sessions that still exist in the backend. Entries left
+        // behind for deleted sessions are dropped (and removed from
+        // restore.json) so a deleted session never comes back after restart.
+        let backendIDs = Set(sessions.map { $0.id })
+        let stale = entries.filter { !backendIDs.contains($0.sessionID) }
+        for entry in stale {
+            SessionRestore.remove(sessionID: entry.sessionID)
         }
-        if needsRefresh { await refreshSessions() }
+        entries.removeAll { !backendIDs.contains($0.sessionID) }
+        guard !entries.isEmpty else { return }
 
         // Restore only the session that was selected when the app quit; the
         // rest connect lazily when the user opens them. Auto-restoring every
