@@ -113,6 +113,11 @@ class ContentViewModel: ObservableObject {
     /// Restore lmux data from a tar.gz and restart the backend to reload it.
     /// If the backup was made under a different username, project paths and
     /// codebuddy/claude project directories are migrated to the current user.
+    ///
+    /// Everything is MERGED into the current machine rather than replaced:
+    /// replacing ~/.codebuddy or ~/.claude wholesale destroyed live data and
+    /// failed silently when files were in use (e.g. CodeBuddy running), which
+    /// left the session list imported but the conversation JSONLs missing.
     func importSessions(from url: URL) async -> Bool {
         let fm = FileManager.default
         let tmp = fm.temporaryDirectory.appendingPathComponent("lmux-import-\(UUID().uuidString)")
@@ -125,7 +130,7 @@ class ContentViewModel: ObservableObject {
             return false
         }
 
-        // Stop the backend so the imported sessions.db can be replaced safely.
+        // Stop the backend so the imported sessions.db can be merged safely.
         if backendProcess?.isRunning == true {
             backendProcess?.terminate()
         }
@@ -143,16 +148,31 @@ class ContentViewModel: ObservableObject {
             await Self.migrateImportedPaths(from: backupHome, fromUser: backupName, toUser: currentName)
         }
 
-        // Move the imported data into the current user's home directory.
+        // Merge the imported data into the current user's home directory.
         let home = NSHomeDirectory()
         if let backupName, let backupHome = usersDir.appendingPathComponent(backupName) as URL? {
-            Self.moveItemIfExists(from: backupHome.appendingPathComponent(".lmux"), to: "\(home)/.lmux")
-            Self.moveItemIfExists(
-                from: backupHome.appendingPathComponent("Library/Application Support/lmux/restore.json"),
+            // Merge the session database row-by-row so sessions already on
+            // this machine are preserved. The backup's config.json is NOT
+            // imported (its data_dir points at the old user's home).
+            let backupLMUX = backupHome.appendingPathComponent(".lmux")
+            if fm.fileExists(atPath: backupLMUX.appendingPathComponent("sessions.db").path) {
+                await Self.mergeSQLite(
+                    from: backupLMUX.appendingPathComponent("sessions.db").path,
+                    into: "\(home)/.lmux/sessions.db"
+                )
+            }
+            Self.mergeRestoreJSON(
+                from: backupHome.appendingPathComponent("Library/Application Support/lmux/restore.json").path,
                 to: "\(home)/Library/Application Support/lmux/restore.json"
             )
-            Self.moveItemIfExists(from: backupHome.appendingPathComponent(".codebuddy"), to: "\(home)/.codebuddy")
-            Self.moveItemIfExists(from: backupHome.appendingPathComponent(".claude"), to: "\(home)/.claude")
+            Self.mergeCopy(
+                from: backupHome.appendingPathComponent(".codebuddy"),
+                to: URL(fileURLWithPath: "\(home)/.codebuddy")
+            )
+            Self.mergeCopy(
+                from: backupHome.appendingPathComponent(".claude"),
+                to: URL(fileURLWithPath: "\(home)/.claude")
+            )
         }
 
         try? fm.removeItem(at: tmp)
@@ -168,15 +188,22 @@ class ContentViewModel: ObservableObject {
         let fm = FileManager.default
 
         // 1. Rename codebuddy/claude project directories (encoded with the
-        //    old username).
-        let renames = [
-            ".codebuddy/projects/Users-\(fromUser)": ".codebuddy/projects/Users-\(toUser)",
-            ".claude/projects/-Users-\(fromUser)": ".claude/projects/-Users-\(toUser)",
+        //    old username). Match any dir whose name starts with the encoded
+        //    old user dir, so both "Users-limanshiang" and
+        //    "Users-limanshiang-lmux-test-agent" are handled.
+        let roots = [
+            ".codebuddy/projects",
+            ".claude/projects",
         ]
-        for (relSrc, relDst) in renames {
-            let s = backupHome.appendingPathComponent(relSrc)
-            if fm.fileExists(atPath: s.path) {
-                try? fm.moveItem(at: s, to: backupHome.appendingPathComponent(relDst))
+        for relRoot in roots {
+            let root = backupHome.appendingPathComponent(relRoot)
+            guard let names = try? fm.contentsOfDirectory(atPath: root.path) else { continue }
+            for name in names where name.contains(fromUser) {
+                let from = root.appendingPathComponent(name)
+                let to = root.appendingPathComponent(name.replacingOccurrences(of: fromUser, with: toUser))
+                if fm.fileExists(atPath: from.path) && !fm.fileExists(atPath: to.path) {
+                    try? fm.moveItem(at: from, to: to)
+                }
             }
         }
 
@@ -204,14 +231,65 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    private static func moveItemIfExists(from: URL, to: String) {
+    /// Recursively merge `from` into `to`. Files that already exist in `to`
+    /// are replaced by the backup; other files/directories are added. The
+    /// destination is never deleted, so live data on this machine survives.
+    private static func mergeCopy(from: URL, to: URL) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: from.path) else { return }
-        let dest = URL(fileURLWithPath: to)
-        if fm.fileExists(atPath: to) {
-            try? fm.removeItem(at: dest)
+        try? fm.createDirectory(at: to, withIntermediateDirectories: true)
+        guard let items = try? fm.contentsOfDirectory(at: from, includingPropertiesForKeys: nil) else { return }
+        for item in items {
+            let dest = to.appendingPathComponent(item.lastPathComponent)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: item.path, isDirectory: &isDir) {
+                if isDir.boolValue {
+                    mergeCopy(from: item, to: dest)
+                } else {
+                    try? fm.removeItem(at: dest)
+                    try? fm.copyItem(at: item, to: dest)
+                }
+            }
         }
-        try? fm.moveItem(at: from, to: dest)
+    }
+
+    /// Merge every row of `fromDB` into `toDB`, backup winning on conflicts.
+    private static func mergeSQLite(from fromDB: String, into toDB: String) async {
+        let fm = FileManager.default
+        let destDir = URL(fileURLWithPath: toDB).deletingLastPathComponent()
+        try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
+        guard fm.fileExists(atPath: fromDB) else { return }
+        _ = await runProcess("/usr/bin/sqlite3", [
+            toDB,
+            "ATTACH '\(fromDB)' AS src; INSERT OR REPLACE INTO sessions SELECT * FROM src.sessions; DETACH src;",
+        ])
+    }
+
+    /// Merge the backup's restore.json into the current one by session ID,
+    /// keeping entries that already exist on this machine.
+    private static func mergeRestoreJSON(from: String, to: String) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: from) else { return }
+        let dest = URL(fileURLWithPath: to)
+        try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        var merged: [[String: Any]] = []
+        if let data = try? Data(contentsOf: dest),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            merged = existing
+        }
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: from)),
+           let incoming = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for entry in incoming {
+                if let sid = entry["sessionID"] as? String {
+                    merged.removeAll { ($0["sessionID"] as? String) == sid }
+                }
+                merged.append(entry)
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys]) {
+            try? data.write(to: dest)
+        }
     }
 
     /// Run /usr/bin/tar with the given arguments, returning whether it succeeded.

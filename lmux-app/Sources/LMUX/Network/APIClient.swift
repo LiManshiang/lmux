@@ -59,10 +59,10 @@ class APIClient: AgentSessionService {
     func listSessions() async throws -> [SessionSummary] {
         let data = try await get("/api/sessions")
         struct Response: Codable {
-            let summaries: [SessionSummary]
+            let summaries: [SessionSummary]?
         }
         let resp = try decode(Response.self, from: data)
-        return resp.summaries
+        return resp.summaries ?? []
     }
 
     func getSession(id: String) async throws -> Session {

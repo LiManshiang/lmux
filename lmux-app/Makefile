@@ -4,8 +4,8 @@ BINARY = .build/debug/lmux
 APP_NAME = lmux.app
 APP_DIR = .build/$(APP_NAME)
 INFO_PLIST = Info.plist
-ICONSET = Resources/lmux.iconset
-ICNS = Resources/lmux.icns
+ICON_PNG = Resources/lmux-icon.png
+ICONSET_BUILD = .build/lmux.iconset
 BACKEND_SRC = backend-src
 BACKEND_BIN = backend/lmux
 
@@ -28,7 +28,21 @@ app: backend build
 	@cp $(BACKEND_BIN) $(APP_DIR)/Contents/MacOS/lmux-backend
 	@cp $(INFO_PLIST) $(APP_DIR)/Contents/Info.plist
 	@cp lmux.entitlements $(APP_DIR)/Contents/Resources/
-	@if [ -f "$(ICNS)" ]; then cp $(ICNS) $(APP_DIR)/Contents/Resources/AppIcon.icns; fi
+	@echo "Generating AppIcon.icns from $(ICON_PNG)..."
+	@rm -rf $(ICONSET_BUILD)
+	@mkdir -p $(ICONSET_BUILD)
+	@sips -z 16 16     $(ICON_PNG) --out $(ICONSET_BUILD)/icon_16x16.png >/dev/null
+	@sips -z 32 32     $(ICON_PNG) --out $(ICONSET_BUILD)/icon_16x16@2x.png >/dev/null
+	@sips -z 32 32     $(ICON_PNG) --out $(ICONSET_BUILD)/icon_32x32.png >/dev/null
+	@sips -z 64 64     $(ICON_PNG) --out $(ICONSET_BUILD)/icon_32x32@2x.png >/dev/null
+	@sips -z 128 128   $(ICON_PNG) --out $(ICONSET_BUILD)/icon_128x128.png >/dev/null
+	@sips -z 256 256   $(ICON_PNG) --out $(ICONSET_BUILD)/icon_128x128@2x.png >/dev/null
+	@sips -z 256 256   $(ICON_PNG) --out $(ICONSET_BUILD)/icon_256x256.png >/dev/null
+	@sips -z 512 512   $(ICON_PNG) --out $(ICONSET_BUILD)/icon_256x256@2x.png >/dev/null
+	@sips -z 512 512   $(ICON_PNG) --out $(ICONSET_BUILD)/icon_512x512.png >/dev/null
+	@sips -z 1024 1024 $(ICON_PNG) --out $(ICONSET_BUILD)/icon_512x512@2x.png >/dev/null
+	@iconutil -c icns $(ICONSET_BUILD) -o $(APP_DIR)/Contents/Resources/AppIcon.icns
+	@rm -rf $(ICONSET_BUILD)
 	@chmod +x $(APP_DIR)/Contents/MacOS/lmux
 	@chmod +x $(APP_DIR)/Contents/MacOS/lmux-backend
 	@codesign --force --deep --sign - $(APP_DIR) 2>/dev/null || true

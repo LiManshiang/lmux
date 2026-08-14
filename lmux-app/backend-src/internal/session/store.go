@@ -151,7 +151,7 @@ func (s *Store) ListSummaries() ([]Summary, error) {
 	}
 	defer rows.Close()
 
-	var summaries []Summary
+	summaries := make([]Summary, 0)
 	for rows.Next() {
 		var sm Summary
 		var statusStr string

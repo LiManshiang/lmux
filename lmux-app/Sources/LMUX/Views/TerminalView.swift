@@ -68,7 +68,8 @@ struct PTYTerminalView: NSViewRepresentable {
         container.wantsLayer = true
         // Clip so a transiently overshooting terminal frame (e.g. during
         // live-resize stretch) can never paint over the header row above.
-        container.clipsToBounds = true
+        // (NSView.clipsToBounds is macOS 14+; the layer property works on all.)
+        container.layer?.masksToBounds = true
         container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
         let mgr = manager
         container.onDrop = { [weak mgr] text in
