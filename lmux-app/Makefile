@@ -18,9 +18,13 @@ backend:
 build:
 	swift build --skip-update
 
-# Build everything
-app: backend build
+# Build everything. The backend build is best-effort: if the Go toolchain is
+# unavailable, an existing backend binary is reused.
+app: build
 	@echo "Creating .app bundle..."
+	@cd $(BACKEND_SRC) && GOPROXY=https://goproxy.cn,direct go build -o ../$(BACKEND_BIN) ./cmd/cbsm 2>/dev/null \
+		&& echo "Backend built: $(BACKEND_BIN)" \
+		|| echo "WARN: go unavailable, reusing existing backend binary"
 	@rm -rf $(APP_DIR)
 	@mkdir -p $(APP_DIR)/Contents/MacOS
 	@mkdir -p $(APP_DIR)/Contents/Resources
