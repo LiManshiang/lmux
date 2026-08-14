@@ -440,7 +440,7 @@ class TerminalManager: ObservableObject {
                 guard let self else { return }
                 let result = self.detectRunningAgent(shellPID: currentPID)
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, let result else { return }
+                    guard let self, let result, self.currentSessionID == sessionID else { return }
                     guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
                     self.detectedAgentType = result.agentType
                     self.persistAgentDetection(
@@ -463,7 +463,7 @@ class TerminalManager: ObservableObject {
             guard let self, !alreadyDetected else { return }
             let result = self.detectRunningAgent(shellPID: detectionPID)
             DispatchQueue.main.async { [weak self] in
-                guard let self, let result else { return }
+                guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
                 self.persistAgentDetection(
                     agentType: result.agentType,
@@ -478,7 +478,7 @@ class TerminalManager: ObservableObject {
             guard let self, !alreadyDetected else { return }
             let result = self.detectRunningAgent(shellPID: detectionPID)
             DispatchQueue.main.async { [weak self] in
-                guard let self, let result else { return }
+                guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
                 self.persistAgentDetection(
                     agentType: result.agentType,
@@ -502,6 +502,9 @@ class TerminalManager: ObservableObject {
         sessionID: String,
         projectDir: String
     ) {
+        // The session may have been disconnected/deleted while detection was
+        // in flight; never re-save a removed session to restore.json.
+        guard currentSessionID == sessionID else { return }
         let provider = agentType.provider
         guard let service = agentSessionService else {
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cmdLineSessionID, agentType: agentType, launchMode: .agent)
