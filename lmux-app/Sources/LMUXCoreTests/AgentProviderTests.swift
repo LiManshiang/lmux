@@ -58,10 +58,24 @@ final class CodebuddyProviderTests: XCTestCase {
 
     func testFallsBackToBashWhenNothingFound() async {
         let svc = MockAgentService()
+        // allowHistoryLookup=false (brand-new session): plain shell.
         let decision = await CodebuddyProvider().resolveSession(
-            cbcSessionID: nil, projectDir: "/p", allowHistoryLookup: true, service: svc)
+            cbcSessionID: nil, projectDir: "/p", allowHistoryLookup: false, service: svc)
         guard case .bash = decision else {
             return XCTFail("expected bash, got \(decision)")
+        }
+    }
+
+    func testAgentSessionWithoutCBCStartsFresh() async {
+        // Regression: a session already upgraded to agent mode (restore
+        // entry launchMode == .agent) but without a resumable cbc must start
+        // a fresh codebuddy conversation, NOT fall back to a plain shell.
+        // (observed: restart after launching codebuddy dropped into bash)
+        let svc = MockAgentService()
+        let decision = await CodebuddyProvider().resolveSession(
+            cbcSessionID: nil, projectDir: "/p", allowHistoryLookup: true, service: svc)
+        guard case .fresh = decision else {
+            return XCTFail("expected fresh (agent session without cbc), got \(decision)")
         }
     }
 
@@ -135,12 +149,51 @@ final class ClaudeProviderTests: XCTestCase {
 
     func testDetectionFallsBackToProjectHistoryForFreshLaunch() async {
         let svc = MockAgentService(findResults: [.claude: "recent-convo"])
-        // claude freshly launched (no --resume): the project's most recent
-        // conversation is associated so restart resumes the right one.
+        // claude freshly launched (no --resume) WITH a known start time: the
+        // project's conversation created after launch is associated so restart
+        // resumes the right one.
         let id = await ClaudeProvider().detectionSessionID(
             cmdLineSessionID: nil, allowHistoryLookup: true,
-            projectDir: "/p", service: svc)
+            projectDir: "/p", notBefore: Date(), service: svc)
         XCTAssertEqual(id, "recent-convo")
+    }
+
+    func testDetectionNoStartTimeDoesNotResumeOtherSession() async {
+        // Regression: a fresh claude (no --resume) whose process start time
+        // could not be resolved must NOT pick up the project's most recent
+        // claude conversation — that would resume another session's work.
+        // (observed: two lmux sessions both ended up restoring 729f0f9e)
+        let svc = MockAgentService(findResults: [.claude: "other-session-convo"])
+        let id = await ClaudeProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: true,
+            projectDir: "/p", notBefore: nil, service: svc)
+        XCTAssertNil(id, "fresh claude without a resolvable start time must stay fresh")
+    }
+
+    func testResolutionEmptyCBCDoesNotResumeOtherSession() async {
+        // Regression: restoring a session whose cbcSessionID is empty must not
+        // fall back to the project's most recent claude conversation — that
+        // wrongly resumed another session's work (observed bug).
+        let svc = MockAgentService(findResults: [.claude: "other-session-convo"])
+        let decision = await ClaudeProvider().resolveSession(
+            cbcSessionID: nil, projectDir: "/p", allowHistoryLookup: true, service: svc)
+        guard case .fresh = decision else {
+            return XCTFail("expected fresh (no history), got \(decision)")
+        }
+    }
+
+    func testResolutionDiscardedCodebuddyStillLooksUpClaudeHistory() async {
+        // When the stored ID was a codebuddy conversation (wrongly associated
+        // with claude), claude history is still consulted for a valid claude ID.
+        let svc = MockAgentService(
+            findResults: [.claude: "claude-valid"],
+            validResults: ["codebuddy-id": true])
+        let decision = await ClaudeProvider().resolveSession(
+            cbcSessionID: "codebuddy-id", projectDir: "/p", allowHistoryLookup: true, service: svc)
+        guard case .resume(let id) = decision else {
+            return XCTFail("expected resume from claude history, got \(decision)")
+        }
+        XCTAssertEqual(id, "claude-valid")
     }
 
     func testDetectionSkipsHistoryForNewSession() async {
