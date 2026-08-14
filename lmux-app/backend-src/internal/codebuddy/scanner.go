@@ -235,14 +235,19 @@ func parseJSONL(path string) (SessionInfo, error) {
 // conversation in a project directory, or "" when there is none. It includes
 // empty sessions: a freshly launched codebuddy creates a 0-byte JSONL before
 // any message, and resuming it behaves like a new conversation.
-func FindRecentSessionForProject(projectDir string) string {
+//
+// When `after` is non-zero, only conversations created no earlier than `after`
+// are considered. Detection uses the agent process start time here so a freshly
+// launched agent is associated with its own new conversation instead of an
+// older one that belongs to another session.
+func FindRecentSessionForProject(projectDir string, after time.Time) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 	encoded := strings.TrimPrefix(projectDir, "/")
 	encoded = strings.ReplaceAll(encoded, "/", "-")
-	return findRecentCached(filepath.Join(home, ".codebuddy", "projects", encoded))
+	return findRecentCached(filepath.Join(home, ".codebuddy", "projects", encoded), after)
 }
 
 // ContextWindowTokens is the context window for the default model
@@ -268,8 +273,9 @@ func creationTime(path string) time.Time {
 }
 
 // latestSessionFile returns the most recently created *.jsonl in a directory,
-// or "" when there is none.
-func latestSessionFile(dir string) string {
+// or "" when there is none. When `after` is non-zero, files created before it
+// are excluded.
+func latestSessionFile(dir string, after time.Time) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
@@ -281,6 +287,9 @@ func latestSessionFile(dir string) string {
 			continue
 		}
 		t := creationTime(filepath.Join(dir, e.Name()))
+		if !after.IsZero() && t.Before(after) {
+			continue
+		}
 		if best == "" || t.After(bestTime) {
 			best = strings.TrimSuffix(e.Name(), ".jsonl")
 			bestTime = t
@@ -332,24 +341,33 @@ func rememberFindSession(dir, sessionID string) {
 	sessionFindCache.m[dir] = cachedFind{sessionID: sessionID, at: time.Now()}
 }
 
-func findRecentCached(dir string) string {
-	if id, ok := cachedFindSession(dir); ok {
-		return id
+// findRecentCached returns the most recently created session file in a
+// directory. Zero-valued `after` results are cached briefly; time-filtered
+// lookups (detection) always scan so a just-created conversation is seen.
+func findRecentCached(dir string, after time.Time) string {
+	if after.IsZero() {
+		if id, ok := cachedFindSession(dir); ok {
+			return id
+		}
 	}
-	id := latestSessionFile(dir)
-	rememberFindSession(dir, id)
+	id := latestSessionFile(dir, after)
+	if after.IsZero() {
+		rememberFindSession(dir, id)
+	}
 	return id
 }
 
 // FindRecentClaudeSession returns the most recently created claude
 // conversation ID for a project directory, or "" when there is none.
-func FindRecentClaudeSession(projectDir string) string {
+// `after` scopes the lookup to conversations created no earlier than that
+// instant (used by detection; zero means unlimited).
+func FindRecentClaudeSession(projectDir string, after time.Time) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 	projDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
-	return findRecentCached(projDir)
+	return findRecentCached(projDir, after)
 }
 
 // GetClaudeContextTokens estimates the conversation context size (tokens)

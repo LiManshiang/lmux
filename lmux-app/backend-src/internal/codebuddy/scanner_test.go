@@ -73,7 +73,7 @@ func TestFindRecentSessionForProjectUsesCreationTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := FindRecentSessionForProject("/Users/limanshiang")
+	got := FindRecentSessionForProject("/Users/limanshiang", time.Time{})
 	if got != "new-session" {
 		t.Errorf("FindRecentSessionForProject = %q, want %q", got, "new-session")
 	}
@@ -94,7 +94,7 @@ func TestFindRecentClaudeSessionUsesCreationTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := FindRecentClaudeSession("/Users/limanshiang")
+	got := FindRecentClaudeSession("/Users/limanshiang", time.Time{})
 	if got != "new" {
 		t.Errorf("FindRecentClaudeSession = %q, want %q", got, "new")
 	}

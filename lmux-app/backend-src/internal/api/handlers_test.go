@@ -22,7 +22,17 @@ func newTestHandler(t *testing.T) *Handler {
 	return NewHandler(session.NewManager(store))
 }
 
+// ensureProjDir creates the project directory used by these tests (Create
+// validates the directory exists).
+func ensureProjDir(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll("/tmp/proj", 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateListRenameDeleteSessions(t *testing.T) {
+	ensureProjDir(t)
 	h := newTestHandler(t)
 
 	// Create
@@ -116,7 +126,7 @@ func TestAgentContextClaude(t *testing.T) {
 	if resp.Tokens != 2 {
 		t.Errorf("claude tokens = %d, want 2", resp.Tokens)
 	}
-	if resp.ContextWindow != codebuddy.ContextWindowTokens {
+	if resp.ContextWindow != int(codebuddy.ContextWindowTokens) {
 		t.Errorf("context_window = %d, want %d", resp.ContextWindow, codebuddy.ContextWindowTokens)
 	}
 }

@@ -834,7 +834,7 @@ class ContentViewModel: ObservableObject {
     /// Look up the most recent conversation for any agent in a project dir.
     func findAgentSession(agent: AgentType, projectDir: String) async -> String? {
         guard backendRunning else { return nil }
-        guard let found = await api.findAgentSession(agent: agent, projectDir: projectDir),
+        guard let found = await api.findAgentSession(agent: agent, projectDir: projectDir, after: nil),
               !found.isEmpty else { return nil }
         return found
     }

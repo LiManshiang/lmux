@@ -120,13 +120,15 @@ class APIClient: AgentSessionService {
 
     // MARK: - AgentSessionService (unified agent endpoints)
 
-    func findAgentSession(agent: AgentType, projectDir: String) async -> String? {
+    func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String? {
         struct Body: Codable {
             let agent: String
             let projectDir: String
+            let after: Double?
             enum CodingKeys: String, CodingKey {
                 case agent
                 case projectDir = "project_dir"
+                case after
             }
         }
         struct Response: Codable {
@@ -135,7 +137,12 @@ class APIClient: AgentSessionService {
                 case sessionID = "session_id"
             }
         }
-        guard let data = try? await post("/api/agent/find-session", body: Body(agent: agent.rawValue, projectDir: projectDir)),
+        let body = Body(
+            agent: agent.rawValue,
+            projectDir: projectDir,
+            after: after?.timeIntervalSince1970
+        )
+        guard let data = try? await post("/api/agent/find-session", body: body),
               let resp = try? decode(Response.self, from: data) else {
             return nil
         }

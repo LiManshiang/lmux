@@ -2,13 +2,26 @@ import XCTest
 @testable import LMUXCore
 
 /// Mock AgentSessionService for testing resolveSession logic.
-struct MockAgentService: AgentSessionService {
+final class MockAgentService: AgentSessionService {
     var findResults: [AgentType: String?] = [:]
     var validResults: [String: Bool] = [:]
     var contextResults: [String: (tokens: Int, contextWindow: Int, credit: Double)] = [:]
+    /// Records the `after` argument of the last findAgentSession call.
+    var lastFindAfter: Date?
 
-    func findAgentSession(agent: AgentType, projectDir: String) async -> String? {
-        findResults[agent] ?? nil
+    init(
+        findResults: [AgentType: String?] = [:],
+        validResults: [String: Bool] = [:],
+        contextResults: [String: (tokens: Int, contextWindow: Int, credit: Double)] = [:]
+    ) {
+        self.findResults = findResults
+        self.validResults = validResults
+        self.contextResults = contextResults
+    }
+
+    func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String? {
+        lastFindAfter = after
+        return findResults[agent] ?? nil
     }
 
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool {
@@ -138,6 +151,19 @@ final class ClaudeProviderTests: XCTestCase {
             cmdLineSessionID: nil, allowHistoryLookup: false,
             projectDir: "/p", service: svc)
         XCTAssertNil(id)
+    }
+
+    func testDetectionScopesHistoryToProcessStart() async {
+        let svc = MockAgentService(findResults: [.claude: "own-new-convo"])
+        let start = Date()
+        let id = await ClaudeProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: true,
+            projectDir: "/p", notBefore: start, service: svc)
+        XCTAssertEqual(id, "own-new-convo")
+        // The agent process start time is forwarded as the find-session
+        // filter, so an older conversation owned by another session can't be
+        // picked up.
+        XCTAssertEqual(svc.lastFindAfter, start)
     }
 }
 

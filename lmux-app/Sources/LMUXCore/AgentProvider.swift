@@ -26,7 +26,11 @@ public struct ContextUsageInfo {
 
 /// Network operations an agent provider may need. Implemented by APIClient.
 public protocol AgentSessionService {
-    func findAgentSession(agent: AgentType, projectDir: String) async -> String?
+    /// Find the most recent conversation for an agent in a project.
+    /// `after` optionally filters to conversations created no earlier than
+    /// that instant (used to associate a freshly launched agent with its own
+    /// new conversation instead of an older one from another session).
+    func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String?
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool
     func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)?
 }
@@ -88,17 +92,23 @@ public extension AgentProvider {
     /// conversation so a restart can resume the right one. History lookup is
     /// skipped for brand-new sessions so they never pick up another session's
     /// conversation.
+    ///
+    /// `notBefore` (the agent process start time) scopes the fallback to
+    /// conversations created after the launch, so a fresh claude is associated
+    /// with its own new conversation rather than an older one that belongs to
+    /// another session.
     public func detectionSessionID(
         cmdLineSessionID: String?,
         allowHistoryLookup: Bool,
         projectDir: String,
+        notBefore: Date? = nil,
         service: AgentSessionService
     ) async -> String? {
         if let id = cmdLineSessionID, !id.isEmpty {
             return id
         }
         guard allowHistoryLookup else { return nil }
-        return await service.findAgentSession(agent: type, projectDir: projectDir)
+        return await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore)
     }
 }
 
@@ -277,7 +287,7 @@ public struct CodebuddyProvider: AgentProvider {
             return .resume(sessionID: cbc)
         }
         if allowHistoryLookup,
-           let found = await service.findAgentSession(agent: .codebuddy, projectDir: projectDir),
+           let found = await service.findAgentSession(agent: .codebuddy, projectDir: projectDir, after: nil),
            !found.isEmpty {
             return .resume(sessionID: found)
         }
@@ -334,7 +344,7 @@ public struct ClaudeProvider: AgentProvider {
             cbc = nil
         }
         if (cbc == nil || cbc!.isEmpty) && allowHistoryLookup {
-            cbc = await service.findAgentSession(agent: .claude, projectDir: projectDir)
+            cbc = await service.findAgentSession(agent: .claude, projectDir: projectDir, after: nil)
         }
         if let id = cbc, !id.isEmpty {
             return .resume(sessionID: id)

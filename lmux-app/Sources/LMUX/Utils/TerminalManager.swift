@@ -293,12 +293,12 @@ class TerminalManager: ObservableObject {
            let result = detectRunningAgent(shellPID: processPID),
            let sid = currentSessionID {
             detectedAgentType = result.agentType
-            SessionRestore.save(
-                sessionID: sid,
-                projectDir: detachProjectDir ?? NSHomeDirectory(),
-                cbcSessionID: result.cbcSessionID,
+            persistAgentDetection(
                 agentType: result.agentType,
-                launchMode: .agent
+                cmdLineSessionID: result.cbcSessionID,
+                notBefore: result.processStartTime,
+                sessionID: sid,
+                projectDir: detachProjectDir ?? NSHomeDirectory()
             )
         }
         isConnected = false
@@ -446,6 +446,7 @@ class TerminalManager: ObservableObject {
                     self.persistAgentDetection(
                         agentType: result.agentType,
                         cmdLineSessionID: result.cbcSessionID,
+                        notBefore: result.processStartTime,
                         sessionID: sessionID,
                         projectDir: projectDir
                     )
@@ -467,6 +468,7 @@ class TerminalManager: ObservableObject {
                 self.persistAgentDetection(
                     agentType: result.agentType,
                     cmdLineSessionID: result.cbcSessionID,
+                    notBefore: result.processStartTime,
                     sessionID: sessionID,
                     projectDir: projectDir
                 )
@@ -481,6 +483,7 @@ class TerminalManager: ObservableObject {
                 self.persistAgentDetection(
                     agentType: result.agentType,
                     cmdLineSessionID: result.cbcSessionID,
+                    notBefore: result.processStartTime,
                     sessionID: sessionID,
                     projectDir: projectDir
                 )
@@ -495,6 +498,7 @@ class TerminalManager: ObservableObject {
     private func persistAgentDetection(
         agentType: AgentType,
         cmdLineSessionID: String?,
+        notBefore: Date?,
         sessionID: String,
         projectDir: String
     ) {
@@ -508,6 +512,7 @@ class TerminalManager: ObservableObject {
                 cmdLineSessionID: cmdLineSessionID,
                 allowHistoryLookup: true,
                 projectDir: projectDir,
+                notBefore: notBefore,
                 service: service
             )
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
@@ -522,12 +527,13 @@ class TerminalManager: ObservableObject {
 
     /// Walk child processes of `shellPID` to find known agent executables.
     /// Runs on background queue; does not access main-actor state.
-    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?)? {
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?, processStartTime: Date?)? {
         // Check all descendants (not just direct children) in case agent runs in a subshell.
         guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
         var best: (AgentType, String?)? = nil
         var bestPriority = -1
+        var bestStart: Date?
         for pid in allPIDs {
             let cmdLine = getCommandLine(of: pid) ?? ""
             for agent in AgentType.allCases {
@@ -537,10 +543,35 @@ class TerminalManager: ObservableObject {
                 if agent.detectionPriority > bestPriority {
                     best = (agent, match.sessionID)
                     bestPriority = agent.detectionPriority
+                    bestStart = getProcessStartTime(pid: pid)
                 }
             }
         }
-        return best
+        guard let best else { return nil }
+        return (agentType: best.0, cbcSessionID: best.1, processStartTime: bestStart)
+    }
+
+    /// Start time of a process (from `ps -o lstart`), used to scope history
+    /// lookup to conversations created after the agent launch.
+    nonisolated private func getProcessStartTime(pid: Int32) -> Date? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+            return formatter.date(from: text)
+        } catch {
+            return nil
+        }
     }
 
     /// Returns PIDs of all descendants (children recursively) of the given parent PID.
