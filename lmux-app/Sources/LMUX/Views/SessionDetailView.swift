@@ -40,7 +40,7 @@ struct SessionDetailView: View {
                         .help(showSplitPane ? "Close Terminal" : "Open Terminal")
 
                         Button(action: {
-                            viewModel.killSession(id: session.id)
+                            confirmStop(session: session)
                         }) {
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 13))
@@ -168,6 +168,19 @@ struct SessionDetailView: View {
         }
 
         viewModel.connectedSessionId = id
+    }
+
+    /// Confirm before stopping a session's running agent process.
+    private func confirmStop(session: SessionSummary) {
+        let alert = NSAlert()
+        alert.messageText = "Stop Session"
+        alert.informativeText = "Stop the running process in '\(session.name)'? You can restart it later."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Stop")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            viewModel.killSession(id: session.id)
+        }
     }
 }
 

@@ -220,6 +220,18 @@ private struct SessionStatusView: View {
                 Text(manager.isIdle ? "idle" : "running")
                     .font(.system(size: 10))
                     .foregroundColor(manager.isIdle ? .secondary : .green)
+                if let cpu = manager.cpuPercent, cpu > 1 {
+                    Text("CPU \(cpu, specifier: "%.0f")%")
+                        .font(.system(size: 9))
+                        .monospacedDigit()
+                        .foregroundColor(cpu > 80 ? .orange : .secondary)
+                }
+                if let mem = manager.memoryMB, mem > 1 {
+                    Text("\(Int(mem))MB")
+                        .font(.system(size: 9))
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                }
             }
         }
     }
@@ -228,6 +240,7 @@ private struct SessionStatusView: View {
 /// Conversation context usage percentage for an agent session, refreshed
 /// periodically from the backend.
 private struct ContextUsageView: View {
+    let sessionID: String
     let agent: AgentType
     /// Known agent session ID, or nil to resolve via find-session from the
     /// project directory (used for bash sessions that launched an agent).
@@ -269,11 +282,14 @@ private struct ContextUsageView: View {
                     percent = usage.percent
                     credit = usage.credit
                 }
+                // Refresh the selected session frequently; background sessions
+                // refresh slowly to reduce backend load.
+                let active = viewModel.selectedSession?.id == sessionID
                 if percent != nil || credit != nil {
-                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    try? await Task.sleep(nanoseconds: (active ? 60 : 180) * 1_000_000_000)
                 } else {
                     // Backend may not be ready yet on launch; retry quickly.
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    try? await Task.sleep(nanoseconds: (active ? 5 : 30) * 1_000_000_000)
                 }
             }
         }
@@ -343,9 +359,9 @@ private struct SessionRowContent: View {
                 // default), so use the actual agent for the session.
                 let currentAgent = viewModel.currentAgentType(for: session.id)
                 if let cbc = session.cbcSessionID, !cbc.isEmpty {
-                    ContextUsageView(agent: currentAgent, cbcSessionID: cbc, projectDir: session.projectDir)
+                    ContextUsageView(sessionID: session.id, agent: currentAgent, cbcSessionID: cbc, projectDir: session.projectDir)
                 } else if let mgr = manager, let detected = mgr.detectedAgentType {
-                    ContextUsageView(agent: detected, cbcSessionID: nil, projectDir: session.projectDir)
+                    ContextUsageView(sessionID: session.id, agent: detected, cbcSessionID: nil, projectDir: session.projectDir)
                 }
 
                 // Status line (observed live by SessionStatusView)

@@ -5,6 +5,17 @@ import SwiftTerm
 import UserNotifications
 import Darwin
 
+// File-scope (not class statics): TerminalManager is @MainActor, which in a
+// Swift 5.7 toolchain would make class statics actor-isolated and unusable from
+// the `nonisolated` methods below (`nonisolated(unsafe)` needs Swift 5.10+).
+// File-scope globals aren't actor-isolated, and all access is serialized by the
+// lock, which also keeps them safe under strict concurrency.
+
+/// Short-lived cache of process command lines so repeated detection scans
+/// (every 10s) don't shell out to ps for the same PIDs.
+private var commandLineCache: [Int32: (String, TimeInterval)] = [:]
+private let commandLineLock = NSLock()
+
 @MainActor
 class TerminalManager: ObservableObject {
     @Published var isConnected: Bool = false
@@ -26,6 +37,9 @@ class TerminalManager: ObservableObject {
     private var processGeneration: Int = 0
     private(set) var processStartTime: Date?
     private(set) var processPID: Int32 = 0
+    @Published private(set) var cpuPercent: Double?
+    @Published private(set) var memoryMB: Double?
+    private var perfTimer: Timer?
     private var lastActivityTime: Date = Date()
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
@@ -194,6 +208,7 @@ class TerminalManager: ObservableObject {
     }
 
     private func startIdleTimer() {
+        startPerfMonitoring()
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self, self.processRunning else { return }
@@ -204,9 +219,51 @@ class TerminalManager: ObservableObject {
         }
     }
 
+    /// Poll the shell process CPU/memory usage every few seconds so the
+    /// sidebar can surface runaway agents.
+    private func startPerfMonitoring() {
+        perfTimer?.invalidate()
+        perfTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self, self.processRunning, self.processPID > 0 else { return }
+            let pid = self.processPID
+            Task.detached {
+                let (cpu, mem) = Self.queryPerf(pid: pid)
+                await MainActor.run {
+                    self.cpuPercent = cpu
+                    self.memoryMB = mem
+                }
+            }
+        }
+    }
+
+    nonisolated private static func queryPerf(pid: Int32) -> (Double?, Double?) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "%cpu=", "-o", "rss="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let parts = String(data: data, encoding: .utf8)?.split(whereSeparator: \.isWhitespace) ?? []
+            guard parts.count >= 2, let cpu = Double(parts[0]), let rss = Double(parts[1]) else {
+                return (nil, nil)
+            }
+            return (cpu, rss / 1024) // rss is KB on macOS
+        } catch {
+            return (nil, nil)
+        }
+    }
+
     func disconnect() {
         idleTimer?.invalidate()
         idleTimer = nil
+        perfTimer?.invalidate()
+        perfTimer = nil
+        cpuPercent = nil
+        memoryMB = nil
         stopAgentDetection()
         connectErrorMessage = nil
         if let sid = currentSessionID {
@@ -475,22 +532,17 @@ class TerminalManager: ObservableObject {
         }
     }
 
-    /// Short-lived cache of process command lines so repeated detection scans
-    /// (every 10s) don't shell out to ps for the same PIDs.
-    nonisolated(unsafe) private static var commandLineCache: [Int32: (String, TimeInterval)] = [:]
-    nonisolated(unsafe) private static let commandLineLock = NSLock()
-
     /// Returns the full command line of a process by PID.
     nonisolated private func getCommandLine(of pid: Int32) -> String? {
-        Self.commandLineLock.lock()
-        defer { Self.commandLineLock.unlock() }
-        if let cached = Self.commandLineCache[pid], Date().timeIntervalSince1970 - cached.1 < 5 {
+        commandLineLock.lock()
+        defer { commandLineLock.unlock() }
+        if let cached = commandLineCache[pid], Date().timeIntervalSince1970 - cached.1 < 5 {
             // Guard against PID reuse: only trust the cache while the process
             // still exists.
             if kill(pid, 0) == 0 {
                 return cached.0
             }
-            Self.commandLineCache.removeValue(forKey: pid)
+            commandLineCache.removeValue(forKey: pid)
         }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -510,7 +562,7 @@ class TerminalManager: ObservableObject {
             result = nil
         }
         if let result {
-            Self.commandLineCache[pid] = (result, Date().timeIntervalSince1970)
+            commandLineCache[pid] = (result, Date().timeIntervalSince1970)
         }
         return result
     }
