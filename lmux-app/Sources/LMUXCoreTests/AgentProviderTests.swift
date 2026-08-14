@@ -106,6 +106,39 @@ final class ClaudeProviderTests: XCTestCase {
             return XCTFail("expected bash, got \(decision)")
         }
     }
+
+    // MARK: - detectionSessionID (fresh agent launch must not leak into
+    // another session's conversation on restart)
+
+    func testDetectionUsesExplicitResumeIDWithoutHistoryLookup() async {
+        let svc = MockAgentService(findResults: [.claude: "other-session"])
+        // A --resume ID on the command line is authoritative even though
+        // find-session would return another session's conversation.
+        let id = await ClaudeProvider().detectionSessionID(
+            cmdLineSessionID: "my-own", allowHistoryLookup: true,
+            projectDir: "/p", service: svc)
+        XCTAssertEqual(id, "my-own")
+    }
+
+    func testDetectionFallsBackToProjectHistoryForFreshLaunch() async {
+        let svc = MockAgentService(findResults: [.claude: "recent-convo"])
+        // claude freshly launched (no --resume): the project's most recent
+        // conversation is associated so restart resumes the right one.
+        let id = await ClaudeProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: true,
+            projectDir: "/p", service: svc)
+        XCTAssertEqual(id, "recent-convo")
+    }
+
+    func testDetectionSkipsHistoryForNewSession() async {
+        let svc = MockAgentService(findResults: [.claude: "other-session"])
+        // Brand-new session (no history lookup): must not pick up any existing
+        // conversation — this is what prevents "switching to another session".
+        let id = await ClaudeProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: false,
+            projectDir: "/p", service: svc)
+        XCTAssertNil(id)
+    }
 }
 
 final class AgentBinaryLocatorTests: XCTestCase {

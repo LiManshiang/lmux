@@ -44,6 +44,10 @@ class TerminalManager: ObservableObject {
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
     @Published private(set) var detectedAgentType: AgentType?
+    /// Used to fall back to the project's most recent conversation when agent
+    /// detection finds an agent without a --resume ID (e.g. claude launched
+    /// fresh). Set by ContentViewModel when the manager is created.
+    var agentSessionService: (any AgentSessionService)?
     /// Set when the last connect/connectBash attempt failed (e.g. agent
     /// binary missing). Shown in the terminal area instead of a blank view.
     @Published private(set) var connectErrorMessage: String?
@@ -439,7 +443,12 @@ class TerminalManager: ObservableObject {
                     guard let self, let result else { return }
                     guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
                     self.detectedAgentType = result.agentType
-                    SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                    self.persistAgentDetection(
+                        agentType: result.agentType,
+                        cmdLineSessionID: result.cbcSessionID,
+                        sessionID: sessionID,
+                        projectDir: projectDir
+                    )
                 }
             }
         }
@@ -455,7 +464,12 @@ class TerminalManager: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result else { return }
                 self.detectedAgentType = result.agentType
-                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                self.persistAgentDetection(
+                    agentType: result.agentType,
+                    cmdLineSessionID: result.cbcSessionID,
+                    sessionID: sessionID,
+                    projectDir: projectDir
+                )
             }
         }
         Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
@@ -464,8 +478,39 @@ class TerminalManager: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result else { return }
                 self.detectedAgentType = result.agentType
-                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                self.persistAgentDetection(
+                    agentType: result.agentType,
+                    cmdLineSessionID: result.cbcSessionID,
+                    sessionID: sessionID,
+                    projectDir: projectDir
+                )
             }
+        }
+    }
+
+    /// Persist an agent-detection result. The command line may lack a
+    /// --resume ID (claude launched fresh), so the conversation is completed
+    /// from the project's most recent history before saving — otherwise a
+    /// restart would fall back to another session's conversation.
+    private func persistAgentDetection(
+        agentType: AgentType,
+        cmdLineSessionID: String?,
+        sessionID: String,
+        projectDir: String
+    ) {
+        let provider = agentType.provider
+        guard let service = agentSessionService else {
+            SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cmdLineSessionID, agentType: agentType, launchMode: .agent)
+            return
+        }
+        Task {
+            let cbc = await provider.detectionSessionID(
+                cmdLineSessionID: cmdLineSessionID,
+                allowHistoryLookup: true,
+                projectDir: projectDir,
+                service: service
+            )
+            SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
         }
     }
 

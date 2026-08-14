@@ -79,6 +79,27 @@ public extension AgentProvider {
         }
         return nil
     }
+
+    /// The conversation to associate with this session after agent detection.
+    ///
+    /// A `--resume`/`--session-id` seen on the command line is authoritative.
+    /// When the agent was launched fresh (no resumable ID — common for claude
+    /// started by hand inside a shell), fall back to the project's most recent
+    /// conversation so a restart can resume the right one. History lookup is
+    /// skipped for brand-new sessions so they never pick up another session's
+    /// conversation.
+    public func detectionSessionID(
+        cmdLineSessionID: String?,
+        allowHistoryLookup: Bool,
+        projectDir: String,
+        service: AgentSessionService
+    ) async -> String? {
+        if let id = cmdLineSessionID, !id.isEmpty {
+            return id
+        }
+        guard allowHistoryLookup else { return nil }
+        return await service.findAgentSession(agent: type, projectDir: projectDir)
+    }
 }
 
 public extension AgentType {

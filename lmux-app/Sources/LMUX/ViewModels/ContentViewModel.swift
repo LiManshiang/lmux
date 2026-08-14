@@ -355,6 +355,7 @@ class ContentViewModel: ObservableObject {
             return existing
         }
         let mgr = TerminalManager()
+        mgr.agentSessionService = api
         mgr.onFirstOutput = { [weak self] in
             self?.activeSessionIds.insert(sessionID)
             if self?.selectedSession?.id == sessionID {
