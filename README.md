@@ -3,6 +3,8 @@
 A macOS session manager for running **CodeBuddy** and **Claude Code** agents in
 side-by-side embedded terminals.
 
+> [中文说明 (Chinese)](README.zh-CN.md)
+
 ## Features
 
 - **Multi-session sidebar** — create, rename, search, and switch between many
