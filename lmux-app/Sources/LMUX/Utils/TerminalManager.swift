@@ -34,6 +34,11 @@ class TerminalManager: ObservableObject {
     /// binary missing). Shown in the terminal area instead of a blank view.
     @Published private(set) var connectErrorMessage: String?
 
+    /// Service used to resolve the conversation ID for a freshly launched
+    /// agent (e.g. claude without a --resume ID). Set by ContentViewModel
+    /// when the manager is created.
+    var agentSessionService: (any AgentSessionService)?
+
     /// Clear a connection error shown in the terminal area.
     func clearConnectError() {
         connectErrorMessage = nil
@@ -208,9 +213,11 @@ class TerminalManager: ObservableObject {
         idleTimer = nil
         stopAgentDetection()
         connectErrorMessage = nil
-        if let sid = currentSessionID {
-            SessionRestore.remove(sessionID: sid)
-        }
+        // Do NOT remove the restore binding here: disconnect() is also called
+        // on app quit (terminateAllProcesses) and on user "Stop". The binding
+        // tells the next launch which conversation to resume for this session
+        // ("再进恢复"), so it must survive until the session itself is deleted
+        // (releaseTerminalManager removes it).
         backend?.terminate()
         backend = nil
         currentSessionID = nil
@@ -231,12 +238,12 @@ class TerminalManager: ObservableObject {
            let result = detectRunningAgent(shellPID: processPID),
            let sid = currentSessionID {
             detectedAgentType = result.agentType
-            SessionRestore.save(
-                sessionID: sid,
-                projectDir: detachProjectDir ?? NSHomeDirectory(),
-                cbcSessionID: result.cbcSessionID,
+            persistAgentDetection(
                 agentType: result.agentType,
-                launchMode: .agent
+                cmdLineSessionID: result.cbcSessionID,
+                notBefore: result.processStartTime,
+                sessionID: sid,
+                projectDir: detachProjectDir ?? NSHomeDirectory()
             )
         }
         isConnected = false
@@ -365,10 +372,25 @@ class TerminalManager: ObservableObject {
                 guard let self else { return }
                 let result = self.detectRunningAgent(shellPID: currentPID)
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, let result else { return }
-                    guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
+                    guard let self, let result, self.currentSessionID == sessionID else { return }
+                    // Persist on agent-type change, or whenever the command line
+                    // carries a resumable ID, or while the restore entry has no
+                    // cbc yet. The last case is the retry window: a freshly
+                    // launched agent may not have created its conversation file
+                    // when detection first runs, so the cbc is still nil — we
+                    // must keep trying so the bind eventually lands.
+                    let alreadyBound = self.detectedAgentType == result.agentType
+                        && result.cbcSessionID == nil
+                        && SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID != nil
+                    guard !alreadyBound else { return }
                     self.detectedAgentType = result.agentType
-                    SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                    self.persistAgentDetection(
+                        agentType: result.agentType,
+                        cmdLineSessionID: result.cbcSessionID,
+                        notBefore: result.processStartTime,
+                        sessionID: sessionID,
+                        projectDir: projectDir
+                    )
                 }
             }
         }
@@ -382,19 +404,62 @@ class TerminalManager: ObservableObject {
             guard let self, !alreadyDetected else { return }
             let result = self.detectRunningAgent(shellPID: detectionPID)
             DispatchQueue.main.async { [weak self] in
-                guard let self, let result else { return }
+                guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
-                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                self.persistAgentDetection(
+                    agentType: result.agentType,
+                    cmdLineSessionID: result.cbcSessionID,
+                    notBefore: result.processStartTime,
+                    sessionID: sessionID,
+                    projectDir: projectDir
+                )
             }
         }
         Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
             guard let self, !alreadyDetected else { return }
             let result = self.detectRunningAgent(shellPID: detectionPID)
             DispatchQueue.main.async { [weak self] in
-                guard let self, let result else { return }
+                guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
-                SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: result.cbcSessionID, agentType: result.agentType, launchMode: .agent)
+                self.persistAgentDetection(
+                    agentType: result.agentType,
+                    cmdLineSessionID: result.cbcSessionID,
+                    notBefore: result.processStartTime,
+                    sessionID: sessionID,
+                    projectDir: projectDir
+                )
             }
+        }
+    }
+
+    /// Persist an agent-detection result. The command line may lack a
+    /// --resume ID (claude launched fresh), so the conversation is completed
+    /// from the project's most recent history before saving — otherwise a
+    /// restart would fall back to another session's conversation.
+    private func persistAgentDetection(
+        agentType: AgentType,
+        cmdLineSessionID: String?,
+        notBefore: Date?,
+        sessionID: String,
+        projectDir: String
+    ) {
+        // The session may have been disconnected/deleted while detection was
+        // in flight; never re-save a removed session to restore.json.
+        guard currentSessionID == sessionID else { return }
+        let provider = agentType.provider
+        guard let service = agentSessionService else {
+            SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cmdLineSessionID, agentType: agentType, launchMode: .agent)
+            return
+        }
+        Task {
+            let cbc = await provider.detectionSessionID(
+                cmdLineSessionID: cmdLineSessionID,
+                allowHistoryLookup: true,
+                projectDir: projectDir,
+                notBefore: notBefore,
+                service: service
+            )
+            SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
         }
     }
 
@@ -406,12 +471,13 @@ class TerminalManager: ObservableObject {
 
     /// Walk child processes of `shellPID` to find known agent executables.
     /// Runs on background queue; does not access main-actor state.
-    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?)? {
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?, processStartTime: Date?)? {
         // Check all descendants (not just direct children) in case agent runs in a subshell.
         guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
         var best: (AgentType, String?)? = nil
         var bestPriority = -1
+        var bestStart: Date?
         for pid in allPIDs {
             let cmdLine = getCommandLine(of: pid) ?? ""
             for agent in AgentType.allCases {
@@ -421,10 +487,43 @@ class TerminalManager: ObservableObject {
                 if agent.detectionPriority > bestPriority {
                     best = (agent, match.sessionID)
                     bestPriority = agent.detectionPriority
+                    bestStart = getProcessStartTime(pid: pid)
                 }
             }
         }
-        return best
+        guard let best else { return nil }
+        return (agentType: best.0, cbcSessionID: best.1, processStartTime: bestStart)
+    }
+
+    /// Start time of a process (from `ps -o lstart`), used to scope history
+    /// lookup to conversations created after the agent launch.
+    nonisolated private func getProcessStartTime(pid: Int32) -> Date? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+            let date = formatter.date(from: text)
+            if date == nil {
+                // Fall back to `ps -o lstart` with the default output even if
+                // trimming removed a trailing tab; some locale/ps versions
+                // emit a trailing tab after the year.
+                let alt = text.replacingOccurrences(of: "\t", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                return formatter.date(from: alt)
+            }
+            return date
+        } catch {
+            return nil
+        }
     }
 
     /// Returns PIDs of all descendants (children recursively) of the given parent PID.

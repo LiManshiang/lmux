@@ -26,7 +26,11 @@ public struct ContextUsageInfo {
 
 /// Network operations an agent provider may need. Implemented by APIClient.
 public protocol AgentSessionService {
-    func findAgentSession(agent: AgentType, projectDir: String) async -> String?
+    /// Find the most recent conversation for an agent in a project.
+    /// `after` optionally filters to conversations created no earlier than
+    /// that instant (used to associate a freshly launched agent with its own
+    /// new conversation instead of an older one from another session).
+    func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String?
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool
     func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)?
 }
@@ -78,6 +82,40 @@ public extension AgentProvider {
             }
         }
         return nil
+    }
+
+    /// The conversation to associate with this session after agent detection.
+    ///
+    /// A `--resume`/`--session-id` seen on the command line is authoritative.
+    /// When the agent was launched fresh (no resumable ID — common for claude
+    /// started by hand inside a shell), fall back to the project's most recent
+    /// conversation so a restart can resume the right one. History lookup is
+    /// skipped for brand-new sessions so they never pick up another session's
+    /// conversation.
+    ///
+    /// `notBefore` (the agent process start time) scopes the fallback to
+    /// conversations created after the launch, so a fresh claude is associated
+    /// with its own new conversation rather than an older one that belongs to
+    /// another session.
+    public func detectionSessionID(
+        cmdLineSessionID: String?,
+        allowHistoryLookup: Bool,
+        projectDir: String,
+        notBefore: Date? = nil,
+        service: AgentSessionService
+    ) async -> String? {
+        if let id = cmdLineSessionID, !id.isEmpty {
+            return id
+        }
+        guard allowHistoryLookup else { return nil }
+        // A --resume ID on the command line is authoritative. Without one, the
+        // agent was launched fresh. Prefer a conversation created AFTER the
+        // process started (notBefore-scoped) so a freshly launched agent binds
+        // to its own new conversation rather than another session's. When the
+        // start time is unavailable (rare), fall back to the project's most
+        // recent conversation so the session still binds and restores on the
+        // next launch.
+        return await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore)
     }
 }
 
@@ -255,8 +293,21 @@ public struct CodebuddyProvider: AgentProvider {
            await service.agentSessionValid(agent: .codebuddy, sessionID: cbc) {
             return .resume(sessionID: cbc)
         }
+        // No resumable ID.
+        // - New session (allowHistoryLookup=false): plain shell. Agent
+        //   detection will upgrade if the user launches an agent manually.
+        // - Restore of a known agent session (allowHistoryLookup=true): start
+        //   a fresh codebuddy conversation. A freshly launched codebuddy that
+        //   created a conversation is associated by agent detection with a
+        //   notBefore-scoped lookup, which writes the ID into restore.json —
+        //   so recovery has a non-nil ID here when one exists. An empty ID on
+        //   an agent session means the user wants a new conversation, not a
+        //   shell.
+        if cbcSessionID == nil || cbcSessionID!.isEmpty {
+            return allowHistoryLookup ? .fresh : .bash
+        }
         if allowHistoryLookup,
-           let found = await service.findAgentSession(agent: .codebuddy, projectDir: projectDir),
+           let found = await service.findAgentSession(agent: .codebuddy, projectDir: projectDir, after: nil),
            !found.isEmpty {
             return .resume(sessionID: found)
         }
@@ -306,14 +357,22 @@ public struct ClaudeProvider: AgentProvider {
 
     public func resolveSession(cbcSessionID: String?, projectDir: String, allowHistoryLookup: Bool, service: AgentSessionService) async -> AgentConnectDecision {
         var cbc = cbcSessionID
+        var hadProvidedCBC = (cbcSessionID != nil && !cbcSessionID!.isEmpty)
         if let id = cbc, !id.isEmpty,
            await service.agentSessionValid(agent: .codebuddy, sessionID: id) {
             // The ID is a valid codebuddy conversation (saved from a wrongly
             // launched claude --resume <codebuddy-id>); never pass it to claude.
             cbc = nil
         }
-        if (cbc == nil || cbc!.isEmpty) && allowHistoryLookup {
-            cbc = await service.findAgentSession(agent: .claude, projectDir: projectDir)
+        // Look up claude history only when a session ID was explicitly
+        // associated with this agent before (a codebuddy ID that was just
+        // discarded, or a claude ID that failed validation). When nothing was
+        // ever associated, looking up the project's most recent claude
+        // conversation would wrongly resume another session's work — e.g. a
+        // freshly launched claude in a new session must not pick up the
+        // previous session's conversation on restart.
+        if hadProvidedCBC, (cbc == nil || cbc!.isEmpty), allowHistoryLookup {
+            cbc = await service.findAgentSession(agent: .claude, projectDir: projectDir, after: nil)
         }
         if let id = cbc, !id.isEmpty {
             return .resume(sessionID: id)
