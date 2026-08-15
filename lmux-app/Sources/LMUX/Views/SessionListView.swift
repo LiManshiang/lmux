@@ -266,7 +266,8 @@ private struct ContextUsageView: View {
                 .font(.system(size: 10))
                 .monospacedDigit()
             if let credit {
-                Text("· ¥\(String(format: "%.2f", credit))")
+                // CodeBuddy credits (平台积分), not currency.
+                Text("· \(String(format: "%.2f", credit)) 积分")
                     .font(.system(size: 10))
                     .monospacedDigit()
             }
