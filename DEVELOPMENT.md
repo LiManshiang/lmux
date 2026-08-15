@@ -1,6 +1,6 @@
 # lmux 开发进度文档
 
-> 更新日期：2026-08-11 ｜ 当前分支：`feature/ghostty-renderer`（macOS 13+）｜ 原 `2.0` 分支支持 macOS 12
+> 更新日期：2026-08-15 ｜ 当前分支：`master`（macOS 13+，Ghostty 双后端）｜ `swiftterm` 分支支持 macOS 12
 
 ## 一、项目简介
 
@@ -11,12 +11,12 @@ lmux 是一个 macOS 终端会话管理器（SwiftUI + Go 后端）。侧边栏�
 | 版本 | 阶段 | 说明 |
 |------|------|------|
 | 1.0.0 - 1.0.85 | 功能修复 | 会话恢复、agent 检测、上下文统计、导出等（fix/crash-issues 分支） |
-| **1.0.86 - 1.0.97** | **2.0 重构与质量** | 错误反馈、测试、架构分层、快捷键、导出/导入、图标（2.0 分支，macOS 12） |
-| **1.0.98+** | **Ghostty 渲染** | 双后端（SwiftTerm/Ghostty），macOS 13+（feature/ghostty-renderer 分支） |
+| **1.0.86 - 1.0.97** | **2.0 重构与质量** | 错误反馈、测试、架构分层、快捷键、导出/导入、图标（swiftterm 分支，macOS 12） |
+| **1.0.98+** | **Ghostty 渲染** | 双后端（SwiftTerm/Ghostty），macOS 13+（已合并到 master） |
 
-## 二点五、feature/ghostty-renderer 分支（macOS 13+）
+## 二点五、Ghostty 渲染（master，macOS 13+）
 
-> 分支职责：**仅 macOS 13+**，引入 libghostty GPU 渲染作为可选后端；macOS 12 支持保留在 `2.0` 分支。
+> 职责：**macOS 13+**，引入 libghostty GPU 渲染作为可选后端；macOS 12 支持保留在 `swiftterm` 分支（原 `2.0`）。
 > 依赖：`libghostty-spm`（本地 path，untracked，XCFramework 已 vendor 于 `libghostty-spm/vendor/`，sha256 已验证）。
 
 ### 渲染后端抽象（TerminalBackend）
@@ -26,7 +26,7 @@ lmux 是一个 macOS 终端会话管理器（SwiftUI + Go 后端）。侧边栏�
 
 ### SwiftTermBackend
 - 迁移自原 `TerminalManager`：`LocalProcessTerminalView` + forkpty、`OutputAwareTerminalView`（首输出/活动检测）、OSC 777/9、主题、scrollback
-- 行为与 2.0 分支一致（零回归）
+- 行为与 swiftterm 分支一致（零回归）
 
 ### GhosttyBackend（libghostty，macOS 13+）
 - `.exec` 后端：libghostty 内部 PTY + spawn，宿主只传 workingDirectory/envVars/command
@@ -45,7 +45,7 @@ lmux 是一个 macOS 终端会话管理器（SwiftUI + Go 后端）。侧边栏�
 - 依赖：`.package(path: "libghostty-spm")` + `.product(name: "GhosttyTerminal")`
 - 运行时切换后**仅影响新连接会话**；已运行会话保持原后端
 
-## 三、2.0 分支已完成开发项
+## 三、swiftterm 分支已完成开发项
 
 ### 1. 错误反馈（提交 `9f65610` `5c111a3` `30a9a94`）
 - **连接错误文案**：agent 二进制缺失/启动失败/shell 缺失给出可操作提示（含安装/PATH 建议）
@@ -129,7 +129,7 @@ LMUX（app target，依赖 SwiftTerm + LMUXCore）
 - **导出/导入**：Session 菜单 → Export/Import Sessions…
 - **迁移到另一台电脑**：导出 tar.gz → 另一台（同用户名自动兼容，不同用户名自动迁移）→ 导入
 
-## 八、2.0 分支提交清单
+## 八、swiftterm 分支提交清单
 
 ```
 9f65610 连接错误文案

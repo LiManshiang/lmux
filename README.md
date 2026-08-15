@@ -28,7 +28,7 @@ side-by-side embedded terminals.
 
 ## Requirements
 
-- macOS 12+
+- macOS 13+ (Ghostty GPU rendering backend; SwiftTerm backend available)
 - Xcode command line tools (`xcode-select --install`)
 - Go 1.26+ (backend)
 

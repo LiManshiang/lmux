@@ -45,7 +45,7 @@ LMUX.app (SwiftUI + AppKit)
 |---|------|------|
 | 终端渲染 | SwiftTerm (LocalProcessTerminalView) | 纯 Swift VT100 模拟器 + 原生 forkpty |
 | PTY | forkpty (SwiftTerm LocalProcess) | 原生伪终端 |
-| UI | SwiftUI + AppKit bridge | macOS 12+ |
+| UI | SwiftUI + AppKit bridge | macOS 13+（Ghostty 双后端） |
 | 后端 | Go 1.26 + SQLite | 会话元数据存储 |
 | 进程 | codebuddy-code (前端直接启动) | 无 tmux 依赖，无 WebSocket relay |
 

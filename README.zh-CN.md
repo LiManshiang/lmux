@@ -15,7 +15,7 @@ macOS 终端会话管理器，可在分屏的嵌入式终端中运行 **CodeBudd
 
 ## 环境要求
 
-- macOS 12+
+- macOS 13+（Ghostty GPU 渲染后端；也可选 SwiftTerm 后端）
 - Xcode 命令行工具（`xcode-select --install`）
 - Go 1.26+（后端）
 
