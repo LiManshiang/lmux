@@ -14,6 +14,14 @@ protocol TerminalBackend: AnyObject {
     var processPID: Int32 { get }
     var isProcessRunning: Bool { get }
 
+    /// PID used as the root of agent-detection's descendant walk. This must
+    /// be the stable shell PID (the process the user types into), NOT the
+    /// current foreground PID — Ghostty's foregroundPid changes to whichever
+    /// program owns the pty, so walking its descendants would miss the agent
+    /// the user launched inside the shell. SwiftTerm's processPID is already
+    /// the forkpty shell pid, so it returns the same value.
+    var detectionRootPID: Int32 { get }
+
     // MARK: - Callbacks (injected by TerminalManager)
 
     /// Fired when the process produces its first terminal output.

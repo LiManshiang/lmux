@@ -26,6 +26,14 @@ final class GhosttyBackend: TerminalBackend {
         return pid
     }
 
+    // foregroundPid tracks the pty's current foreground process group, which
+    // changes when the user launches an agent. Agent detection must walk the
+    // shell (captured once at spawn) so it still finds processes launched
+    // inside the shell.
+    var detectionRootPID: Int32 {
+        shellPID > 0 ? shellPID : processPID
+    }
+
     var isProcessRunning: Bool {
         viewState.surface != nil && terminalView?.foregroundPid != nil
     }

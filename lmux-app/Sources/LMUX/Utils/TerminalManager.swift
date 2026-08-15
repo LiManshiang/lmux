@@ -246,9 +246,10 @@ class TerminalManager: ObservableObject {
         // If an agent is running inside the shell right now, record it so the
         // next launch can resume it (the periodic detection may have missed it
         // if the user started the agent shortly before switching away).
-        if processPID > 0,
+        let rootPID = backend?.detectionRootPID ?? 0
+        if rootPID > 0,
            detectedAgentType == nil,
-           let result = detectRunningAgent(shellPID: processPID),
+           let result = detectRunningAgent(shellPID: rootPID),
            let sid = currentSessionID {
             detectedAgentType = result.agentType
             persistAgentDetection(
@@ -378,12 +379,15 @@ class TerminalManager: ObservableObject {
     /// Start periodically checking the shell's child processes for known agent executables.
     private func startAgentDetection(sessionID: String, projectDir: String) {
         stopAgentDetection()
-        let pid = self.processPID
-        guard pid > 0 else { return }
+        // NOTE: do NOT bail when detectionRootPID is 0. Ghostty creates its
+        // surface asynchronously, so the shell PID may not be known yet — the
+        // timer below re-reads it every tick and starts working as soon as it
+        // appears. Bailing here would silently disable agent detection.
 
         agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
-            let currentPID = self.processPID
+            let currentPID = self.backend?.detectionRootPID ?? 0
+            guard currentPID > 0 else { return }
             Self.detectionQueue.async { [weak self] in
                 guard let self else { return }
                 let result = self.detectRunningAgent(shellPID: currentPID)
@@ -413,12 +417,11 @@ class TerminalManager: ObservableObject {
         // Fire immediately, then again at 3s and 10s for quick detection (agent might not be running yet).
         agentDetectionTimer?.fire()
 
-        let detectionPID = self.processPID
         let alreadyDetected = self.detectedAgentType != nil
 
         Self.detectionQueue.asyncAfter(deadline: .now() + 3) { [weak self] in
-            guard let self, !alreadyDetected else { return }
-            let result = self.detectRunningAgent(shellPID: detectionPID)
+            guard let self, !alreadyDetected, let pid = self.backend?.detectionRootPID, pid > 0 else { return }
+            let result = self.detectRunningAgent(shellPID: pid)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
@@ -432,8 +435,8 @@ class TerminalManager: ObservableObject {
             }
         }
         Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
-            guard let self, !alreadyDetected else { return }
-            let result = self.detectRunningAgent(shellPID: detectionPID)
+            guard let self, !alreadyDetected, let pid = self.backend?.detectionRootPID, pid > 0 else { return }
+            let result = self.detectRunningAgent(shellPID: pid)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType

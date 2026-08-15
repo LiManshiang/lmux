@@ -17,6 +17,12 @@ final class SwiftTermBackend: TerminalBackend {
         terminalView?.process.shellPid ?? 0
     }
 
+    // SwiftTerm's shellPid is the forkpty shell PID — already the stable
+    // detection root.
+    var detectionRootPID: Int32 {
+        processPID
+    }
+
     var isProcessRunning: Bool {
         guard let view = terminalView else { return false }
         return view.process.shellPid > 0
