@@ -88,6 +88,53 @@ final class CodebuddyProviderTests: XCTestCase {
             return XCTFail("expected bash (no history lookup), got \(decision)")
         }
     }
+
+    // MARK: - detectionSessionID (codebuddy: fresh launch must bind to its own
+    // conversation so the session can resume on restart)
+
+    func testCodebuddyDetectionUsesExplicitResumeID() async {
+        let svc = MockAgentService(findResults: [.codebuddy: "other-session"])
+        // A --resume ID on the command line is authoritative.
+        let id = await CodebuddyProvider().detectionSessionID(
+            cmdLineSessionID: "my-own", allowHistoryLookup: true,
+            projectDir: "/p", service: svc)
+        XCTAssertEqual(id, "my-own")
+    }
+
+    func testCodebuddyDetectionScopesToProcessStart() async {
+        let svc = MockAgentService(findResults: [.codebuddy: "own-new-convo"])
+        let start = Date()
+        let id = await CodebuddyProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: true,
+            projectDir: "/p", notBefore: start, service: svc)
+        XCTAssertEqual(id, "own-new-convo")
+        // The start time must be forwarded as the find-session filter so an
+        // older conversation owned by another session can't be picked up.
+        XCTAssertEqual(svc.lastFindAfter, start)
+    }
+
+    func testCodebuddyDetectionNoStartTimeBindsToRecentConversation() async {
+        // Regression: when the process start time cannot be resolved
+        // (observed start=nil), detection must still bind to the project's most
+        // recent conversation so the session resumes on next launch instead of
+        // starting fresh. (Without this the cbc stayed nil and re-entering the
+        // session always showed a fresh agent welcome page.)
+        let svc = MockAgentService(findResults: [.codebuddy: "recent-convo"])
+        let id = await CodebuddyProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: true,
+            projectDir: "/p", notBefore: nil, service: svc)
+        XCTAssertEqual(id, "recent-convo")
+    }
+
+    func testCodebuddyDetectionSkipsHistoryForNewSession() async {
+        let svc = MockAgentService(findResults: [.codebuddy: "other-session"])
+        // Brand-new session (no history lookup): must not pick up any existing
+        // conversation.
+        let id = await CodebuddyProvider().detectionSessionID(
+            cmdLineSessionID: nil, allowHistoryLookup: false,
+            projectDir: "/p", service: svc)
+        XCTAssertNil(id)
+    }
 }
 
 final class ClaudeProviderTests: XCTestCase {
