@@ -294,6 +294,17 @@ class ContentViewModel: ObservableObject {
             guard let self else { return }
             self.detectedAgents[sessionID] = agent
             if let cbc, !cbc.isEmpty {
+                // One conversation maps to one lmux session. find-session is a
+                // project-wide "most recently active" lookup, so when two
+                // sessions both run codebuddy it can return the SAME cbc for
+                // both — which would make both sessions resume each other's
+                // conversation on restart. If another session already claimed
+                // this cbc, keep this session's existing binding instead of
+                // clobbering it.
+                let claimedByOther = self.detectedCBCs.contains { $0.key != sessionID && $0.value == cbc }
+                if claimedByOther, let existing = self.detectedCBCs[sessionID], existing != cbc {
+                    return
+                }
                 let alreadySynced = self.detectedCBCs[sessionID] == cbc
                 self.detectedCBCs[sessionID] = cbc
                 // Persist to the backend so a relaunch (or a list refresh

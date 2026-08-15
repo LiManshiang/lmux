@@ -99,3 +99,121 @@ func TestFindRecentClaudeSessionUsesCreationTime(t *testing.T) {
 		t.Errorf("FindRecentClaudeSession = %q, want %q", got, "new")
 	}
 }
+
+func TestLastUsageInfoPicksFunctionCallTokens(t *testing.T) {
+	// Regression: codebuddy writes the latest accumulated input_tokens on
+	// function_call records too. Filtering to type=="message" returned a
+	// stale percentage that never moved as the conversation grew.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.jsonl")
+	var lines []string
+	write := func(typ string, input, output int64) {
+		rec := map[string]interface{}{
+			"type": typ,
+			"message": map[string]interface{}{
+				"usage": map[string]interface{}{
+					"input_tokens":          input,
+					"output_tokens":         output,
+					"cache_read_input_tokens": 0,
+				},
+			},
+		}
+		b, _ := json.Marshal(rec)
+		lines = append(lines, string(b))
+	}
+	write("message", 300000, 500)
+	write("function_call", 316750, 300)
+	if err := os.WriteFile(path, []byte(lines[0]+"\n"+lines[1]+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input, _, output, _, err := lastUsageInfo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input != 316750 {
+		t.Errorf("input = %d, want 316750 (latest function_call usage)", input)
+	}
+	if output != 800 {
+		t.Errorf("output = %d, want 800 (both records summed)", output)
+	}
+}
+
+func TestLatestSessionFilePrefersRecentlyModified(t *testing.T) {
+	// A user can `/resume` to an OLD conversation from inside a freshly
+	// launched agent. That conversation's file gets written again, so it is
+	// "active" even though its creation time is long past. Modification time
+	// must win over creation time, otherwise the resumed conversation is never
+	// picked and the session binds to the wrong (fresh) one.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("fresh-idle")        // newest creation time
+	time.Sleep(20 * time.Millisecond)
+	oldResumed := filepath.Join(dir, "old-resumed.jsonl")
+	if err := os.WriteFile(oldResumed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	// Touch the old conversation so it is the most recently modified.
+	if err := os.Chtimes(oldResumed, time.Now(), time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := latestSessionFile(dir, nil)
+	if got != "old-resumed" {
+		t.Errorf("latestSessionFile = %q, want %q (most recently modified)", got, "old-resumed")
+	}
+}
+
+func TestLatestSessionFileFreshBindsOwnEarliestCreated(t *testing.T) {
+	// Two sessions both launch codebuddy in the same project. Each agent
+	// creates its own empty conversation right at its process start. The
+	// boundary lookup must return the conversation created at/after that
+	// session's own start time with the EARLIEST creation time — otherwise the
+	// idle session binds to the active one's newer conversation and both
+	// sessions resume the same hello conversation.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("idle-fresh") // created first
+	time.Sleep(20 * time.Millisecond)
+	mk("active-hello") // created second
+
+	after := time.Now().Add(-time.Hour)
+	got := latestSessionFile(dir, &after)
+	if got != "idle-fresh" {
+		t.Errorf("latestSessionFile(after) = %q, want %q (own earliest-created conversation)", got, "idle-fresh")
+	}
+}
+
+func TestLatestSessionFileOwnsOwnFileNotOthersNonEmpty(t *testing.T) {
+	// Three sessions run codebuddy in the same project. The "hello" session
+	// wrote content; the /model and /skills sessions ran commands that write
+	// nothing, so their conversations are 0-byte files created right at their
+	// own launch. Each session must bind to ITS OWN file (the one whose
+	// creation is closest to its own process start) — never to another
+	// session's non-empty conversation, otherwise every session restores the
+	// same "hello" dialog.
+	dir := t.TempDir()
+	mk := func(name string, content []byte) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("idle-fresh", nil) // /model session's own empty file
+	time.Sleep(20 * time.Millisecond)
+	mk("hello", []byte("x")) // another session's non-empty conversation
+
+	after := time.Now().Add(-time.Hour)
+	got := latestSessionFile(dir, &after)
+	if got != "idle-fresh" {
+		t.Errorf("latestSessionFile = %q, want %q (own file wins over other session's non-empty)", got, "idle-fresh")
+	}
+}

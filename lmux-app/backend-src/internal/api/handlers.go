@@ -167,7 +167,9 @@ func (h *Handler) AgentFindSession(w http.ResponseWriter, r *http.Request) {
 
 	var after *time.Time
 	if body.After != nil && *body.After > 0 {
-		t := time.Unix(int64(*body.After), 0)
+		sec := int64(*body.After)
+		nsec := int64((*body.After - float64(sec)) * 1e9)
+		t := time.Unix(sec, nsec)
 		after = &t
 	}
 

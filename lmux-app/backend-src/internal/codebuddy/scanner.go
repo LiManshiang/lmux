@@ -279,35 +279,80 @@ func creationTime(path string) time.Time {
 	return time.Unix(st.Birthtimespec.Sec, st.Birthtimespec.Nsec)
 }
 
-// latestSessionFile returns the most recently created *.jsonl in a directory,
-// or "" when there is none. With a non-nil `after`, only sessions created
-// strictly after that time are considered — this scopes a freshly launched
-// agent to the conversation it actually created, instead of picking up another
-// session's older conversation.
+// latestSessionFile picks the conversation that a freshly launched agent is
+// actually using, or "" when there is none.
+//
+// Two cases are handled:
+//
+//  1. Fresh launch: the agent creates a NEW conversation file right at start.
+//     With `after` (the agent process start time) set, we return the file
+//     created AT/after that time with the EARLIEST creation time — each agent
+//     binds to its own new conversation. Taking the newest file here is wrong:
+//     when two sessions both launch codebuddy, the active one's conversation
+//     is newer, so the idle session silently binds to the OTHER session's
+//     conversation.
+//
+//  2. /resume inside the agent: `codebuddy` then `/resume <old-id>` switches
+//     the live conversation WITHOUT changing argv and WITHOUT creating a new
+//     file — the resumed (old) file is simply written again. In that case no
+//     file was created at/after `after`, so we fall back to the file with the
+//     most recent MODIFICATION time (the live conversation).
 func latestSessionFile(dir string, after *time.Time) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
-	var best string
-	var bestTime time.Time
+	var closestCreated string
+	var closestCreatedDelta time.Duration
+	var newestModified string
+	var newestModifiedTime time.Time
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		t := creationTime(filepath.Join(dir, e.Name()))
-		// Keep sessions created at or after `after`. The process start time and
-		// the conversation file are often created in the same second, so a
-		// strict After() would wrongly exclude the just-created conversation.
-		if after != nil && t.Before(*after) {
+		p := filepath.Join(dir, e.Name())
+		var st syscall.Stat_t
+		if err := syscall.Stat(p, &st); err != nil {
 			continue
 		}
-		if best == "" || t.After(bestTime) {
-			best = strings.TrimSuffix(e.Name(), ".jsonl")
-			bestTime = t
+		modified := time.Unix(st.Mtimespec.Sec, st.Mtimespec.Nsec)
+		created := time.Unix(st.Birthtimespec.Sec, st.Birthtimespec.Nsec)
+		name := strings.TrimSuffix(e.Name(), ".jsonl")
+
+		if modified.After(newestModifiedTime) {
+			newestModified = name
+			newestModifiedTime = modified
+		}
+		// Fresh launch: the agent creates its own conversation at process
+		// start, so the file with creation time CLOSEST to (but at/after) the
+		// process start is the one this agent made. A second agent launched a
+		// moment later gets its own, slightly later file.
+		//
+		// Deliberately NOT filtered by file size: codebuddy's /model, /skills
+		// and friends run without writing conversation content, so the "used"
+		// conversation of that session is a 0-byte file. Preferring non-empty
+		// files makes every session grab the project's ONE non-empty
+		// conversation (e.g. the "hello" session) and all of them cross-bind to
+		// it. The file this process created — empty or not — is the one this
+		// session owns.
+		if after != nil && !created.Before(*after) {
+			delta := created.Sub(*after)
+			if closestCreated == "" || delta < closestCreatedDelta {
+				closestCreated = name
+				closestCreatedDelta = delta
+			}
 		}
 	}
-	return best
+	// Case 1: a conversation was created at/after the launch — that is this
+	// agent's own fresh conversation.
+	if closestCreated != "" {
+		return closestCreated
+	}
+	// Case 2: no file was created at/after launch — the agent resumed an
+	// existing conversation (`codebuddy` then `/resume <old-id>`, or lmux
+	// itself launched it with `--resume`). The live conversation is the most
+	// recently modified file.
+	return newestModified
 }
 
 // Recent find-session results are cached briefly: the sidebar queries context
@@ -532,7 +577,12 @@ func lastUsageInfo(path string) (input, cacheRead, output int64, model string, e
 		if json.Unmarshal([]byte(line), &entry) != nil {
 			continue
 		}
-		if entry.Type == "message" && entry.Message.Usage != nil {
+		// Match ANY record carrying message.usage, not just type=="message".
+		// codebuddy writes the latest accumulated input_tokens on
+		// function_call records too (and a long-running conversation is
+		// frequently topped off by a tool call), so filtering to messages
+		// returned a stale percentage that never moved.
+		if entry.Message.Usage != nil {
 			u := entry.Message.Usage
 			output += u.OutputTokens
 			if first {
