@@ -256,7 +256,7 @@ private struct ContextUsageView: View {
     /// Starts at 0 so an agent-bound session always shows a number — never a
     /// blank placeholder — while the first context query is in flight.
     @State private var percent = 0
-    @State private var credit: Double?
+    @State private var model: String?
 
     var body: some View {
         HStack(spacing: 4) {
@@ -265,11 +265,12 @@ private struct ContextUsageView: View {
             Text("上下文 \(percent)%")
                 .font(.system(size: 10))
                 .monospacedDigit()
-            if let credit {
-                // CodeBuddy credits (平台积分), not currency.
-                Text("· \(String(format: "%.2f", credit)) 积分")
+            if let model, !model.isEmpty {
+                Text("· \(model)")
                     .font(.system(size: 10))
-                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .foregroundColor(percent >= 80 ? .orange : .secondary)
@@ -281,12 +282,12 @@ private struct ContextUsageView: View {
                 }
                 if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
                     percent = usage.percent
-                    credit = usage.credit
+                    model = usage.model
                 }
                 // Refresh the selected session frequently; background sessions
                 // refresh slowly to reduce backend load.
                 let active = viewModel.selectedSession?.id == sessionID
-                if percent != nil || credit != nil {
+                if percent != 0 || model != nil {
                     try? await Task.sleep(nanoseconds: (active ? 60 : 180) * 1_000_000_000)
                 } else {
                     // Backend may not be ready yet on launch; retry quickly.

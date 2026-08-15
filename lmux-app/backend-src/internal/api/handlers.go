@@ -288,6 +288,7 @@ func (h *Handler) AgentContext(w http.ResponseWriter, r *http.Request) {
 			"tokens":         tokens,
 			"context_window": window,
 			"credit":         credit,
+			"model":          model,
 		})
 	case "claude":
 		tokens := codebuddy.GetClaudeContextTokens(body.ProjectDir, body.SessionID)
@@ -295,6 +296,7 @@ func (h *Handler) AgentContext(w http.ResponseWriter, r *http.Request) {
 			"tokens":         tokens,
 			"context_window": codebuddy.ContextWindowTokens, // claude maps to deepseek-v4-flash
 			"credit":         0,
+			"model":          "claude",
 		})
 	default:
 		writeError(w, http.StatusBadRequest, "unknown agent")
