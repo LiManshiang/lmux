@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PreferencesView: View {
     @AppStorage("terminalTheme") private var selectedThemeId = "dracula"
-    @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalRendererSetting.swiftterm
+    @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

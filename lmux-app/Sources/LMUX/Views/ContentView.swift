@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var sidebarWidth: CGFloat = 240
-    @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalRendererSetting.swiftterm
+    @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
 
     var body: some View {
         HStack(spacing: 0) {
