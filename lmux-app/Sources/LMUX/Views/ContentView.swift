@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var sidebarWidth: CGFloat = 240
+    @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalRendererSetting.swiftterm
 
     var body: some View {
         HStack(spacing: 0) {
@@ -12,9 +13,24 @@ struct ContentView: View {
                     Text("Sessions")
                         .font(.headline)
                     Spacer()
-                    Text(AppVersion.current)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        if selectedRenderer == TerminalRendererSetting.ghostty {
+                            Text("Ghostty")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.2))
+                                .foregroundColor(.orange)
+                                .cornerRadius(4)
+                        } else {
+                            Text("SwiftTerm")
+                                .font(.system(size: 8))
+                                .foregroundColor(.secondary)
+                        }
+                        Text(AppVersion.current)
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
