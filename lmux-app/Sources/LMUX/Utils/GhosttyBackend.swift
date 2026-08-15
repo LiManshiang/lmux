@@ -136,10 +136,15 @@ final class GhosttyBackend: TerminalBackend {
 
     // MARK: - Configuration
 
-    func applyTheme(_ theme: TerminalTheme) {
-        // Ghostty themes are config, not view properties: push through the
-        // controller so every surface updates live via ghostty_surface_update_config.
-        controller.setTerminalConfiguration(theme.ghosttyConfiguration())
+    func applyTheme(_ lmuxTheme: TerminalTheme) {
+        // Ghostty resolves the final config as base + terminalConfiguration +
+        // theme, with theme applied LAST so it wins for duplicate keys. The
+        // default theme (Afterglow/Alabaster) would otherwise override our
+        // colors, so the lmux theme must be pushed as the *theme*, not as a
+        // terminalConfiguration override.
+        let cfg = lmuxTheme.ghosttyConfiguration()
+        let ghosttyTheme = GhosttyTerminal.TerminalTheme(light: cfg, dark: cfg)
+        controller.setTheme(ghosttyTheme)
     }
 
     func setScrollback(_ lines: Int) {
@@ -275,8 +280,13 @@ final class GhosttyBackend: TerminalBackend {
 
 extension TerminalTheme {
     /// Bridge this lmux theme into a Ghostty TerminalConfiguration.
+    ///
+    /// The font size is pinned to 12 to match the surface's `fontSize: 12` —
+    /// otherwise applying the theme re-resolves the config and the base
+    /// template's default 14pt overrides the surface size, making text jump.
     func ghosttyConfiguration() -> TerminalConfiguration {
         TerminalConfiguration {
+            $0.withFontSize(12)
             $0.withBackground(TerminalColorBridge.hex(background))
             $0.withForeground(TerminalColorBridge.hex(foreground))
             $0.withSelectionBackground(TerminalColorBridge.hex(selection))
