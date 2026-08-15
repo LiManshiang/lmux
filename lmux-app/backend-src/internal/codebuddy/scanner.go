@@ -319,9 +319,18 @@ func latestSessionFile(dir string, after *time.Time) string {
 		created := time.Unix(st.Birthtimespec.Sec, st.Birthtimespec.Nsec)
 		name := strings.TrimSuffix(e.Name(), ".jsonl")
 
-		if modified.After(newestModifiedTime) {
-			newestModified = name
-			newestModifiedTime = modified
+		// Fallback candidate: the most recently modified file. Only files
+		// modified AT/after the launch count — the live conversation a user
+		// /resume'd to is written again after the launch. A file that was last
+		// touched BEFORE this agent started (e.g. another session's earlier
+		// /skills conversation) must NOT be picked: the user launched a fresh
+		// agent and did nothing, so binding it would resume someone else's
+		// work on restart.
+		if after == nil || !modified.Before(*after) {
+			if modified.After(newestModifiedTime) {
+				newestModified = name
+				newestModifiedTime = modified
+			}
 		}
 		// Fresh launch: the agent creates its own conversation at process
 		// start, so the file with creation time CLOSEST to (but at/after) the

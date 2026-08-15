@@ -261,30 +261,55 @@ func TestLatestSessionFileNanosecondBoundary(t *testing.T) {
 
 func TestLatestSessionFileResumeFallsBackToRecentlyModified(t *testing.T) {
 	// A user launches codebuddy fresh, then `/resume <old-id>` — the old
-	// conversation is written again but no NEW file is created at/after the
-	// launch. The lookup must fall back to the most recently modified file
-	// (the resumed conversation), NOT return an unrelated older file.
+	// conversation is written again after launch but no NEW file is created.
+	// The lookup must fall back to the most recently modified file that was
+	// touched AFTER the launch (the resumed conversation), NOT a file that was
+	// only touched before the launch (another session's earlier work).
 	dir := t.TempDir()
 	mk := func(name string) {
 		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+	mk("fresh-idle") // codebuddy's launch-time placeholder
+	time.Sleep(20 * time.Millisecond)
 	mk("old-resumed") // the conversation the user will /resume to
 	time.Sleep(20 * time.Millisecond)
-	mk("fresh-idle") // codebuddy's launch-time placeholder
 
-	// Touch old-resumed so it is the most recently modified.
+	// The agent launches now; the user then /resume's old-resumed, which is
+	// written again AFTER launch. old-resumed becomes the most recently
+	// modified file after the boundary.
+	launch := time.Now()
+	time.Sleep(10 * time.Millisecond)
 	p := filepath.Join(dir, "old-resumed.jsonl")
 	if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 
-	// Boundary AFTER both files were created: no new file at/after launch,
-	// so the live (most recently modified) conversation wins.
-	after := time.Now().Add(1 * time.Hour)
-	got := latestSessionFile(dir, &after)
+	got := latestSessionFile(dir, &launch)
 	if got != "old-resumed" {
-		t.Errorf("latestSessionFile(after in future) = %q, want %q (most recently modified)", got, "old-resumed")
+		t.Errorf("latestSessionFile = %q, want %q (resumed conversation modified after launch)", got, "old-resumed")
+	}
+}
+
+func TestLatestSessionFileIgnoresPreLaunchActivity(t *testing.T) {
+	// A fresh agent launched and the user did NOTHING — no new file created,
+	// no existing file touched after launch. There is no conversation for this
+	// session yet; the lookup MUST NOT fall back to a file whose only activity
+	// happened before the launch (another session's earlier conversation),
+	// otherwise a restart would resume someone else's work.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("other-session-skills") // active BEFORE this agent launched
+	time.Sleep(20 * time.Millisecond)
+	launch := time.Now()
+	time.Sleep(10 * time.Millisecond)
+
+	if got := latestSessionFile(dir, &launch); got != "" {
+		t.Errorf("latestSessionFile = %q, want %q (nothing active after launch)", got, "")
 	}
 }
