@@ -61,6 +61,16 @@ class TerminalManager: ObservableObject {
         backend?.applyTheme(theme)
     }
 
+    /// Apply the currently selected theme from preferences. Called when a new
+    /// backend is created (connect/connectBash) so a freshly connected session
+    /// inherits the user's theme instead of the default.
+    private func applyCurrentTheme() {
+        let themeId = UserDefaults.standard.string(forKey: "terminalTheme")
+            ?? "dracula"
+        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }) else { return }
+        backend?.applyTheme(theme)
+    }
+
     /// Connect by spawning an agent via the active backend.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
         // restore and connectToSession can race (both call connect for the
@@ -158,6 +168,9 @@ class TerminalManager: ObservableObject {
         processPID = backend.processPID
         lastActivityTime = Date()
         startIdleTimer()
+
+        // Inherit the user's selected theme for this new backend.
+        applyCurrentTheme()
 
         // Persist for session restore on app restart
         SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: .agent)
@@ -348,6 +361,9 @@ class TerminalManager: ObservableObject {
 
         // Persist for session restore
         SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType, launchMode: .bash)
+
+        // Inherit the user's selected theme for this new backend.
+        applyCurrentTheme()
 
         // Start agent detection: periodically check what child processes the user
         // runs inside the bash terminal so we can restore the correct agent type.
