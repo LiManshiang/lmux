@@ -217,3 +217,74 @@ func TestLatestSessionFileOwnsOwnFileNotOthersNonEmpty(t *testing.T) {
 		t.Errorf("latestSessionFile = %q, want %q (own file wins over other session's non-empty)", got, "idle-fresh")
 	}
 }
+
+func TestLatestSessionFileNanosecondBoundary(t *testing.T) {
+	// Two agents launched back-to-back, possibly within the same wall-clock
+	// second. The boundary carries sub-second precision (proc_pidinfo
+	// microseconds in Swift, preserved through the handler as nanoseconds).
+	// Each agent must bind to its OWN file — the one created at/after its
+	// start with creation time closest to it — even though both files were
+	// created within the same second. A second-truncated boundary would make
+	// both agents eligible for both files and grab whichever came first.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("session-a")
+	time.Sleep(5 * time.Millisecond)
+	mk("session-b")
+
+	// Exact creation times from the filesystem.
+	ca := creationTime(filepath.Join(dir, "session-a.jsonl"))
+	cb := creationTime(filepath.Join(dir, "session-b.jsonl"))
+	if ca.After(cb) {
+		t.Fatalf("expected session-a created before session-b")
+	}
+
+	// Session A's boundary: exactly at its own file's creation time — a
+	// freshly launched agent created this file at start. session-a qualifies
+	// (created >= start) and is the closest; session-b is ~5ms away.
+	aStart := ca
+	if got := latestSessionFile(dir, &aStart); got != "session-a" {
+		t.Errorf("session A binds %q, want %q", got, "session-a")
+	}
+
+	// Session B's boundary: exactly at its own creation. session-a was
+	// created strictly before, so only session-b qualifies.
+	bStart := cb
+	if got := latestSessionFile(dir, &bStart); got != "session-b" {
+		t.Errorf("session B binds %q, want %q", got, "session-b")
+	}
+}
+
+func TestLatestSessionFileResumeFallsBackToRecentlyModified(t *testing.T) {
+	// A user launches codebuddy fresh, then `/resume <old-id>` — the old
+	// conversation is written again but no NEW file is created at/after the
+	// launch. The lookup must fall back to the most recently modified file
+	// (the resumed conversation), NOT return an unrelated older file.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("old-resumed") // the conversation the user will /resume to
+	time.Sleep(20 * time.Millisecond)
+	mk("fresh-idle") // codebuddy's launch-time placeholder
+
+	// Touch old-resumed so it is the most recently modified.
+	p := filepath.Join(dir, "old-resumed.jsonl")
+	if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Boundary AFTER both files were created: no new file at/after launch,
+	// so the live (most recently modified) conversation wins.
+	after := time.Now().Add(1 * time.Hour)
+	got := latestSessionFile(dir, &after)
+	if got != "old-resumed" {
+		t.Errorf("latestSessionFile(after in future) = %q, want %q (most recently modified)", got, "old-resumed")
+	}
+}

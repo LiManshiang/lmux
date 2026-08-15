@@ -311,4 +311,23 @@ final class AgentBinaryLocatorTests: XCTestCase {
         XCTAssertNotNil(match, "fresh claude should still match")
         XCTAssertNil(match?.sessionID)
     }
+
+    func testDetectProcessDistinguishesResumeFromSessionID() {
+        // `--resume <id>` is an explicit "continue this conversation" — the
+        // authoritative binding. `--session-id <id>` is lmux assigning a fresh
+        // isolated ID at launch and must NOT be treated as authoritative
+        // (otherwise a user who then /resume's away would never be tracked).
+        let resume = CodebuddyProvider().detectProcess(cmdLine: "codebuddy-code --permission-mode auto -y --resume abc-123")
+        XCTAssertEqual(resume?.sessionID, "abc-123")
+        XCTAssertTrue(resume?.isResume ?? false, "--resume must be authoritative")
+
+        let sessionID = CodebuddyProvider().detectProcess(cmdLine: "codebuddy-code --permission-mode auto -y --session-id abc-123")
+        XCTAssertEqual(sessionID?.sessionID, "abc-123")
+        XCTAssertFalse(sessionID?.isResume ?? true, "--session-id is NOT authoritative")
+
+        let fresh = CodebuddyProvider().detectProcess(cmdLine: "codebuddy-code --permission-mode auto -y")
+        XCTAssertNotNil(fresh)
+        XCTAssertNil(fresh?.sessionID)
+        XCTAssertFalse(fresh?.isResume ?? true, "fresh launch is not authoritative")
+    }
 }
