@@ -156,28 +156,39 @@ func extractIDFromPath(path, action string) string {
 // ("codebuddy" | "claude") in a project directory.
 func (h *Handler) AgentFindSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Agent      string  `json:"agent"`
-		ProjectDir string  `json:"project_dir"`
-		After      float64 `json:"after,omitempty"`
+		Agent      string   `json:"agent"`
+		ProjectDir string   `json:"project_dir"`
+		After      *float64 `json:"after"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectDir == "" || body.Agent == "" {
 		writeError(w, http.StatusBadRequest, "invalid agent/project_dir")
 		return
 	}
-	// `after` (unix seconds) scopes the lookup to conversations created no
-	// earlier than that instant, used by agent detection to associate a fresh
-	// launch with its own new conversation.
-	var after time.Time
-	if body.After > 0 {
-		after = time.Unix(int64(body.After), 0)
+	// `after` (unix seconds, sub-second preserved) scopes the lookup to
+	// conversations created no earlier than that instant, used by agent
+	// detection to associate a fresh launch with its own new conversation.
+	var after *time.Time
+	if body.After != nil && *body.After > 0 {
+		sec := int64(*body.After)
+		nsec := int64((*body.After - float64(sec)) * 1e9)
+		t := time.Unix(sec, nsec)
+		after = &t
 	}
 
 	var sessionID string
 	switch body.Agent {
 	case "codebuddy":
-		sessionID = codebuddy.FindRecentSessionForProject(body.ProjectDir, after)
+		if after != nil {
+			sessionID = codebuddy.FindRecentSessionForProjectAfter(body.ProjectDir, *after)
+		} else {
+			sessionID = codebuddy.FindRecentSessionForProject(body.ProjectDir)
+		}
 	case "claude":
-		sessionID = codebuddy.FindRecentClaudeSession(body.ProjectDir, after)
+		if after != nil {
+			sessionID = codebuddy.FindRecentClaudeSessionAfter(body.ProjectDir, *after)
+		} else {
+			sessionID = codebuddy.FindRecentClaudeSession(body.ProjectDir)
+		}
 	default:
 		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
@@ -217,7 +228,7 @@ func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	sessionID := codebuddy.FindRecentSessionForProject(body.ProjectDir, time.Time{})
+	sessionID := codebuddy.FindRecentSessionForProject(body.ProjectDir)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session_id": sessionID,
 	})
@@ -234,7 +245,7 @@ func (h *Handler) FindClaudeSessionByProject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	sessionID := codebuddy.FindRecentClaudeSession(body.ProjectDir, time.Time{})
+	sessionID := codebuddy.FindRecentClaudeSession(body.ProjectDir)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session_id": sessionID,
 	})

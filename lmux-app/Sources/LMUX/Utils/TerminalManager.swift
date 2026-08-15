@@ -1,7 +1,6 @@
 import Foundation
 import LMUXCore
 import AppKit
-import SwiftTerm
 import UserNotifications
 import Darwin
 
@@ -22,15 +21,16 @@ class TerminalManager: ObservableObject {
     @Published var processRunning: Bool = false
     @Published var isIdle: Bool = true
 
-    /// Called on main actor when the codebuddy-code process exits.
+    /// Called on main actor when the agent process exits.
     var onProcessExit: (() -> Void)?
-    /// Called on main actor when codebuddy-code produces first terminal output.
+    /// Called on main actor when the agent produces first terminal output.
     var onFirstOutput: (() -> Void)?
     /// Called on main actor when starting a process fails (e.g. executable not found).
     var onConnectError: ((String) -> Void)?
 
-    /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
-    private(set) var terminalView: LocalProcessTerminalView?
+    /// The active rendering backend (SwiftTerm or Ghostty). Nil while detached
+    /// or before the first connect; the instance is preserved across detach.
+    private(set) var backend: TerminalBackend?
 
     private var currentSessionID: String?
     private var detachProjectDir: String?
@@ -44,13 +44,23 @@ class TerminalManager: ObservableObject {
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
     @Published private(set) var detectedAgentType: AgentType?
-    /// Used to fall back to the project's most recent conversation when agent
-    /// detection finds an agent without a --resume ID (e.g. claude launched
-    /// fresh). Set by ContentViewModel when the manager is created.
-    var agentSessionService: (any AgentSessionService)?
+    /// Conversation ID resolved once an agent is detected in the shell. Lets
+    /// the UI show context usage for the *right* conversation instead of
+    /// falling back to "most recent in project" (which can point at another
+    /// session).
+    @Published private(set) var detectedCBCSessionID: String?
     /// Set when the last connect/connectBash attempt failed (e.g. agent
     /// binary missing). Shown in the terminal area instead of a blank view.
     @Published private(set) var connectErrorMessage: String?
+
+    /// Service used to resolve the conversation ID for a freshly launched
+    /// agent (e.g. claude without a --resume ID). Set by ContentViewModel
+    /// when the manager is created.
+    var agentSessionService: (any AgentSessionService)?
+    /// Fired when an agent is detected in the shell. ContentViewModel uses it
+    /// to publish detection state globally so list rows render the context
+    /// usage line even when they are not observing this manager.
+    var onAgentDetected: ((AgentType, String?) -> Void)?
 
     /// Clear a connection error shown in the terminal area.
     func clearConnectError() {
@@ -70,22 +80,26 @@ class TerminalManager: ObservableObject {
 
     /// Apply a terminal theme to the running terminal view immediately.
     func applyTheme(_ themeId: String) {
-        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }),
-              let view = terminalView else { return }
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-        view.needsDisplay = true
+        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }) else { return }
+        backend?.applyTheme(theme)
     }
 
-    /// Connect by spawning an agent directly via SwiftTerm's forkpty.
+    /// Apply the currently selected theme from preferences. Called when a new
+    /// backend is created (connect/connectBash) so a freshly connected session
+    /// inherits the user's theme instead of the default.
+    private func applyCurrentTheme() {
+        let themeId = UserDefaults.standard.string(forKey: "terminalTheme")
+            ?? "dracula"
+        guard let theme = TerminalTheme.all.first(where: { $0.id == themeId }) else { return }
+        backend?.applyTheme(theme)
+    }
+
+    /// Connect by spawning an agent via the active backend.
     func connect(sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType = .codebuddy) {
         // restore and connectToSession can race (both call connect for the
         // same session at startup); restarting would kill the just-launched
         // process. If this session is already running, reuse it.
-        if currentSessionID == sessionID, processRunning, terminalView != nil {
+        if currentSessionID == sessionID, processRunning, backend != nil {
             isConnected = true
             startIdleTimer()
             return
@@ -94,29 +108,6 @@ class TerminalManager: ObservableObject {
 
         currentSessionID = sessionID
         detachProjectDir = projectDir
-
-        // ... same terminal setup ...
-        let view = OutputAwareTerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-
-        // Apply selected theme
-        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
-        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-        view.onFirstOutput = { [weak self] in
-            DispatchQueue.main.async {
-                self?.onFirstOutput?()
-            }
-        }
-        view.onActivity = { [weak self] in
-            DispatchQueue.main.async {
-                self?.lastActivityTime = Date()
-            }
-        }
 
         // Build command (agent-specific behavior lives in its provider)
         let provider = agentType.provider
@@ -132,6 +123,12 @@ class TerminalManager: ObservableObject {
         if let id = cbcSessionID, !id.isEmpty {
             args.append(contentsOf: provider.resumeArgs(sessionID: id))
         }
+        // Fresh launch: NO --session-id. An agent started without a resumable
+        // ID creates its own brand-new conversation (both codebuddy and claude
+        // do this), and find-session binds this session to that exact file. A
+        // lmux-assigned --session-id would create a decoy conversation that
+        // find-session prefers forever, so a user who then /resume's to a real
+        // conversation would never be tracked.
 
         // Build environment
         let home = NSHomeDirectory()
@@ -155,60 +152,92 @@ class TerminalManager: ObservableObject {
 
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
-        // Start process
-        view.startProcess(executable: agentPath, args: args, environment: envList, currentDirectory: projectDir)
+        // Create the backend and wire callbacks.
+        let backend = TerminalBackendFactory.make()
+        self.backend = backend
+        wireCallbacks(backend: backend)
 
-        // SwiftTerm keeps shellPid == 0 silently when forkpty fails; don't
-        // enter a fake "running" state in that case.
-        guard view.process.shellPid > 0 else {
-            let msg = "Failed to launch \(agentType.displayName). Check the executable and try again."
-            connectErrorMessage = msg
-            onConnectError?(msg)
+        let ok = backend.startAgent(
+            executable: agentPath,
+            args: args,
+            env: envList,
+            cwd: projectDir
+        )
+        guard ok else {
+            // SwiftTerm: startAgent returns false only when forkpty fails and
+            // already called onConnectError. Ghostty is async — returns true.
+            disconnect()
             return
         }
-
-        // Register OSC 777 notification handler (ESC ] 777 ; notify ; <title> ; <body> ST)
-        view.getTerminal().parser.oscHandlers[777] = { [weak self] data in
-            guard let text = String(bytes: data, encoding: .utf8) else { return }
-            let parts = text.components(separatedBy: ";")
-            guard parts.count >= 3, parts[0] == "notify" else { return }
-            self?.sendOSCNotification(title: parts[1], body: parts[2...].joined(separator: ";"))
-        }
-
-        // Register OSC 9 handler for simple attention notifications
-        view.getTerminal().parser.oscHandlers[9] = { [weak self] data in
-            guard let msg = String(bytes: data, encoding: .utf8), !msg.isEmpty else { return }
-            self?.sendOSCNotification(title: "Session", body: msg)
-        }
-
-        // Keep enough scrollback for a full day of conversation.
-        view.getTerminal().changeScrollback(50_000)
 
         processGeneration += 1
         let gen = processGeneration
 
         // Track process exit
-        view.processDelegate = Delegate { [weak self] in
+        backend.onProcessExit = { [weak self] in
             DispatchQueue.main.async {
                 // Only fire exit callback for the current process generation,
                 // not stale callbacks from previously-terminated processes.
-                guard self?.processGeneration == gen else { return }
-                self?.isConnected = false
-                self?.processRunning = false
-                self?.onProcessExit?()
+                guard let self, self.processGeneration == gen else { return }
+                self.isConnected = false
+                self.processRunning = false
+                self.onProcessExit?()
             }
         }
 
-        self.terminalView = view
+        // Register OSC 777/9 notification via backend.onNotify (Ghostty) or
+        // its internal handlers (SwiftTerm). Both funnel to this callback.
+        backend.onNotify = { [weak self] title, body in
+            self?.sendOSCNotification(title: title, body: body)
+        }
+
         isConnected = true
         processRunning = true
         processStartTime = Date()
-        processPID = view.process.shellPid
+        processPID = backend.processPID
         lastActivityTime = Date()
         startIdleTimer()
 
+        // Inherit the user's selected theme for this new backend.
+        applyCurrentTheme()
+
         // Persist for session restore on app restart
         SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: .agent)
+
+        // Start agent detection here too (not just connectBash): a user can
+        // `/resume <id>` inside the launched agent, and detection is what
+        // binds the new live conversation to this session so a restart
+        // restores it automatically.
+        startAgentDetection(sessionID: sessionID, projectDir: projectDir)
+    }
+
+    private func wireCallbacks(backend: TerminalBackend) {
+        backend.onFirstOutput = { [weak self] in
+            DispatchQueue.main.async {
+                self?.onFirstOutput?()
+            }
+        }
+        backend.onActivity = { [weak self] in
+            DispatchQueue.main.async {
+                self?.lastActivityTime = Date()
+            }
+        }
+        backend.onConnectError = { [weak self] message in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Ghostty reports spawn failure asynchronously (surface closes
+                // before the process ever produced a PID). Roll back the
+                // optimistic running state so the ConnectionErrorView shows.
+                if self.processRunning, !backend.isProcessRunning {
+                    self.isConnected = false
+                    self.processRunning = false
+                    self.idleTimer?.invalidate()
+                    self.idleTimer = nil
+                }
+                self.connectErrorMessage = message
+                self.onConnectError?(message)
+            }
+        }
     }
 
     private func startIdleTimer() {
@@ -216,6 +245,11 @@ class TerminalManager: ObservableObject {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self, self.processRunning else { return }
+            // Sync PID from the backend (Ghostty's surface is created
+            // asynchronously once its view attaches; SwiftTerm's is immediate).
+            if let backend = self.backend, backend.processPID != self.processPID, backend.processPID > 0 {
+                self.processPID = backend.processPID
+            }
             let idle = Date().timeIntervalSince(self.lastActivityTime) > 3.0
             if self.isIdle != idle {
                 self.isIdle = idle
@@ -270,11 +304,13 @@ class TerminalManager: ObservableObject {
         memoryMB = nil
         stopAgentDetection()
         connectErrorMessage = nil
-        if let sid = currentSessionID {
-            SessionRestore.remove(sessionID: sid)
-        }
-        terminalView?.process.terminate()
-        terminalView = nil
+        // Do NOT remove the restore binding here: disconnect() is also called
+        // on app quit (terminateAllProcesses) and on user "Stop". The binding
+        // tells the next launch which conversation to resume for this session
+        // ("再进恢复"), so it must survive until the session itself is deleted
+        // (releaseTerminalManager removes it).
+        backend?.terminate()
+        backend = nil
         currentSessionID = nil
         isConnected = false
         processRunning = false
@@ -283,14 +319,15 @@ class TerminalManager: ObservableObject {
     }
 
     /// Detach without killing: disconnect UI but keep process running.
-    /// LocalProcessTerminalView's process continues because we don't call terminate().
+    /// The backend's view/process continues because we don't call terminate().
     func detach() {
         // If an agent is running inside the shell right now, record it so the
         // next launch can resume it (the periodic detection may have missed it
-        // if the user started codebuddy shortly before switching away).
-        if processPID > 0,
+        // if the user started the agent shortly before switching away).
+        let rootPID = backend?.detectionRootPID ?? 0
+        if rootPID > 0,
            detectedAgentType == nil,
-           let result = detectRunningAgent(shellPID: processPID),
+           let result = detectRunningAgent(shellPID: rootPID),
            let sid = currentSessionID {
             detectedAgentType = result.agentType
             persistAgentDetection(
@@ -304,18 +341,20 @@ class TerminalManager: ObservableObject {
         isConnected = false
         // Keep the idle timer running: the process is still alive after
         // detach, so its idle/running state must keep updating in the
-        // sidebar. startIdleTimer() invalidates+reschedules on reattach.
+        // sidebar. StartIdleTimer() invalidates+reschedules on reattach.
         // Stop the agent-detection timer so it doesn't linger after switching
         // sessions; it restarts on the next connectBash(). detectedAgentType
         // is preserved for reattach.
         agentDetectionTimer?.invalidate()
         agentDetectionTimer = nil
-        // Keep terminalView alive so process keeps running
+        // Keep backend alive so process keeps running
+        backend?.detach()
     }
 
-    /// Re-attach: terminalView and process are still alive, just mark connected.
+    /// Re-attach: backend and process are still alive, just mark connected.
     func reattach() {
-        guard terminalView != nil else { return }
+        guard backend != nil else { return }
+        backend?.reattach()
         isConnected = true
         startIdleTimer()
     }
@@ -332,12 +371,12 @@ class TerminalManager: ObservableObject {
     /// Send text into the terminal as if the user typed it (used by file drop).
     func sendInput(_ text: String) {
         guard processRunning else { return }
-        terminalView?.send(txt: text)
+        backend?.sendInput(text)
     }
 
     /// Whether the session needs user attention (task completed in background).
     var needsAttention: Bool {
-        !isConnected && !processRunning && terminalView != nil
+        !isConnected && !processRunning && backend != nil
     }
 
     private func sendOSCNotification(title: String, body: String) {
@@ -360,62 +399,60 @@ class TerminalManager: ObservableObject {
         currentSessionID = sessionID
         detachProjectDir = projectDir
 
-        let view = OutputAwareTerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-
-        let themeId = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
-        let theme = TerminalTheme.all.first { $0.id == themeId } ?? .dracula
-        view.nativeForegroundColor = theme.foregroundNSColor
-        view.nativeBackgroundColor = theme.backgroundNSColor
-        view.selectedTextBackgroundColor = theme.selectionNSColor
-        view.caretColor = theme.cursorNSColor
-        view.installColors(theme.ansiSwiftTermColors)
-
-        view.onFirstOutput = { [weak self] in
-            DispatchQueue.main.async {
-                self?.onFirstOutput?()
-            }
-        }
-        view.onActivity = { [weak self] in
-            DispatchQueue.main.async {
-                self?.lastActivityTime = Date()
-            }
-        }
-
-        let zshPath = "/bin/zsh"
-        guard FileManager.default.isExecutableFile(atPath: zshPath) else {
-            let msg = "Shell not found at \(zshPath). This system may be missing zsh."
-            connectErrorMessage = msg
-            onConnectError?(msg)
-            return
-        }
-
-        // Inherit full environment from parent process
+        // Build environment (inherit full environment from parent process)
         var parentEnv = ProcessInfo.processInfo.environment
         parentEnv["TERM"] = "xterm-256color"
         parentEnv["LANG"] = "en_US.UTF-8"
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
-        view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
+        let backend = TerminalBackendFactory.make()
+        self.backend = backend
+        wireCallbacks(backend: backend)
 
-        guard view.process.shellPid > 0 else {
-            let msg = "Failed to launch the shell. Try again; if it persists, check system shell state."
-            connectErrorMessage = msg
-            onConnectError?(msg)
+        guard backend.startBash(cwd: projectDir, env: envList) else {
+            // Backend already reported the error via onConnectError.
+            disconnect()
             return
         }
-        view.getTerminal().changeScrollback(200_000)
 
-        self.terminalView = view
+        processGeneration += 1
+        let gen = processGeneration
+        backend.onProcessExit = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.processGeneration == gen else { return }
+                self.isConnected = false
+                self.processRunning = false
+                self.onProcessExit?()
+            }
+        }
+        backend.onNotify = { [weak self] title, body in
+            self?.sendOSCNotification(title: title, body: body)
+        }
+
+        // Apply scrollback after the surface has settled. Applying it
+        // synchronously here (right after surface creation) crashes ghostty's
+        // update_config path (onig_free / arena allocator) when a fresh
+        // surface is pushed a new config immediately — the surface's derived
+        // config isn't ready yet. Deferring keeps the scrollback without the
+        // crash.
+        let scrollbackBackend = self.backend
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.backend === scrollbackBackend else { return }
+            scrollbackBackend?.setScrollback(200_000)
+        }
+
         isConnected = true
         processRunning = true
         processStartTime = Date()
-        processPID = view.process.shellPid
+        processPID = backend.processPID
         lastActivityTime = Date()
         startIdleTimer()
 
         // Persist for session restore
         SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: nil, agentType: agentType, launchMode: .bash)
+
+        // Inherit the user's selected theme for this new backend.
+        applyCurrentTheme()
 
         // Start agent detection: periodically check what child processes the user
         // runs inside the bash terminal so we can restore the correct agent type.
@@ -430,44 +467,62 @@ class TerminalManager: ObservableObject {
     /// Start periodically checking the shell's child processes for known agent executables.
     private func startAgentDetection(sessionID: String, projectDir: String) {
         stopAgentDetection()
-        let pid = self.processPID
-        guard pid > 0 else { return }
+        // NOTE: do NOT bail when detectionRootPID is 0. Ghostty creates its
+        // surface asynchronously, so the shell PID may not be known yet — the
+        // timer below re-reads it every tick and starts working as soon as it
+        // appears. Bailing here would silently disable agent detection.
 
-        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+        // Poll at 3s so a freshly launched agent (and its context-usage row)
+        // shows up within a few seconds instead of after a 10s wait.
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
-            let currentPID = self.processPID
+            let currentPID = self.backend?.detectionRootPID ?? 0
+            guard currentPID > 0 else { return }
             Self.detectionQueue.async { [weak self] in
                 guard let self else { return }
                 let result = self.detectRunningAgent(shellPID: currentPID)
                 DispatchQueue.main.async { [weak self] in
                     guard let self, let result, self.currentSessionID == sessionID else { return }
-                    guard result.agentType != self.detectedAgentType || result.cbcSessionID != nil else { return }
-                    self.detectedAgentType = result.agentType
-                    self.persistAgentDetection(
-                        agentType: result.agentType,
-                        cmdLineSessionID: result.cbcSessionID,
-                        notBefore: result.processStartTime,
-                        sessionID: sessionID,
-                        projectDir: projectDir
-                    )
+                // Persist on agent-type change, or whenever the command line
+                // carries a resumable ID, or while the restore entry has no
+                // cbc yet. The last case is the retry window: a freshly
+                // launched agent may not have created its conversation file
+                // when detection first runs, so the cbc is still nil — we
+                // must keep trying so the bind eventually lands.
+                let alreadyBound = self.detectedAgentType == result.agentType
+                    && result.cbcSessionID == nil
+                    && SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID != nil
+                guard !alreadyBound else { return }
+                self.detectedAgentType = result.agentType
+                self.persistAgentDetection(
+                    agentType: result.agentType,
+                    // Only an explicit `--resume` ID is authoritative. A
+                    // `--session-id` (lmux's fresh-launch isolation) or a
+                    // fresh launch must go through find-session so the
+                    // binding tracks the conversation the user is actually
+                    // using (they may /resume away immediately).
+                    cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
+                    notBefore: result.processStartTime,
+                    sessionID: sessionID,
+                    projectDir: projectDir
+                )
                 }
             }
         }
         // Fire immediately, then again at 3s and 10s for quick detection (agent might not be running yet).
         agentDetectionTimer?.fire()
 
-        let detectionPID = self.processPID
         let alreadyDetected = self.detectedAgentType != nil
 
         Self.detectionQueue.asyncAfter(deadline: .now() + 3) { [weak self] in
-            guard let self, !alreadyDetected else { return }
-            let result = self.detectRunningAgent(shellPID: detectionPID)
+            guard let self, !alreadyDetected, let pid = self.backend?.detectionRootPID, pid > 0 else { return }
+            let result = self.detectRunningAgent(shellPID: pid)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
                 self.persistAgentDetection(
                     agentType: result.agentType,
-                    cmdLineSessionID: result.cbcSessionID,
+                    cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
                     notBefore: result.processStartTime,
                     sessionID: sessionID,
                     projectDir: projectDir
@@ -475,14 +530,14 @@ class TerminalManager: ObservableObject {
             }
         }
         Self.detectionQueue.asyncAfter(deadline: .now() + 10) { [weak self] in
-            guard let self, !alreadyDetected else { return }
-            let result = self.detectRunningAgent(shellPID: detectionPID)
+            guard let self, !alreadyDetected, let pid = self.backend?.detectionRootPID, pid > 0 else { return }
+            let result = self.detectRunningAgent(shellPID: pid)
             DispatchQueue.main.async { [weak self] in
                 guard let self, let result, self.currentSessionID == sessionID else { return }
                 self.detectedAgentType = result.agentType
                 self.persistAgentDetection(
                     agentType: result.agentType,
-                    cmdLineSessionID: result.cbcSessionID,
+                    cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
                     notBefore: result.processStartTime,
                     sessionID: sessionID,
                     projectDir: projectDir
@@ -507,6 +562,8 @@ class TerminalManager: ObservableObject {
         guard currentSessionID == sessionID else { return }
         let provider = agentType.provider
         guard let service = agentSessionService else {
+            detectedCBCSessionID = cmdLineSessionID
+            onAgentDetected?(agentType, cmdLineSessionID)
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cmdLineSessionID, agentType: agentType, launchMode: .agent)
             return
         }
@@ -518,6 +575,24 @@ class TerminalManager: ObservableObject {
                 notBefore: notBefore,
                 service: service
             )
+            // Never clobber an existing valid binding. find-session guesses
+            // which conversation this session owns from file timestamps, and
+            // when several sessions share a project directory that guess is
+            // wrong as often as it is right — it would silently rebind a
+            // working session (e.g. one bound to a real conversation) to a
+            // fresh empty one, and restoring on next launch would lose the
+            // user's work. A binding that is already present and valid is
+            // authoritative; only an explicit `--resume <other>` (an actual
+            // user action) may change it.
+            if let existing = SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID,
+               !existing.isEmpty, existing != cbc,
+               await service.agentSessionValid(agent: agentType, sessionID: existing),
+               cmdLineSessionID == nil {
+                detectedCBCSessionID = existing
+                return
+            }
+            detectedCBCSessionID = cbc
+            onAgentDetected?(agentType, cbc)
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
         }
     }
@@ -530,11 +605,11 @@ class TerminalManager: ObservableObject {
 
     /// Walk child processes of `shellPID` to find known agent executables.
     /// Runs on background queue; does not access main-actor state.
-    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?, processStartTime: Date?)? {
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?, isResume: Bool, processStartTime: Date?)? {
         // Check all descendants (not just direct children) in case agent runs in a subshell.
         guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
-        var best: (AgentType, String?)? = nil
+        var best: (AgentType, String?, Bool)? = nil
         var bestPriority = -1
         var bestStart: Date?
         for pid in allPIDs {
@@ -544,22 +619,31 @@ class TerminalManager: ObservableObject {
                 // Highest detection priority wins (e.g. a leftover codebuddy
                 // process must not shadow the claude the user launched).
                 if agent.detectionPriority > bestPriority {
-                    best = (agent, match.sessionID)
+                    // The command line only reflects the conversation at launch
+                    // time. A user can /resume to a different conversation
+                    // inside the agent, which changes the files the process
+                    // opens but not argv — so resolve the live conversation
+                    // from the process's open session files when possible.
+                    let liveID = openSessionID(of: pid)
+                    best = (agent, liveID ?? match.sessionID, match.isResume)
                     bestPriority = agent.detectionPriority
                     bestStart = getProcessStartTime(pid: pid)
                 }
             }
         }
         guard let best else { return nil }
-        return (agentType: best.0, cbcSessionID: best.1, processStartTime: bestStart)
+        return (agentType: best.0, cbcSessionID: best.1, isResume: best.2, processStartTime: bestStart)
     }
 
-    /// Start time of a process (from `ps -o lstart`), used to scope history
-    /// lookup to conversations created after the agent launch.
-    nonisolated private func getProcessStartTime(pid: Int32) -> Date? {
+    /// Conversation a process is actually using right now, read from the
+    /// `.codebuddy/projects/<dir>/<session-id>/...` files it has open (lsof).
+    /// More trustworthy than argv: `codebuddy` followed by `/resume <id>`
+    /// switches the conversation without changing the process command line.
+    /// Returns nil when no session path is open.
+    nonisolated private func openSessionID(of pid: Int32) -> String? {
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = ["-p", "\(pid)"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -567,14 +651,68 @@ class TerminalManager: ObservableObject {
             try task.run()
             task.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
-            return formatter.date(from: text)
+            let text = String(data: data, encoding: .utf8) ?? ""
+            // Lines look like:
+            //   node 36049 ... /Users/limanshiang/.codebuddy/projects/Users-limanshiang/<session-id>/tool-results/...
+            let marker = "/.codebuddy/projects/"
+            guard let range = text.range(of: marker) else { return nil }
+            let after = text[range.upperBound...]
+            // Skip the encoded project dir (e.g. Users-limanshiang/), then take
+            // the session-id directory component.
+            guard let slash = after.firstIndex(of: "/") else { return nil }
+            let remainder = after[after.index(after: slash)...]
+            guard let end = remainder.firstIndex(of: "/") else { return nil }
+            return String(remainder[..<end])
         } catch {
             return nil
         }
+    }
+
+    /// Start time of a process. `ps -o lstart` only has second precision,
+    /// which is not enough to tell apart two agents launched in the same
+    /// second (common when the user opens two sessions back to back). Use
+    /// proc_pidinfo for microsecond precision so each freshly launched agent
+    /// can be matched to the conversation file it actually created.
+    nonisolated private func getProcessStartTime(pid: Int32) -> Date? {
+        if let micro = Self.microsecondStartTime(pid: pid) {
+            return micro
+        }
+        // Fall back to `ps -o lstart` (second precision) if proc_pidinfo is
+        // unavailable.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        // Force C locale: under a zh_CN system ps emits a localized date
+        // ("六 8月/15 16:58:33 2026") that the English DateFormatter below
+        // cannot parse, so every detection got a nil start time and no
+        // session ever bound a conversation.
+        task.environment = ["LC_ALL": "C", "LANG": "C"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return ProcessStartTimeParser.parse(text)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Process start time at microsecond precision via libproc.
+    nonisolated private static func microsecondStartTime(pid: Int32) -> Date? {
+        var info = proc_bsdinfo()
+        let size = MemoryLayout<proc_bsdinfo>.size
+        let r = withUnsafeMutablePointer(to: &info) { ptr in
+            proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, ptr, Int32(size))
+        }
+        guard r == size else { return nil }
+        let sec = info.pbi_start_tvsec
+        let usec = info.pbi_start_tvusec
+        guard sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(sec) + Double(usec) / 1_000_000.0)
     }
 
     /// Returns PIDs of all descendants (children recursively) of the given parent PID.
@@ -645,29 +783,4 @@ class TerminalManager: ObservableObject {
         }
         return result
     }
-}
-
-/// A LocalProcessTerminalView that notifies on first data received from the PTY.
-private class OutputAwareTerminalView: LocalProcessTerminalView {
-    var onFirstOutput: (() -> Void)?
-    var onActivity: (() -> Void)?
-    private var outputDetected = false
-
-    override func dataReceived(slice: ArraySlice<UInt8>) {
-        if !outputDetected {
-            outputDetected = true
-            onFirstOutput?()
-        }
-        onActivity?()
-        super.dataReceived(slice: slice)
-    }
-}
-
-private class Delegate: NSObject, LocalProcessTerminalViewDelegate {
-    let onExit: () -> Void
-    init(onExit: @escaping () -> Void) { self.onExit = onExit }
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
-    func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) { onExit() }
 }

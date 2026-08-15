@@ -118,6 +118,12 @@ struct SessionRowView: View {
     }
 
     var body: some View {
+        // Re-evaluate when a TerminalManager is created for any session: a
+        // row may have first rendered without one (static), and a manager
+        // appearing later must flip the row to the observed variant so the
+        // context-usage line shows up without waiting for another viewModel
+        // change (e.g. switching sessions → refreshSessions).
+        let _ = viewModel.managerGeneration
         if let mgr = manager {
             // Observe the manager so idle/running state updates in real time.
             SessionRowObserved(session: session, manager: mgr)
@@ -247,31 +253,25 @@ private struct ContextUsageView: View {
     let cbcSessionID: String?
     let projectDir: String
     @EnvironmentObject var viewModel: ContentViewModel
-    @State private var percent: Int?
+    /// Starts at 0 so an agent-bound session always shows a number — never a
+    /// blank placeholder — while the first context query is in flight.
+    @State private var percent = 0
     @State private var credit: Double?
 
     var body: some View {
         HStack(spacing: 4) {
-            if percent != nil || credit != nil {
-                Image(systemName: "text.page")
-                    .font(.system(size: 9))
-                if let percent {
-                    Text("上下文 \(percent)%")
-                        .font(.system(size: 10))
-                        .monospacedDigit()
-                }
-                if let credit {
-                    Text("· ¥\(String(format: "%.2f", credit))")
-                        .font(.system(size: 10))
-                        .monospacedDigit()
-                }
-            } else {
-                // Placeholder keeps the view mounted so .task runs; an empty
-                // body would make SwiftUI skip mounting and never fetch.
-                Text("  ")
+            Image(systemName: "text.page")
+                .font(.system(size: 9))
+            Text("上下文 \(percent)%")
+                .font(.system(size: 10))
+                .monospacedDigit()
+            if let credit {
+                Text("· ¥\(String(format: "%.2f", credit))")
+                    .font(.system(size: 10))
+                    .monospacedDigit()
             }
         }
-        .foregroundColor((percent ?? 0) >= 80 ? .orange : .secondary)
+        .foregroundColor(percent >= 80 ? .orange : .secondary)
         .task {
             while !Task.isCancelled {
                 var cbc = cbcSessionID
@@ -352,16 +352,31 @@ private struct SessionRowContent: View {
                 }
 
                 // Conversation context usage, under the session name.
-                // Show for agent sessions (known cbc) and for bash sessions
-                // that have launched an agent (resolved via find-session).
-                // The agent type must match the cbc (a backend cbc may hold a
-                // claude session ID while the backend agent_type is still the
-                // default), so use the actual agent for the session.
+                // Only agent-bound sessions get a context row. The cbc order:
+                // restore/known → live-detected (so a freshly launched agent's
+                // conversation shows up without waiting for a restore write) →
+                // detected type with no cbc yet (find-session fallback). A
+                // plain bash session renders NO row at all.
+                //
+                // Detection state comes from the viewModel (published globally)
+                // rather than the manager param so the row updates even when
+                // it is not observing the manager.
                 let currentAgent = viewModel.currentAgentType(for: session.id)
+                let detectedAgent = viewModel.detectedAgents[session.id]
+                let detectedCBC = viewModel.detectedCBCs[session.id]
                 if let cbc = session.cbcSessionID, !cbc.isEmpty {
                     ContextUsageView(sessionID: session.id, agent: currentAgent, cbcSessionID: cbc, projectDir: session.projectDir)
-                } else if let mgr = manager, let detected = mgr.detectedAgentType {
-                    ContextUsageView(sessionID: session.id, agent: detected, cbcSessionID: nil, projectDir: session.projectDir)
+                } else if let detectedCBC, !detectedCBC.isEmpty {
+                    ContextUsageView(sessionID: session.id, agent: currentAgent, cbcSessionID: detectedCBC, projectDir: session.projectDir)
+                } else if let detectedAgent {
+                    ContextUsageView(sessionID: session.id, agent: detectedAgent, cbcSessionID: nil, projectDir: session.projectDir)
+                } else if viewModel.isAgentMode(for: session.id) {
+                    // Agent-mode session restored after launch: detection state
+                    // (detectedAgents) is in-memory and gone after restart, and
+                    // a resume-less agent (claude) has no cbc in restore.json.
+                    // The restore entry still records launchMode=.agent, so keep
+                    // the context row visible; findAgentSession resolves the cbc.
+                    ContextUsageView(sessionID: session.id, agent: currentAgent, cbcSessionID: nil, projectDir: session.projectDir)
                 }
 
                 // Status line (observed live by SessionStatusView)

@@ -12,6 +12,15 @@ public enum AgentConnectDecision {
 /// there is no resumable session ID (e.g. claude started fresh).
 public struct AgentMatch {
     public let sessionID: String?
+    /// True when the ID came from `--resume <id>` (an explicit, authoritative
+    /// "continue this conversation"), false for `--session-id <id>` (lmux
+    /// assigns a fresh isolated ID at launch) or a fresh launch.
+    public let isResume: Bool
+
+    public init(sessionID: String?, isResume: Bool = false) {
+        self.sessionID = sessionID
+        self.isResume = isResume
+    }
 }
 
 /// Context usage for the sidebar (percentage + estimated credit).
@@ -104,11 +113,29 @@ public extension AgentProvider {
         notBefore: Date? = nil,
         service: AgentSessionService
     ) async -> String? {
+        guard allowHistoryLookup else { return nil }
+
+        // An explicit `--resume <id>` on the command line is authoritative.
+        // It means the agent (or lmux restoring it) explicitly chose that
+        // conversation, and it stays authoritative even when the user later
+        // /resume's inside the agent — argv doesn't change, so find-session's
+        // timestamp guess must never override it. Overriding it is what made
+        // a working lmux session silently rebind to another session's fresh
+        // conversation.
         if let id = cmdLineSessionID, !id.isEmpty {
             return id
         }
-        guard allowHistoryLookup else { return nil }
-        return await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore)
+
+        // Fresh launch (no --resume): the agent created its own conversation.
+        // find-session returns the one whose creation time is closest to the
+        // process start — each session binds to its own fresh file.
+        if let notBefore {
+            if let live = await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore),
+               !live.isEmpty {
+                return live
+            }
+        }
+        return nil
     }
 }
 
@@ -286,13 +313,26 @@ public struct CodebuddyProvider: AgentProvider {
            await service.agentSessionValid(agent: .codebuddy, sessionID: cbc) {
             return .resume(sessionID: cbc)
         }
-        if allowHistoryLookup,
-           let found = await service.findAgentSession(agent: .codebuddy, projectDir: projectDir, after: nil),
-           !found.isEmpty {
-            return .resume(sessionID: found)
+        // No resumable ID.
+        // - New session (allowHistoryLookup=false): plain shell. Agent
+        //   detection will upgrade if the user launches an agent manually.
+        // - Restore of a known agent session (allowHistoryLookup=true): start
+        //   a fresh codebuddy conversation. A freshly launched codebuddy that
+        //   created a conversation is associated by agent detection with a
+        //   notBefore-scoped lookup, which writes the ID into restore.json —
+        //   so recovery has a non-nil ID here when one exists. An empty ID on
+        //   an agent session means the user wants a new conversation, not a
+        //   shell.
+        if cbcSessionID == nil || cbcSessionID!.isEmpty {
+            return allowHistoryLookup ? .fresh : .bash
         }
-        // No valid conversation and no history to look up: plain shell.
-        return .bash
+        // The ID exists but is not a valid conversation for this agent. Start
+        // a fresh agent conversation rather than a shell — this is still an
+        // agent session, the user just has no recoverable conversation ID. Do
+        // NOT fall back to the project's most recent conversation here, which
+        // usually belongs to a DIFFERENT session and would make several
+        // sessions all resume the same conversation.
+        return allowHistoryLookup ? .fresh : .bash
     }
 
     public func findBinaryPath() -> String? {
@@ -302,7 +342,12 @@ public struct CodebuddyProvider: AgentProvider {
     public func detectProcess(cmdLine: String) -> AgentMatch? {
         let lower = cmdLine.lowercased()
         if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
-            return AgentMatch(sessionID: extractSessionID(from: cmdLine))
+            // `--resume <id>` is an explicit "continue this conversation".
+            // `--session-id <id>` is lmux assigning a fresh isolated ID at
+            // launch (the user may then /resume away from it), so it is not
+            // authoritative.
+            let isResume = lower.contains(" --resume ") || lower.contains("--resume=")
+            return AgentMatch(sessionID: extractSessionID(from: cmdLine), isResume: isResume)
         }
         return nil
     }
@@ -337,13 +382,21 @@ public struct ClaudeProvider: AgentProvider {
 
     public func resolveSession(cbcSessionID: String?, projectDir: String, allowHistoryLookup: Bool, service: AgentSessionService) async -> AgentConnectDecision {
         var cbc = cbcSessionID
+        var hadProvidedCBC = (cbcSessionID != nil && !cbcSessionID!.isEmpty)
         if let id = cbc, !id.isEmpty,
            await service.agentSessionValid(agent: .codebuddy, sessionID: id) {
             // The ID is a valid codebuddy conversation (saved from a wrongly
             // launched claude --resume <codebuddy-id>); never pass it to claude.
             cbc = nil
         }
-        if (cbc == nil || cbc!.isEmpty) && allowHistoryLookup {
+        // Look up claude history only when a session ID was explicitly
+        // associated with this agent before (a codebuddy ID that was just
+        // discarded, or a claude ID that failed validation). When nothing was
+        // ever associated, looking up the project's most recent claude
+        // conversation would wrongly resume another session's work — e.g. a
+        // freshly launched claude in a new session must not pick up the
+        // previous session's conversation on restart.
+        if hadProvidedCBC, (cbc == nil || cbc!.isEmpty), allowHistoryLookup {
             cbc = await service.findAgentSession(agent: .claude, projectDir: projectDir, after: nil)
         }
         if let id = cbc, !id.isEmpty {

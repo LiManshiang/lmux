@@ -346,6 +346,17 @@ class ContentViewModel: ObservableObject {
     @Published var completedSessionIds: Set<String> = []
     /// Sessions that need user attention (completed while in background).
     @Published var attentionSessionIds: Set<String> = []
+    /// Incremented whenever a TerminalManager is created. List rows read this
+    /// so a row that first rendered without a manager (SessionRowStatic) is
+    /// re-evaluated once the manager exists — otherwise the context-usage
+    /// row only appears after an unrelated viewModel change (e.g. switching
+    /// sessions triggers refreshSessions).
+    @Published private(set) var managerGeneration = 0
+    /// Agent type detected per session, published globally so list rows that
+    /// are not observing the manager still show the context-usage line.
+    @Published private(set) var detectedAgents: [String: AgentType] = [:]
+    /// Conversation ID detected per session (see detectedAgents).
+    @Published private(set) var detectedCBCs: [String: String] = [:]
 
     // MARK: - Terminal Pool
 
@@ -355,7 +366,38 @@ class ContentViewModel: ObservableObject {
             return existing
         }
         let mgr = TerminalManager()
+        managerGeneration += 1
         mgr.agentSessionService = api
+        mgr.onAgentDetected = { [weak self] agent, cbc in
+            guard let self else { return }
+            self.detectedAgents[sessionID] = agent
+            if let cbc, !cbc.isEmpty {
+                // One conversation maps to one lmux session. find-session is a
+                // project-wide "most recently active" lookup, so when two
+                // sessions both run codebuddy it can return the SAME cbc for
+                // both — which would make both sessions resume each other's
+                // conversation on restart. If another session already claimed
+                // this cbc, keep this session's existing binding instead of
+                // clobbering it.
+                let claimedByOther = self.detectedCBCs.contains { $0.key != sessionID && $0.value == cbc }
+                if claimedByOther, let existing = self.detectedCBCs[sessionID], existing != cbc {
+                    return
+                }
+                let alreadySynced = self.detectedCBCs[sessionID] == cbc
+                self.detectedCBCs[sessionID] = cbc
+                // Persist to the backend so a relaunch (or a list refresh
+                // after app restart) still has cbc_session_id set — otherwise
+                // the context-usage row disappears until the session is
+                // re-detected or switched away. Backend overwrite is idempotent.
+                // refreshSessions is safe now: the backend orders by created_at,
+                // so the sidebar never re-sorts on detection.
+                guard !alreadySynced else { return }
+                Task {
+                    try? await self.api.setCBCSessionID(sessionID: sessionID, cbcSessionID: cbc)
+                    await self.refreshSessions()
+                }
+            }
+        }
         mgr.onFirstOutput = { [weak self] in
             self?.activeSessionIds.insert(sessionID)
             if self?.selectedSession?.id == sessionID {

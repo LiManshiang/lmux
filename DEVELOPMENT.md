@@ -1,6 +1,6 @@
 # lmux 开发进度文档
 
-> 更新日期：2026-08-10 ｜ 当前分支：`2.0` ｜ 当前版本：1.0.97
+> 更新日期：2026-08-11 ｜ 当前分支：`feature/ghostty-renderer`（macOS 13+）｜ 原 `2.0` 分支支持 macOS 12
 
 ## 一、项目简介
 
@@ -11,7 +11,39 @@ lmux 是一个 macOS 终端会话管理器（SwiftUI + Go 后端）。侧边栏�
 | 版本 | 阶段 | 说明 |
 |------|------|------|
 | 1.0.0 - 1.0.85 | 功能修复 | 会话恢复、agent 检测、上下文统计、导出等（fix/crash-issues 分支） |
-| **1.0.86 - 1.0.97** | **2.0 重构与质量** | 错误反馈、测试、架构分层、快捷键、导出/导入、图标（2.0 分支） |
+| **1.0.86 - 1.0.97** | **2.0 重构与质量** | 错误反馈、测试、架构分层、快捷键、导出/导入、图标（2.0 分支，macOS 12） |
+| **1.0.98+** | **Ghostty 渲染** | 双后端（SwiftTerm/Ghostty），macOS 13+（feature/ghostty-renderer 分支） |
+
+## 二点五、feature/ghostty-renderer 分支（macOS 13+）
+
+> 分支职责：**仅 macOS 13+**，引入 libghostty GPU 渲染作为可选后端；macOS 12 支持保留在 `2.0` 分支。
+> 依赖：`libghostty-spm`（本地 path，untracked，XCFramework 已 vendor 于 `libghostty-spm/vendor/`，sha256 已验证）。
+
+### 渲染后端抽象（TerminalBackend）
+- `Sources/LMUX/Utils/TerminalBackend.swift`：协议 + `TerminalBackendFactory` + `UserDefaults` 开关（`terminalRenderer`: `swiftterm`/`ghostty`）
+- `TerminalManager` 仅依赖 `TerminalBackend` 协议，不依赖具体渲染库
+- `PreferencesView` 新增「Terminal Renderer」分段选择
+
+### SwiftTermBackend
+- 迁移自原 `TerminalManager`：`LocalProcessTerminalView` + forkpty、`OutputAwareTerminalView`（首输出/活动检测）、OSC 777/9、主题、scrollback
+- 行为与 2.0 分支一致（零回归）
+
+### GhosttyBackend（libghostty，macOS 13+）
+- `.exec` 后端：libghostty 内部 PTY + spawn，宿主只传 workingDirectory/envVars/command
+- Metal GPU 渲染；`TerminalViewState` 作为 delegate（title/resize/close/notification 原生回调）
+- **idle/首输出**：exec 后端宿主拿不到字节流 → 轮询 `readViewportText()`（1s，hash 比对），与 SwiftTerm 的 dataReceived 语义等价
+- **OSC 777/9 通知**：Ghostty 原生 `desktop_notification` action → `onNotify`
+- **主题**：`TerminalTheme` → `TerminalConfiguration`（颜色经 `TerminalColorBridge`，实时 `setTerminalConfiguration`）
+- **PID 适配**：`foregroundPid`（tcgetpgrp）语义与 SwiftTerm `shellPid` 不同；idle timer 同步 PID
+- 对 `libghostty-spm` 的增量：
+  - `TerminalSurface.readViewportText()`（public）、`TerminalSurface.close()`（public）
+  - `TerminalSurfaceCoordinator`：`shouldProcessWakeup` 改为 `surface != nil`（后台 session 的 I/O 不被渲染可见性阻塞，agent 切走后继续运行；渲染仍由 `shouldRenderFrame` 门控）
+  - `AppTerminalView.firstRect(forCharacterRange:)`：候选框锚点从光标上移一个 cell，并 clamp 到 view 内、最小宽度一个 cell——否则 IME 候选框与内联 preedit（拼音）重叠（本分支中文输入遮挡问题）
+
+### 构建
+- 平台：`Package.swift` `.macOS(.v13)`；`Info.plist` `LSMinimumSystemVersion=13.0`
+- 依赖：`.package(path: "libghostty-spm")` + `.product(name: "GhosttyTerminal")`
+- 运行时切换后**仅影响新连接会话**；已运行会话保持原后端
 
 ## 三、2.0 分支已完成开发项
 
@@ -80,7 +112,7 @@ LMUX（app target，依赖 SwiftTerm + LMUXCore）
 
 | 位置 | 方式 | 覆盖 |
 |------|------|------|
-| 前端 LMUXCoreTests | `swift test` | 12 个用例：resolveSession 分支、进程检测、extractSessionID |
+| 前端 LMUXCoreTests | `swift test` | 15 个用例：resolveSession 分支、进程检测、extractSessionID、颜色桥接 |
 | 后端 | `go test ./...` | find-session 创建时间、context 估算、路径编码 |
 
 ## 六、已知问题 / 待办

@@ -2,9 +2,36 @@ import SwiftUI
 
 struct PreferencesView: View {
     @AppStorage("terminalTheme") private var selectedThemeId = "dracula"
+    @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Text("Terminal Renderer")
+                .font(.headline)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Renderer", selection: $selectedRenderer) {
+                    Text("SwiftTerm").tag(TerminalRendererSetting.swiftterm)
+                    Text("Ghostty (libghostty)").tag(TerminalRendererSetting.ghostty)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Text("Rendering engine. Ghostty uses GPU-accelerated Metal rendering (macOS 13+). Changes apply to newly connected sessions.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
             Text("Terminal Theme")
                 .font(.headline)
                 .padding(.horizontal, 16)
@@ -39,7 +66,7 @@ struct PreferencesView: View {
             }
             .listStyle(.plain)
         }
-        .frame(width: 360, height: 340)
+        .frame(width: 380, height: 420)
     }
 
     @ViewBuilder

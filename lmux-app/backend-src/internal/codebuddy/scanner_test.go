@@ -73,7 +73,7 @@ func TestFindRecentSessionForProjectUsesCreationTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := FindRecentSessionForProject("/Users/limanshiang", time.Time{})
+	got := FindRecentSessionForProject("/Users/limanshiang")
 	if got != "new-session" {
 		t.Errorf("FindRecentSessionForProject = %q, want %q", got, "new-session")
 	}
@@ -94,8 +94,222 @@ func TestFindRecentClaudeSessionUsesCreationTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := FindRecentClaudeSession("/Users/limanshiang", time.Time{})
+	got := FindRecentClaudeSession("/Users/limanshiang")
 	if got != "new" {
 		t.Errorf("FindRecentClaudeSession = %q, want %q", got, "new")
+	}
+}
+
+func TestLastUsageInfoPicksFunctionCallTokens(t *testing.T) {
+	// Regression: codebuddy writes the latest accumulated input_tokens on
+	// function_call records too. Filtering to type=="message" returned a
+	// stale percentage that never moved as the conversation grew.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.jsonl")
+	var lines []string
+	write := func(typ string, input, output int64) {
+		rec := map[string]interface{}{
+			"type": typ,
+			"message": map[string]interface{}{
+				"usage": map[string]interface{}{
+					"input_tokens":          input,
+					"output_tokens":         output,
+					"cache_read_input_tokens": 0,
+				},
+			},
+		}
+		b, _ := json.Marshal(rec)
+		lines = append(lines, string(b))
+	}
+	write("message", 300000, 500)
+	write("function_call", 316750, 300)
+	if err := os.WriteFile(path, []byte(lines[0]+"\n"+lines[1]+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input, _, output, _, err := lastUsageInfo(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input != 316750 {
+		t.Errorf("input = %d, want 316750 (latest function_call usage)", input)
+	}
+	if output != 800 {
+		t.Errorf("output = %d, want 800 (both records summed)", output)
+	}
+}
+
+func TestLatestSessionFilePrefersRecentlyModified(t *testing.T) {
+	// A user can `/resume` to an OLD conversation from inside a freshly
+	// launched agent. That conversation's file gets written again, so it is
+	// "active" even though its creation time is long past. Modification time
+	// must win over creation time, otherwise the resumed conversation is never
+	// picked and the session binds to the wrong (fresh) one.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("fresh-idle")        // newest creation time
+	time.Sleep(20 * time.Millisecond)
+	oldResumed := filepath.Join(dir, "old-resumed.jsonl")
+	if err := os.WriteFile(oldResumed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	// Touch the old conversation so it is the most recently modified.
+	if err := os.Chtimes(oldResumed, time.Now(), time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := latestSessionFile(dir, nil)
+	if got != "old-resumed" {
+		t.Errorf("latestSessionFile = %q, want %q (most recently modified)", got, "old-resumed")
+	}
+}
+
+func TestLatestSessionFileFreshBindsOwnEarliestCreated(t *testing.T) {
+	// Two sessions both launch codebuddy in the same project. Each agent
+	// creates its own empty conversation right at its process start. The
+	// boundary lookup must return the conversation created at/after that
+	// session's own start time with the EARLIEST creation time — otherwise the
+	// idle session binds to the active one's newer conversation and both
+	// sessions resume the same hello conversation.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("idle-fresh") // created first
+	time.Sleep(20 * time.Millisecond)
+	mk("active-hello") // created second
+
+	after := time.Now().Add(-time.Hour)
+	got := latestSessionFile(dir, &after)
+	if got != "idle-fresh" {
+		t.Errorf("latestSessionFile(after) = %q, want %q (own earliest-created conversation)", got, "idle-fresh")
+	}
+}
+
+func TestLatestSessionFileOwnsOwnFileNotOthersNonEmpty(t *testing.T) {
+	// Three sessions run codebuddy in the same project. The "hello" session
+	// wrote content; the /model and /skills sessions ran commands that write
+	// nothing, so their conversations are 0-byte files created right at their
+	// own launch. Each session must bind to ITS OWN file (the one whose
+	// creation is closest to its own process start) — never to another
+	// session's non-empty conversation, otherwise every session restores the
+	// same "hello" dialog.
+	dir := t.TempDir()
+	mk := func(name string, content []byte) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("idle-fresh", nil) // /model session's own empty file
+	time.Sleep(20 * time.Millisecond)
+	mk("hello", []byte("x")) // another session's non-empty conversation
+
+	after := time.Now().Add(-time.Hour)
+	got := latestSessionFile(dir, &after)
+	if got != "idle-fresh" {
+		t.Errorf("latestSessionFile = %q, want %q (own file wins over other session's non-empty)", got, "idle-fresh")
+	}
+}
+
+func TestLatestSessionFileNanosecondBoundary(t *testing.T) {
+	// Two agents launched back-to-back, possibly within the same wall-clock
+	// second. The boundary carries sub-second precision (proc_pidinfo
+	// microseconds in Swift, preserved through the handler as nanoseconds).
+	// Each agent must bind to its OWN file — the one created at/after its
+	// start with creation time closest to it — even though both files were
+	// created within the same second. A second-truncated boundary would make
+	// both agents eligible for both files and grab whichever came first.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("session-a")
+	time.Sleep(5 * time.Millisecond)
+	mk("session-b")
+
+	// Exact creation times from the filesystem.
+	ca := creationTime(filepath.Join(dir, "session-a.jsonl"))
+	cb := creationTime(filepath.Join(dir, "session-b.jsonl"))
+	if ca.After(cb) {
+		t.Fatalf("expected session-a created before session-b")
+	}
+
+	// Session A's boundary: exactly at its own file's creation time — a
+	// freshly launched agent created this file at start. session-a qualifies
+	// (created >= start) and is the closest; session-b is ~5ms away.
+	aStart := ca
+	if got := latestSessionFile(dir, &aStart); got != "session-a" {
+		t.Errorf("session A binds %q, want %q", got, "session-a")
+	}
+
+	// Session B's boundary: exactly at its own creation. session-a was
+	// created strictly before, so only session-b qualifies.
+	bStart := cb
+	if got := latestSessionFile(dir, &bStart); got != "session-b" {
+		t.Errorf("session B binds %q, want %q", got, "session-b")
+	}
+}
+
+func TestLatestSessionFileResumeFallsBackToRecentlyModified(t *testing.T) {
+	// A user launches codebuddy fresh, then `/resume <old-id>` — the old
+	// conversation is written again after launch but no NEW file is created.
+	// The lookup must fall back to the most recently modified file that was
+	// touched AFTER the launch (the resumed conversation), NOT a file that was
+	// only touched before the launch (another session's earlier work).
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("fresh-idle") // codebuddy's launch-time placeholder
+	time.Sleep(20 * time.Millisecond)
+	mk("old-resumed") // the conversation the user will /resume to
+	time.Sleep(20 * time.Millisecond)
+
+	// The agent launches now; the user then /resume's old-resumed, which is
+	// written again AFTER launch. old-resumed becomes the most recently
+	// modified file after the boundary.
+	launch := time.Now()
+	time.Sleep(10 * time.Millisecond)
+	p := filepath.Join(dir, "old-resumed.jsonl")
+	if err := os.Chtimes(p, time.Now(), time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	got := latestSessionFile(dir, &launch)
+	if got != "old-resumed" {
+		t.Errorf("latestSessionFile = %q, want %q (resumed conversation modified after launch)", got, "old-resumed")
+	}
+}
+
+func TestLatestSessionFileIgnoresPreLaunchActivity(t *testing.T) {
+	// A fresh agent launched and the user did NOTHING — no new file created,
+	// no existing file touched after launch. There is no conversation for this
+	// session yet; the lookup MUST NOT fall back to a file whose only activity
+	// happened before the launch (another session's earlier conversation),
+	// otherwise a restart would resume someone else's work.
+	dir := t.TempDir()
+	mk := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("other-session-skills") // active BEFORE this agent launched
+	time.Sleep(20 * time.Millisecond)
+	launch := time.Now()
+	time.Sleep(10 * time.Millisecond)
+
+	if got := latestSessionFile(dir, &launch); got != "" {
+		t.Errorf("latestSessionFile = %q, want %q (nothing active after launch)", got, "")
 	}
 }
