@@ -117,11 +117,13 @@ func (s *Store) Get(id string) (*Session, error) {
 	return scanSession(row)
 }
 
-// List returns all sessions ordered by updated_at descending.
+// List returns all sessions ordered by creation time descending. Creation
+// order keeps the sidebar list stable — updated_at reorders rows whenever any
+// session becomes active.
 func (s *Store) List() ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
 		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
-		FROM sessions ORDER BY updated_at DESC`
+		FROM sessions ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -140,11 +142,12 @@ func (s *Store) List() ([]*Session, error) {
 }
 
 // ListSummaries returns lightweight session summaries for the polling path,
-// selecting only the fields actually used by the frontend.
+// selecting only the fields actually used by the frontend. Ordered by creation
+// time so the sidebar stays stable.
 func (s *Store) ListSummaries() ([]Summary, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
 		agent_type, status, ai_title, git_branch
-		FROM sessions ORDER BY updated_at DESC`
+		FROM sessions ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -176,11 +179,11 @@ func (s *Store) Delete(id string) error {
 	return err
 }
 
-// ListByStatus returns sessions filtered by status.
+// ListByStatus returns sessions filtered by status, ordered by creation time.
 func (s *Store) ListByStatus(status Status) ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
 		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
-		FROM sessions WHERE status = ? ORDER BY updated_at DESC`
+		FROM sessions WHERE status = ? ORDER BY created_at DESC`
 	rows, err := s.db.Query(query, string(status))
 	if err != nil {
 		return nil, err

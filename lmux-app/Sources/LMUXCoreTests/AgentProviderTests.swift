@@ -113,17 +113,18 @@ final class CodebuddyProviderTests: XCTestCase {
         XCTAssertEqual(svc.lastFindAfter, start)
     }
 
-    func testCodebuddyDetectionNoStartTimeBindsToRecentConversation() async {
-        // Regression: when the process start time cannot be resolved
-        // (observed start=nil), detection must still bind to the project's most
-        // recent conversation so the session resumes on next launch instead of
-        // starting fresh. (Without this the cbc stayed nil and re-entering the
-        // session always showed a fresh agent welcome page.)
+    func testCodebuddyDetectionNoStartTimeDoesNotBind() async {
+        // Regression: when the process start time cannot be resolved, detection
+        // must NOT bind to the project's most recent conversation. That recent
+        // conversation usually belongs to a DIFFERENT session — binding it
+        // makes several sessions share one cbc and restoring any of them
+        // resumes the wrong conversation. Return nil and let the next
+        // detection pick up the agent's own --resume ID.
         let svc = MockAgentService(findResults: [.codebuddy: "recent-convo"])
         let id = await CodebuddyProvider().detectionSessionID(
             cmdLineSessionID: nil, allowHistoryLookup: true,
             projectDir: "/p", notBefore: nil, service: svc)
-        XCTAssertEqual(id, "recent-convo")
+        XCTAssertNil(id)
     }
 
     func testCodebuddyDetectionSkipsHistoryForNewSession() async {
@@ -205,18 +206,17 @@ final class ClaudeProviderTests: XCTestCase {
         XCTAssertEqual(id, "recent-convo")
     }
 
-    func testDetectionNoStartTimeFallsBackToProjectHistory() async {
-        // When the process start time cannot be resolved, detection still binds
-        // to the project's most recent conversation. This is the detection
-        // phase (the agent is running right now), so the most recent
-        // conversation is the one the user just started — binding it lets the
-        // session restore on next launch. (Without this fallback the session
-        // had no cbc and could never resume.)
+    func testDetectionNoStartTimeDoesNotBind() async {
+        // When the process start time cannot be resolved, detection must not
+        // bind to the project's most recent conversation — that frequently
+        // belongs to another session and would make several sessions share one
+        // cbc (wrong restore). Return nil; the next detection picks up the
+        // agent's own --resume ID.
         let svc = MockAgentService(findResults: [.claude: "recent-convo"])
         let id = await ClaudeProvider().detectionSessionID(
             cmdLineSessionID: nil, allowHistoryLookup: true,
             projectDir: "/p", notBefore: nil, service: svc)
-        XCTAssertEqual(id, "recent-convo")
+        XCTAssertNil(id)
     }
 
     func testResolutionEmptyCBCDoesNotResumeOtherSession() async {

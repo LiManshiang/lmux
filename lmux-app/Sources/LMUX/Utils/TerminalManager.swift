@@ -30,6 +30,11 @@ class TerminalManager: ObservableObject {
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
     @Published private(set) var detectedAgentType: AgentType?
+    /// Conversation ID resolved once an agent is detected in the shell. Lets
+    /// the UI show context usage for the *right* conversation instead of
+    /// falling back to "most recent in project" (which can point at another
+    /// session).
+    @Published private(set) var detectedCBCSessionID: String?
     /// Set when the last connect/connectBash attempt failed (e.g. agent
     /// binary missing). Shown in the terminal area instead of a blank view.
     @Published private(set) var connectErrorMessage: String?
@@ -38,6 +43,10 @@ class TerminalManager: ObservableObject {
     /// agent (e.g. claude without a --resume ID). Set by ContentViewModel
     /// when the manager is created.
     var agentSessionService: (any AgentSessionService)?
+    /// Fired when an agent is detected in the shell. ContentViewModel uses it
+    /// to publish detection state globally so list rows render the context
+    /// usage line even when they are not observing this manager.
+    var onAgentDetected: ((AgentType, String?) -> Void)?
 
     /// Clear a connection error shown in the terminal area.
     func clearConnectError() {
@@ -351,7 +360,17 @@ class TerminalManager: ObservableObject {
             self?.sendOSCNotification(title: title, body: body)
         }
 
-        self.backend?.setScrollback(200_000)
+        // Apply scrollback after the surface has settled. Applying it
+        // synchronously here (right after surface creation) crashes ghostty's
+        // update_config path (onig_free / arena allocator) when a fresh
+        // surface is pushed a new config immediately — the surface's derived
+        // config isn't ready yet. Deferring keeps the scrollback without the
+        // crash.
+        let scrollbackBackend = self.backend
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.backend === scrollbackBackend else { return }
+            scrollbackBackend?.setScrollback(200_000)
+        }
 
         isConnected = true
         processRunning = true
@@ -384,7 +403,9 @@ class TerminalManager: ObservableObject {
         // timer below re-reads it every tick and starts working as soon as it
         // appears. Bailing here would silently disable agent detection.
 
-        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+        // Poll at 3s so a freshly launched agent (and its context-usage row)
+        // shows up within a few seconds instead of after a 10s wait.
+        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
             let currentPID = self.backend?.detectionRootPID ?? 0
             guard currentPID > 0 else { return }
@@ -467,6 +488,8 @@ class TerminalManager: ObservableObject {
         guard currentSessionID == sessionID else { return }
         let provider = agentType.provider
         guard let service = agentSessionService else {
+            detectedCBCSessionID = cmdLineSessionID
+            onAgentDetected?(agentType, cmdLineSessionID)
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cmdLineSessionID, agentType: agentType, launchMode: .agent)
             return
         }
@@ -478,6 +501,8 @@ class TerminalManager: ObservableObject {
                 notBefore: notBefore,
                 service: service
             )
+            detectedCBCSessionID = cbc
+            onAgentDetected?(agentType, cbc)
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
         }
     }
@@ -520,6 +545,11 @@ class TerminalManager: ObservableObject {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        // Force C locale: under a zh_CN system ps emits a localized date
+        // ("六 8月/15 16:58:33 2026") that the English DateFormatter below
+        // cannot parse, so every detection got a nil start time and no
+        // session ever bound a conversation.
+        task.environment = ["LC_ALL": "C", "LANG": "C"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -527,19 +557,8 @@ class TerminalManager: ObservableObject {
             try task.run()
             task.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
-            let date = formatter.date(from: text)
-            if date == nil {
-                // Fall back to `ps -o lstart` with the default output even if
-                // trimming removed a trailing tab; some locale/ps versions
-                // emit a trailing tab after the year.
-                let alt = text.replacingOccurrences(of: "\t", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-                return formatter.date(from: alt)
-            }
-            return date
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return ProcessStartTimeParser.parse(text)
         } catch {
             return nil
         }

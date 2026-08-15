@@ -109,12 +109,18 @@ public extension AgentProvider {
         }
         guard allowHistoryLookup else { return nil }
         // A --resume ID on the command line is authoritative. Without one, the
-        // agent was launched fresh. Prefer a conversation created AFTER the
-        // process started (notBefore-scoped) so a freshly launched agent binds
-        // to its own new conversation rather than another session's. When the
-        // start time is unavailable (rare), fall back to the project's most
-        // recent conversation so the session still binds and restores on the
-        // next launch.
+        // agent was launched fresh. Scope the history lookup to conversations
+        // created AFTER the process started so a freshly launched agent binds
+        // to its own new conversation rather than another session's.
+        guard let notBefore else {
+            // No process start time (ps failed): do NOT fall back to the
+            // project's most recent conversation — that frequently belongs to
+            // a DIFFERENT session, so several sessions would all bind to the
+            // same cbc and restoring any of them would resume the wrong
+            // conversation. Return nil and let the next detection pick up the
+            // agent's own --resume ID once its process is observed.
+            return nil
+        }
         return await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore)
     }
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/manshiangli/cbsm/internal/codebuddy"
 	"github.com/manshiangli/cbsm/internal/session"
@@ -155,20 +156,35 @@ func extractIDFromPath(path, action string) string {
 // ("codebuddy" | "claude") in a project directory.
 func (h *Handler) AgentFindSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Agent      string `json:"agent"`
-		ProjectDir string `json:"project_dir"`
+		Agent      string   `json:"agent"`
+		ProjectDir string   `json:"project_dir"`
+		After      *float64 `json:"after"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ProjectDir == "" || body.Agent == "" {
 		writeError(w, http.StatusBadRequest, "invalid agent/project_dir")
 		return
 	}
 
+	var after *time.Time
+	if body.After != nil && *body.After > 0 {
+		t := time.Unix(int64(*body.After), 0)
+		after = &t
+	}
+
 	var sessionID string
 	switch body.Agent {
 	case "codebuddy":
-		sessionID = codebuddy.FindRecentSessionForProject(body.ProjectDir)
+		if after != nil {
+			sessionID = codebuddy.FindRecentSessionForProjectAfter(body.ProjectDir, *after)
+		} else {
+			sessionID = codebuddy.FindRecentSessionForProject(body.ProjectDir)
+		}
 	case "claude":
-		sessionID = codebuddy.FindRecentClaudeSession(body.ProjectDir)
+		if after != nil {
+			sessionID = codebuddy.FindRecentClaudeSessionAfter(body.ProjectDir, *after)
+		} else {
+			sessionID = codebuddy.FindRecentClaudeSession(body.ProjectDir)
+		}
 	default:
 		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
