@@ -35,7 +35,10 @@ lmux 是一个 macOS 终端会话管理器（SwiftUI + Go 后端）。侧边栏�
 - **OSC 777/9 通知**：Ghostty 原生 `desktop_notification` action → `onNotify`
 - **主题**：`TerminalTheme` → `TerminalConfiguration`（颜色经 `TerminalColorBridge`，实时 `setTerminalConfiguration`）
 - **PID 适配**：`foregroundPid`（tcgetpgrp）语义与 SwiftTerm `shellPid` 不同；idle timer 同步 PID
-- 对 `libghostty-spm` 的增量：`TerminalSurface.readViewportText()`（public）、`TerminalSurface.close()`（public）
+- 对 `libghostty-spm` 的增量：
+  - `TerminalSurface.readViewportText()`（public）、`TerminalSurface.close()`（public）
+  - `TerminalSurfaceCoordinator`：`shouldProcessWakeup` 改为 `surface != nil`（后台 session 的 I/O 不被渲染可见性阻塞，agent 切走后继续运行；渲染仍由 `shouldRenderFrame` 门控）
+  - `AppTerminalView.firstRect(forCharacterRange:)`：候选框锚点从光标上移一个 cell，并 clamp 到 view 内、最小宽度一个 cell——否则 IME 候选框与内联 preedit（拼音）重叠（本分支中文输入遮挡问题）
 
 ### 构建
 - 平台：`Package.swift` `.macOS(.v13)`；`Info.plist` `LSMinimumSystemVersion=13.0`
