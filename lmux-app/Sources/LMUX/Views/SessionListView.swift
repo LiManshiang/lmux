@@ -46,6 +46,17 @@ struct SessionListView: View {
                                     Task { await viewModel.attachToSession(session) }
                                 }
                                 Divider()
+                                Button("Export Session…") {
+                                    viewModel.promptExportSession(session)
+                                }
+                                Button("Import Session…") {
+                                    viewModel.promptImportSession()
+                                }
+                                Divider()
+                                Button("Edit Session…") {
+                                    viewModel.promptEditSession(session)
+                                }
+                                .disabled(session.status == .running)
                                 Button("Rename...") {
                                     showRenameAlert(session)
                                 }

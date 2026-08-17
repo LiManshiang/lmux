@@ -1,5 +1,6 @@
 import Foundation
 import LMUXCore
+import UniformTypeIdentifiers
 
 struct Session: Codable, Identifiable, Equatable {
     let id: String
@@ -87,4 +88,45 @@ enum SessionStatus: String, Codable {
     case running
     case stopped
     case crashed
+}
+
+/// Self-contained export of a session's conversation: agent type, project
+/// directory, conversation ID, and the full raw JSONL content. Serialized to
+/// and from a `.lmuxsession` file.
+struct SessionExportBundle: Codable {
+    let format: String?
+    let version: Int?
+    let name: String
+    let agentType: String
+    let projectDir: String
+    let cbcSessionID: String
+    let exportedAt: String?
+    let content: String
+
+    enum CodingKeys: String, CodingKey {
+        case format
+        case version
+        case name
+        case agentType = "agent_type"
+        case projectDir = "project_dir"
+        case cbcSessionID = "cbc_session_id"
+        case exportedAt = "exported_at"
+        case content
+    }
+
+    /// Serializes the bundle to JSON data (the `.lmuxsession` file content).
+    func toJSON() throws -> Data {
+        try JSONEncoder().encode(self)
+    }
+
+    /// Decodes a `.lmuxsession` file into a bundle.
+    static func fromJSON(_ url: URL) -> SessionExportBundle? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(SessionExportBundle.self, from: data)
+    }
+}
+
+extension UTType {
+    /// The `.lmuxsession` export/import file type (a JSON document).
+    static let lmuxSession = UTType(exportedAs: "com.lmux.session", conformingTo: .json)
 }

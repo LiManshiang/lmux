@@ -3,9 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"lmux/cbsm/internal/codebuddy"
 	"lmux/cbsm/internal/session"
 )
@@ -120,6 +123,48 @@ func (h *Handler) RenameSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, sess)
+}
+
+// UpdateSession applies optional field updates to a session record. Only
+// stopped sessions can be edited (a running terminal has a live project dir
+// that must not be changed underneath it).
+func (h *Handler) UpdateSession(w http.ResponseWriter, r *http.Request) {
+	id := extractIDFromPath(r.URL.Path, "edit")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+
+	sess, err := h.mgr.Get(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if sess.Status == session.StatusRunning {
+		writeError(w, http.StatusBadRequest, "stop the session before editing")
+		return
+	}
+
+	var req session.UpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == nil && req.ProjectDir == nil && req.CBCSessionID == nil {
+		writeError(w, http.StatusBadRequest, "nothing to update")
+		return
+	}
+
+	updated, err := h.mgr.Update(id, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Project dir changes move the JSONL lookup location; drop cached
+	// find-session results so they don't point at the old path.
+	codebuddy.ClearFindSessionCache()
+
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (h *Handler) RestoreAll(w http.ResponseWriter, r *http.Request) {
@@ -354,4 +399,163 @@ func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// sessionFileFor resolves the JSONL path for a session's conversation.
+func sessionFileFor(agentType, projectDir, cbcSessionID string) string {
+	if agentType == "claude" {
+		return codebuddy.ClaudeSessionFile(projectDir, cbcSessionID)
+	}
+	return codebuddy.CodebuddySessionFile(projectDir, cbcSessionID)
+}
+
+// ExportSession returns a self-contained export bundle for a session's
+// conversation, including the agent type, project directory, conversation ID,
+// and the full raw JSONL conversation content.
+func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
+	id := extractID(r.URL.Path, "/api/sessions/")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+
+	sess, err := h.mgr.Get(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if sess.CBCSessionID == "" {
+		writeError(w, http.StatusBadRequest, "session has no conversation to export")
+		return
+	}
+
+	path := sessionFileFor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "conversation file not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"format":         "lmux-session",
+		"version":        1,
+		"name":           sess.Name,
+		"agent_type":     sess.AgentType,
+		"project_dir":    sess.ProjectDir,
+		"cbc_session_id": sess.CBCSessionID,
+		"exported_at":    time.Now().Format(time.RFC3339),
+		"content":        string(content),
+	})
+}
+
+// ImportSession imports an exported conversation bundle. It writes the JSONL
+// into the target project's session directory and creates (or updates) the
+// lmux session record bound to it.
+//
+// conflict_mode controls what happens when a session for the same
+// cbc_session_id already exists (either as a DB record or an on-disk JSONL):
+//   - "" (default): report the conflict with HTTP 409 so the client can ask.
+//   - "overwrite": replace the existing conversation file and session record.
+//   - "new": rewrite the conversation with a fresh conversation ID and always
+//     create a new independent session.
+func (h *Handler) ImportSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		AgentType   string `json:"agent_type"`
+		ProjectDir  string `json:"project_dir"`
+		CBCSessionID string `json:"cbc_session_id"`
+		Content     string `json:"content"`
+		ConflictMode string `json:"conflict_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.ProjectDir == "" || body.Content == "" || body.CBCSessionID == "" {
+		writeError(w, http.StatusBadRequest, "project_dir, cbc_session_id and content are required")
+		return
+	}
+	if body.AgentType == "" {
+		body.AgentType = "codebuddy"
+	}
+
+	absDir, err := filepath.Abs(body.ProjectDir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project_dir")
+		return
+	}
+
+	// Conflict: a DB record bound to the same conversation, or the target
+	// JSONL file already on disk.
+	existing, dbErr := h.mgr.FindByCBCSessionID(body.CBCSessionID)
+	targetPath := sessionFileFor(body.AgentType, absDir, body.CBCSessionID)
+	fileExists := false
+	if _, err := os.Stat(targetPath); err == nil {
+		fileExists = true
+	}
+	conflict := (dbErr == nil && existing != nil) || fileExists
+
+	switch body.ConflictMode {
+	case "":
+		if conflict {
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"error":    "conflict",
+				"conflict": true,
+			})
+			return
+		}
+	case "overwrite", "new":
+		// explicit mode, proceed below
+	default:
+		writeError(w, http.StatusBadRequest, "invalid conflict_mode")
+		return
+	}
+
+	writeContent := body.Content
+	sessionID := body.CBCSessionID
+	if body.ConflictMode == "new" {
+		sessionID = uuid.New().String()
+		writeContent = codebuddy.RewriteSessionID(body.Content, sessionID)
+		targetPath = sessionFileFor(body.AgentType, absDir, sessionID)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "create session directory: "+err.Error())
+		return
+	}
+	if err := os.WriteFile(targetPath, []byte(writeContent), 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "write conversation: "+err.Error())
+		return
+	}
+
+	// Reuse the existing record on overwrite; otherwise create a new one.
+	var sess *session.Session
+	if body.ConflictMode == "overwrite" && existing != nil {
+		existing.Name = body.Name
+		existing.ProjectDir = absDir
+		existing.AgentType = body.AgentType
+		if err := h.mgr.Save(existing); err != nil {
+			writeError(w, http.StatusInternalServerError, "update session: "+err.Error())
+			return
+		}
+		sess = existing
+	} else {
+		sess, err = h.mgr.Create(session.CreateRequest{
+			ProjectDir:   absDir,
+			Name:         body.Name,
+			CBCSessionID: sessionID,
+			AgentType:    body.AgentType,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "create session: "+err.Error())
+			return
+		}
+	}
+
+	codebuddy.InvalidateCache()
+	codebuddy.ClearFindSessionCache()
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"session": sess,
+	})
 }

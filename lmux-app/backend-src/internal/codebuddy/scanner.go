@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -474,6 +475,38 @@ func GetClaudeContextTokens(projectDir, sessionID string) int64 {
 		totalChars += estimateContentChars(entry.Message.Content)
 	}
 	return totalChars / 2
+}
+
+// CodebuddySessionFile returns the JSONL path for a codebuddy conversation,
+// e.g. ~/.codebuddy/projects/Users-limanshiang-dev-x/<sessionID>.jsonl.
+func CodebuddySessionFile(projectDir, sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	encoded := strings.TrimPrefix(projectDir, "/")
+	encoded = strings.ReplaceAll(encoded, "/", "-")
+	return filepath.Join(home, ".codebuddy", "projects", encoded, sessionID+".jsonl")
+}
+
+// ClaudeSessionFile returns the JSONL path for a claude conversation,
+// e.g. ~/.claude/projects/-Users-limanshiang-dev-x/<sessionID>.jsonl.
+func ClaudeSessionFile(projectDir, sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir), sessionID+".jsonl")
+}
+
+// sessionIDFieldRE matches the sessionId field value inside a JSONL line.
+var sessionIDFieldRE = regexp.MustCompile(`"sessionId"\s*:\s*"([^"]*)"`)
+
+// RewriteSessionID rewrites every sessionId field value in a conversation
+// JSONL payload to newID. Used when importing a conversation as a new copy so
+// it becomes an independent session instead of clobbering the existing one.
+func RewriteSessionID(content, newID string) string {
+	return sessionIDFieldRE.ReplaceAllString(content, `"sessionId":"`+newID+`"`)
 }
 
 // estimateContentChars returns the character count of a claude message

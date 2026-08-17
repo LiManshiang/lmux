@@ -88,6 +88,10 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showHelp) {
             HelpView()
         }
+        .sheet(item: $viewModel.editingSession) { session in
+            EditSessionSheet(session: session)
+                .environmentObject(viewModel)
+        }
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }

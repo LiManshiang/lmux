@@ -117,6 +117,16 @@ func (s *Store) Get(id string) (*Session, error) {
 	return scanSession(row)
 }
 
+// FindByCBCSessionID retrieves the first session bound to an agent
+// conversation ID, or an error when none exists.
+func (s *Store) FindByCBCSessionID(cbcID string) (*Session, error) {
+	query := `SELECT id, name, project_dir, cbc_session_id,
+		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
+		FROM sessions WHERE cbc_session_id = ? LIMIT 1`
+	row := s.db.QueryRow(query, cbcID)
+	return scanSession(row)
+}
+
 // List returns all sessions ordered by creation time descending. Creation
 // order keeps the sidebar list stable — updated_at reorders rows whenever any
 // session becomes active.

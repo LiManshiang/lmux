@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,6 +52,42 @@ func TestGetClaudeContextTokens(t *testing.T) {
 	}
 	if got := GetClaudeContextTokens("/Users/limanshiang", "s1"); got != 2 {
 		t.Errorf("GetClaudeContextTokens = %d, want 2", got)
+	}
+}
+
+func TestRewriteSessionID(t *testing.T) {
+	in := `{"sessionId":"old-id","type":"user","message":{"content":"hi"}}` + "\n" +
+		`{"sessionId":"old-id","type":"assistant","message":{"content":"hello"}}` + "\n"
+	out := RewriteSessionID(in, "new-id")
+	if strings.Contains(out, "old-id") {
+		t.Errorf("RewriteSessionID left old id: %q", out)
+	}
+	want := 2
+	if got := strings.Count(out, `"sessionId":"new-id"`); got != want {
+		t.Errorf("RewriteSessionID replaced %d sessionIds, want %d: %q", got, want, out)
+	}
+	// A sessionId with surrounding whitespace is still rewritten.
+	inSpaced := `{"sessionId" : "abc","type":"user"}` + "\n"
+	outSpaced := RewriteSessionID(inSpaced, "xyz")
+	if !strings.Contains(outSpaced, `"sessionId":"xyz"`) {
+		t.Errorf("RewriteSessionID did not handle spaced field: %q", outSpaced)
+	}
+}
+
+func TestCodebuddySessionFileAndClaudeSessionFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cb := CodebuddySessionFile("/Users/limanshiang/dev/x", "abc")
+	wantCB := filepath.Join(home, ".codebuddy", "projects", "Users-limanshiang-dev-x", "abc.jsonl")
+	if cb != wantCB {
+		t.Errorf("CodebuddySessionFile = %q, want %q", cb, wantCB)
+	}
+
+	cl := ClaudeSessionFile("/Users/limanshiang/dev/x", "abc")
+	wantCL := filepath.Join(home, ".claude", "projects", "-Users-limanshiang-dev-x", "abc.jsonl")
+	if cl != wantCL {
+		t.Errorf("ClaudeSessionFile = %q, want %q", cl, wantCL)
 	}
 }
 
