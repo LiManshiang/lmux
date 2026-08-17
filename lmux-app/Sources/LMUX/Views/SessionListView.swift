@@ -258,33 +258,27 @@ private struct ContextUsageView: View {
     let cbcSessionID: String?
     let projectDir: String
     @EnvironmentObject var viewModel: ContentViewModel
-    @State private var percent: Int?
+    /// Starts at 0 so an agent-bound session always shows a number — never a
+    /// blank placeholder — while the first context query is in flight.
+    @State private var percent = 0
     @State private var model: String?
 
     var body: some View {
         HStack(spacing: 4) {
-            if percent != nil || model != nil {
-                Image(systemName: "text.page")
-                    .font(.system(size: 9))
-                if let percent {
-                    Text("上下文 \(percent)%")
-                        .font(.system(size: 10))
-                        .monospacedDigit()
-                }
-                if let model, !model.isEmpty {
-                    Text("· \(model)")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            } else {
-                // Placeholder keeps the view mounted so .task runs; an empty
-                // body would make SwiftUI skip mounting and never fetch.
-                Text("  ")
+            Image(systemName: "text.page")
+                .font(.system(size: 9))
+            Text("上下文 \(percent)%")
+                .font(.system(size: 10))
+                .monospacedDigit()
+            if let model, !model.isEmpty {
+                Text("· \(model)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
-        .foregroundColor((percent ?? 0) >= 80 ? .orange : .secondary)
+        .foregroundColor(percent >= 80 ? .orange : .secondary)
         .task {
             while !Task.isCancelled {
                 var cbc = cbcSessionID
@@ -298,7 +292,7 @@ private struct ContextUsageView: View {
                 // Refresh the selected session frequently; background sessions
                 // refresh slowly to reduce backend load.
                 let active = viewModel.selectedSession?.id == sessionID
-                if percent != nil || model != nil {
+                if percent != 0 || model != nil {
                     try? await Task.sleep(nanoseconds: (active ? 60 : 180) * 1_000_000_000)
                 } else {
                     // Backend may not be ready yet on launch; retry quickly.
