@@ -173,7 +173,7 @@ class APIClient: AgentSessionService {
         return resp.valid
     }
 
-    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)? {
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)? {
         struct Body: Codable {
             let agent: String
             let projectDir: String
@@ -187,18 +187,18 @@ class APIClient: AgentSessionService {
         struct Response: Codable {
             let tokens: Int
             let contextWindow: Int
-            let credit: Double
+            let model: String?
             enum CodingKeys: String, CodingKey {
                 case tokens
                 case contextWindow = "context_window"
-                case credit
+                case model
             }
         }
         guard let data = try? await post("/api/agent/context", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
               let resp = try? decode(Response.self, from: data) else {
             return nil
         }
-        return (resp.tokens, resp.contextWindow, resp.credit)
+        return (resp.tokens, resp.contextWindow, resp.model)
     }
 
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {

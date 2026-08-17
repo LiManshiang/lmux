@@ -259,11 +259,11 @@ private struct ContextUsageView: View {
     let projectDir: String
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var percent: Int?
-    @State private var credit: Double?
+    @State private var model: String?
 
     var body: some View {
         HStack(spacing: 4) {
-            if percent != nil || credit != nil {
+            if percent != nil || model != nil {
                 Image(systemName: "text.page")
                     .font(.system(size: 9))
                 if let percent {
@@ -271,10 +271,12 @@ private struct ContextUsageView: View {
                         .font(.system(size: 10))
                         .monospacedDigit()
                 }
-                if let credit {
-                    Text("· ¥\(String(format: "%.2f", credit))")
+                if let model, !model.isEmpty {
+                    Text("· \(model)")
                         .font(.system(size: 10))
-                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             } else {
                 // Placeholder keeps the view mounted so .task runs; an empty
@@ -291,12 +293,12 @@ private struct ContextUsageView: View {
                 }
                 if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
                     percent = usage.percent
-                    credit = usage.credit
+                    model = usage.model
                 }
                 // Refresh the selected session frequently; background sessions
                 // refresh slowly to reduce backend load.
                 let active = viewModel.selectedSession?.id == sessionID
-                if percent != nil || credit != nil {
+                if percent != nil || model != nil {
                     try? await Task.sleep(nanoseconds: (active ? 60 : 180) * 1_000_000_000)
                 } else {
                     // Backend may not be ready yet on launch; retry quickly.

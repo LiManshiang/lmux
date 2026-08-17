@@ -14,11 +14,11 @@ public struct AgentMatch {
     public let sessionID: String?
 }
 
-/// Context usage for the sidebar (percentage + estimated credit).
+/// Context usage for the sidebar (percentage + model).
 public struct ContextUsageInfo {
     public let tokens: Int
     public let contextWindow: Int
-    public let credit: Double?
+    public let model: String?
     public var percent: Int {
         contextWindow > 0 ? Int((Double(tokens) / Double(contextWindow) * 100).rounded()) : 0
     }
@@ -32,7 +32,7 @@ public protocol AgentSessionService {
     /// new conversation instead of an older one from another session).
     func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String?
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool
-    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)?
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)?
 }
 
 /// Encapsulates everything that is agent-specific. Main flow (connect,
@@ -333,7 +333,7 @@ public struct CodebuddyProvider: AgentProvider {
               info.contextWindow > 0, info.tokens > 0 else {
             return nil
         }
-        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, credit: info.credit > 0 ? info.credit : nil)
+        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, model: info.model)
     }
 }
 
@@ -406,7 +406,7 @@ public struct ClaudeProvider: AgentProvider {
               info.contextWindow > 0, info.tokens > 0 else {
             return nil
         }
-        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, credit: nil)
+        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, model: info.model)
     }
 }
 

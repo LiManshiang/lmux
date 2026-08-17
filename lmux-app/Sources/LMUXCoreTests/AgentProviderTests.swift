@@ -5,14 +5,14 @@ import XCTest
 final class MockAgentService: AgentSessionService {
     var findResults: [AgentType: String?] = [:]
     var validResults: [String: Bool] = [:]
-    var contextResults: [String: (tokens: Int, contextWindow: Int, credit: Double)] = [:]
+    var contextResults: [String: (tokens: Int, contextWindow: Int, model: String?)] = [:]
     /// Records the `after` argument of the last findAgentSession call.
     var lastFindAfter: Date?
 
     init(
         findResults: [AgentType: String?] = [:],
         validResults: [String: Bool] = [:],
-        contextResults: [String: (tokens: Int, contextWindow: Int, credit: Double)] = [:]
+        contextResults: [String: (tokens: Int, contextWindow: Int, model: String?)] = [:]
     ) {
         self.findResults = findResults
         self.validResults = validResults
@@ -28,7 +28,7 @@ final class MockAgentService: AgentSessionService {
         validResults[sessionID] ?? false
     }
 
-    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, credit: Double)? {
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)? {
         contextResults[sessionID]
     }
 }
