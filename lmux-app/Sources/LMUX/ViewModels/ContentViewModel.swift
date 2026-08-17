@@ -2,6 +2,7 @@ import SwiftUI
 import LMUXCore
 import Combine
 import AppKit
+import Darwin
 import UserNotifications
 
 @MainActor
@@ -11,6 +12,8 @@ class ContentViewModel: ObservableObject {
     @Published var searchText = ""
     /// Token bumped to request focus on the session search field (Cmd+F).
     @Published var searchFocusToken = UUID()
+    /// Session currently being edited in the Edit Session sheet.
+    @Published var editingSession: SessionSummary?
     @Published var connectedSessionId: String?
     @Published var selectedFullSession: Session?
     @Published var showNewSessionSheet = false
@@ -87,6 +90,89 @@ class ContentViewModel: ObservableObject {
         Task {
             let ok = await importSessions(from: url)
             showToast(ok ? "Import complete" : "Import failed")
+        }
+    }
+
+    /// Present a save panel and export the current session's conversation as
+    /// a self-contained `.lmuxsession` file.
+    func promptExportSession(_ session: SessionSummary) {
+        let panel = NSSavePanel()
+        panel.title = "Export Session"
+        panel.nameFieldStringValue = "\(session.name).lmuxsession"
+        panel.allowedContentTypes = [.lmuxSession]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            do {
+                let bundle = try await api.exportSession(sessionID: session.id)
+                try bundle.toJSON().write(to: url, options: [.atomic])
+                showToast("Exported \(url.lastPathComponent)")
+            } catch {
+                showToast("Export failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Present an open panel for a `.lmuxsession` file, let the user pick the
+    /// target project directory, and import the session. When a session for
+    /// the same conversation already exists, ask how to resolve the conflict.
+    func promptImportSession() {
+        let filePanel = NSOpenPanel()
+        filePanel.title = "Import Session"
+        filePanel.allowedContentTypes = [.lmuxSession]
+        filePanel.canChooseFiles = true
+        filePanel.canChooseDirectories = false
+        guard filePanel.runModal() == .OK, let fileURL = filePanel.url else { return }
+        guard let bundle = SessionExportBundle.fromJSON(fileURL) else {
+            showToast("Import failed: invalid .lmuxsession file")
+            return
+        }
+
+        let dirPanel = NSOpenPanel()
+        dirPanel.title = "Choose Target Project Directory"
+        dirPanel.canChooseFiles = false
+        dirPanel.canChooseDirectories = true
+        dirPanel.prompt = "Import Here"
+        guard dirPanel.runModal() == .OK, let dirURL = dirPanel.url else { return }
+
+        Task {
+            await importSession(bundle, into: dirURL.path)
+        }
+    }
+
+    /// Imports a bundle into the given project directory, asking the user how
+    /// to resolve a conflict when the conversation already exists.
+    private func importSession(_ bundle: SessionExportBundle, into projectDir: String) async {
+        do {
+            _ = try await api.importSession(bundle, projectDir: projectDir, conflictMode: nil)
+            showToast("Imported \(bundle.name)")
+        } catch APIError.conflict {
+            let alert = NSAlert()
+            alert.messageText = "Session Already Exists"
+            alert.informativeText = "A session for this conversation already exists on this machine. Overwrite it, or import a new independent copy?"
+            alert.addButton(withTitle: "Overwrite")
+            alert.addButton(withTitle: "New Copy")
+            alert.addButton(withTitle: "Cancel")
+            let choice = alert.runModal()
+            switch choice {
+            case .alertFirstButtonReturn:
+                await doImport(bundle, into: projectDir, mode: "overwrite")
+            case .alertSecondButtonReturn:
+                await doImport(bundle, into: projectDir, mode: "new")
+            default:
+                break
+            }
+        } catch {
+            showToast("Import failed: \(error.localizedDescription)")
+        }
+        await refreshSessions()
+    }
+
+    private func doImport(_ bundle: SessionExportBundle, into projectDir: String, mode: String) async {
+        do {
+            let session = try await api.importSession(bundle, projectDir: projectDir, conflictMode: mode)
+            showToast("Imported \(session.name)")
+        } catch {
+            showToast("Import failed: \(error.localizedDescription)")
         }
     }
 
@@ -501,6 +587,12 @@ class ContentViewModel: ObservableObject {
     func startBackend() {
         backendStarting = true
         Task {
+            // Kill any existing lmux backend process so the freshly bundled
+            // binary is always the one serving this launch. Otherwise a
+            // backend left over from a previous app version keeps running on
+            // the port and the new app silently talks to the old code.
+            await killExistingBackend()
+
             // try to connect to existing backend
             if await api.healthCheck() {
                 let token = loadToken()
@@ -519,6 +611,77 @@ class ContentViewModel: ObservableObject {
             // start backend process
             await launchBackend()
         }
+    }
+
+    /// Terminate any process listening on the backend port. Returns when the
+    /// port is free (or a short timeout elapses), so launchBackend() can bind
+    /// it immediately.
+    private func killExistingBackend() async {
+        let port = backendPort()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        // -sTCP:LISTEN restricts to the process actually bound to the port,
+        // so the app itself (which merely connects as a client) is never
+        // matched.
+        task.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+        } catch {
+            print("[lmux] lsof failed: \(error.localizedDescription)")
+            return
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let pids = text.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+        for pid in pids where pid > 0 {
+            // Only kill our own backend binary, never an unrelated process
+            // that happens to use the port.
+            if isLmuxBackend(pid) {
+                print("[lmux] Killing existing backend PID \(pid)")
+                kill(pid, SIGKILL)
+            }
+        }
+        // Give the port a moment to be released before the new backend binds.
+        try? await Task.sleep(nanoseconds: 300_000_000)
+    }
+
+    /// Whether the given PID is the lmux backend binary. Uses the full command
+    /// line (`ps -o command=`) because `comm` is truncated to 16 chars
+    /// ("lmux-backend" → "lmux-back").
+    private func isLmuxBackend(_ pid: Int32) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "command="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+        } catch {
+            return false
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        let command = String(data: data, encoding: .utf8) ?? ""
+        // Match either the bundled binary name or an in-development binary
+        // whose full path ends in /lmux.
+        return command.contains("lmux-backend")
+            || command.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("/lmux")
+    }
+
+    /// Backend port from the persisted addr (e.g. "127.0.0.1:19680"), or the
+    /// default 19680 when not yet known.
+    private func backendPort() -> Int {
+        if let addr = loadAddr(),
+           let port = addr.split(separator: ":").last,
+           let value = Int(port) {
+            return value
+        }
+        return 19680
     }
 
     func retryBackend() {
@@ -819,6 +982,25 @@ class ContentViewModel: ObservableObject {
             _ = try await api.renameSession(id: id, name: name)
             await refreshSessions()
             showToast("Session renamed")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Open the edit sheet for a stopped session.
+    func promptEditSession(_ session: SessionSummary) {
+        editingSession = session
+    }
+
+    /// Apply optional edits (name, project dir, conversation ID) to a session.
+    func editSession(id: String, name: String?, projectDir: String?, cbcSessionID: String?) async {
+        do {
+            _ = try await api.updateSession(id: id, name: name, projectDir: projectDir, cbcSessionID: cbcSessionID)
+            // A project_dir change must not be overwritten by restore.json's
+            // stale path on next launch, so drop the cached restore entry.
+            SessionRestore.remove(sessionID: id)
+            await refreshSessions()
+            showToast("Session updated")
         } catch {
             errorMessage = error.localizedDescription
         }

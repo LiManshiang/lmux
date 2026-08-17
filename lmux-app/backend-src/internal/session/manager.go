@@ -120,9 +120,51 @@ func (m *Manager) Rename(id, name string) (*Session, error) {
 	return sess, nil
 }
 
+// Update applies optional field updates to an existing session. Only the
+// provided (non-nil) fields are changed; the others keep their current
+// values. A provided project_dir must resolve to an existing directory (same
+// validation as Create), and the git branch is recomputed for the new path.
+func (m *Manager) Update(id string, req UpdateRequest) (*Session, error) {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Name != nil {
+		sess.Name = *req.Name
+	}
+
+	if req.ProjectDir != nil {
+		absDir, err := filepath.Abs(*req.ProjectDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve project dir: %w", err)
+		}
+		if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("directory does not exist: %s", absDir)
+		}
+		sess.ProjectDir = absDir
+		sess.GitBranch = getGitBranch(absDir)
+	}
+
+	if req.CBCSessionID != nil {
+		sess.CBCSessionID = *req.CBCSessionID
+	}
+
+	if err := m.store.Save(sess); err != nil {
+		return nil, fmt.Errorf("save session: %w", err)
+	}
+	return sess, nil
+}
+
 // Get returns a session by ID.
 func (m *Manager) Get(id string) (*Session, error) {
 	return m.store.Get(id)
+}
+
+// FindByCBCSessionID returns the first session bound to an agent conversation
+// ID, or an error when none exists.
+func (m *Manager) FindByCBCSessionID(cbcID string) (*Session, error) {
+	return m.store.FindByCBCSessionID(cbcID)
 }
 
 // List returns all sessions.
@@ -192,5 +234,11 @@ func (m *Manager) SetCBCSessionID(id, cbcSessionID string) error {
 		return err
 	}
 	sess.CBCSessionID = cbcSessionID
+	return m.store.Save(sess)
+}
+
+// Save persists an existing session record (name, project dir, agent type,
+// etc. may have been modified in place).
+func (m *Manager) Save(sess *Session) error {
 	return m.store.Save(sess)
 }

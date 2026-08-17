@@ -6,6 +6,7 @@ enum APIError: LocalizedError {
     case invalidResponse
     case unauthorized
     case notFound
+    case conflict
     case serverError(String)
     case decodingError(Error)
     case networkError(Error)
@@ -16,6 +17,7 @@ enum APIError: LocalizedError {
         case .invalidResponse: return "Invalid response"
         case .unauthorized: return "Unauthorized - check token"
         case .notFound: return "Not found"
+        case .conflict: return "Conflict"
         case .serverError(let msg): return "Server error: \(msg)"
         case .decodingError(let err): return "Decode error: \(err.localizedDescription)"
         case .networkError(let err): return "Network error: \(err.localizedDescription)"
@@ -109,6 +111,17 @@ class APIClient: AgentSessionService {
         return try decode(Session.self, from: data)
     }
 
+    /// Apply optional field updates to an existing session. Only non-nil
+    /// fields are sent; the backend leaves the others unchanged.
+    func updateSession(id: String, name: String?, projectDir: String?, cbcSessionID: String?) async throws -> Session {
+        var body: [String: String] = [:]
+        if let name { body["name"] = name }
+        if let projectDir { body["project_dir"] = projectDir }
+        if let cbcSessionID { body["cbc_session_id"] = cbcSessionID }
+        let data = try await post("/api/sessions/\(id)/edit", body: body)
+        return try decode(Session.self, from: data)
+    }
+
     func restoreAll() async throws -> Int {
         let data = try await post("/api/restore", body: Optional<String>.none)
         struct Response: Codable {
@@ -198,6 +211,51 @@ class APIClient: AgentSessionService {
         _ = try await post("/api/sessions/\(sessionID)/cbc-session", body: Body(cbcSessionID: cbcSessionID))
     }
 
+    // MARK: - Session export / import
+
+    /// Fetches a self-contained export bundle for a session's conversation.
+    func exportSession(sessionID: String) async throws -> SessionExportBundle {
+        let data = try await get("/api/sessions/\(sessionID)/export")
+        return try decode(SessionExportBundle.self, from: data)
+    }
+
+    /// Imports a conversation bundle, optionally resolving a conflict by
+    /// overwriting the existing session ("overwrite") or creating an
+    /// independent copy ("new"). Throws `APIError.conflict` when a session
+    /// already exists and no conflict mode is given.
+    func importSession(_ bundle: SessionExportBundle, projectDir: String, conflictMode: String?) async throws -> Session {
+        struct Body: Codable {
+            let name: String
+            let agentType: String
+            let projectDir: String
+            let cbcSessionID: String
+            let content: String
+            let conflictMode: String?
+            enum CodingKeys: String, CodingKey {
+                case name
+                case agentType = "agent_type"
+                case projectDir = "project_dir"
+                case cbcSessionID = "cbc_session_id"
+                case content
+                case conflictMode = "conflict_mode"
+            }
+        }
+        let body = Body(
+            name: bundle.name,
+            agentType: bundle.agentType,
+            projectDir: projectDir,
+            cbcSessionID: bundle.cbcSessionID,
+            content: bundle.content,
+            conflictMode: conflictMode
+        )
+        let data = try await post("/api/sessions/import", body: body)
+        struct Response: Codable {
+            let session: Session
+        }
+        let resp = try decode(Response.self, from: data)
+        return resp.session
+    }
+
     // MARK: - Health
 
     func healthCheck() async -> Bool {
@@ -256,6 +314,8 @@ class APIClient: AgentSessionService {
             throw APIError.unauthorized
         case 404:
             throw APIError.notFound
+        case 409:
+            throw APIError.conflict
         default:
             if let err = try? Self.decoder.decode([String: String].self, from: data),
                let msg = err["error"] {

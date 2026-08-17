@@ -39,6 +39,14 @@ type RenameRequest struct {
 	Name string `json:"name"`
 }
 
+// UpdateRequest carries optional field updates for an existing session.
+// Pointer fields distinguish "not provided" (nil) from "explicitly cleared".
+type UpdateRequest struct {
+	Name         *string `json:"name"`
+	ProjectDir   *string `json:"project_dir"`
+	CBCSessionID *string `json:"cbc_session_id"`
+}
+
 // Summary is a lightweight view of a session for list display.
 type Summary struct {
 	ID             string `json:"id"`

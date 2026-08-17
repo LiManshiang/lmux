@@ -7,6 +7,10 @@
 
 # build artifacts and local state
 backend/lmux
+**/backend/lmux-x86_64
 backend-src/bin/
 .swiftpm/
 STAGE_SUMMARY.md
+
+# vendored local dependency (cloned separately, not part of the repo)
+/SwiftTerm/
