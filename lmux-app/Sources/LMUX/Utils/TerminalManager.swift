@@ -141,14 +141,11 @@ class TerminalManager: ObservableObject {
         parentEnv["LANG"] = "en_US.UTF-8"
         parentEnv["HOME"] = home
 
-        // Fix PATH
-        var pathEnv = parentEnv["PATH"] ?? "/usr/bin:/bin"
-        for p in ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.local/bin"] {
-            if !pathEnv.contains(p) { pathEnv = "\(p):\(pathEnv)" }
-        }
+        // Fix PATH so the agent's shebang (`#!/usr/bin/env node`) can find
+        // node even when lmux was launched from the GUI (whose PATH lacks
+        // nvm/brew directories).
         let agentDir = URL(fileURLWithPath: agentPath).deletingLastPathComponent().path
-        if !pathEnv.contains(agentDir) { pathEnv = "\(agentDir):\(pathEnv)" }
-        parentEnv["PATH"] = pathEnv
+        parentEnv["PATH"] = fixedPathEnv(parentEnv["PATH"], extraDirs: [agentDir])
 
         // Agent-specific env/trust preparation (e.g. claude strips codebuddy
         // env vars and pre-accepts the workspace trust dialog).
@@ -356,6 +353,35 @@ class TerminalManager: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// Prepend directories that the GUI launch environment usually lacks
+    /// (homebrew, nvm node bins, local bin) to PATH, preserving any the caller
+    /// additionally needs. Agents and bash terminals both use this so their
+    /// `#!/usr/bin/env node` shebangs resolve even when lmux was launched
+    /// from Finder (whose PATH is just /usr/bin:/bin:/usr/sbin:/sbin).
+    private func fixedPathEnv(_ path: String?, extraDirs: [String] = []) -> String {
+        let home = NSHomeDirectory()
+        var dirs = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "\(home)/.local/bin",
+        ]
+        // nvm node bins: `~/.nvm/versions/node/<v>/bin`. This is where node
+        // + codebuddy live when installed via nvm.
+        let nvmVersions = "\(home)/.nvm/versions/node"
+        if let entries = try? FileManager.default.contentsOfDirectory(atPath: nvmVersions) {
+            for entry in entries where !entry.hasPrefix(".") {
+                dirs.append("\(nvmVersions)/\(entry)/bin")
+            }
+        }
+        dirs.append(contentsOf: extraDirs)
+
+        var result = path ?? "/usr/bin:/bin"
+        for dir in dirs where !result.split(separator: ":").contains(Substring(dir)) {
+            result = "\(dir):\(result)"
+        }
+        return result
+    }
+
     /// Connect a bash/zsh terminal in the given directory (for new sessions).
     func connectBash(sessionID: String, projectDir: String, agentType: AgentType) {
         disconnect()
@@ -397,6 +423,10 @@ class TerminalManager: ObservableObject {
         var parentEnv = ProcessInfo.processInfo.environment
         parentEnv["TERM"] = "xterm-256color"
         parentEnv["LANG"] = "en_US.UTF-8"
+        // Fix PATH the same way agent launches do: GUI-launched lmux has a
+        // bare PATH (no nvm/brew), so a `codebuddy` run inside this bash
+        // terminal would fail its `#!/usr/bin/env node` shebang.
+        parentEnv["PATH"] = fixedPathEnv(parentEnv["PATH"])
         let envList = parentEnv.map { "\($0.key)=\($0.value)" }
 
         view.startProcess(executable: zshPath, args: ["-l"], environment: envList, currentDirectory: projectDir)
