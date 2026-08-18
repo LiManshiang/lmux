@@ -316,7 +316,15 @@ public struct CodebuddyProvider: AgentProvider {
     }
 
     public func findBinaryPath() -> String? {
-        AgentBinaryLocator.findAgentPath(name: executableName)
+        // Some installs ship the command as `codebuddy-code`, others only as
+        // `codebuddy`. Try the canonical name first, then the short alias.
+        for name in ["codebuddy-code", "codebuddy"] {
+            if let path = AgentBinaryLocator.findAgentPath(name: name),
+               FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        return nil
     }
 
     public func detectProcess(cmdLine: String) -> AgentMatch? {

@@ -123,7 +123,8 @@ class TerminalManager: ObservableObject {
         connectErrorMessage = nil
         guard let agentPath = provider.findBinaryPath(),
               FileManager.default.isExecutableFile(atPath: agentPath) else {
-            let msg = "\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH."
+            let hint = agentType == .codebuddy ? " (also tried `codebuddy`)" : ""
+            let msg = "\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH.\(hint)"
             connectErrorMessage = msg
             onConnectError?(msg)
             return
