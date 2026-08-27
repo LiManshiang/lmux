@@ -413,23 +413,6 @@ private struct SessionRowContent: View {
                         isAgentSession: (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
                             || viewModel.isAgentMode(for: session.id)
                     )
-
-                    if let branch = session.gitBranch {
-                        HStack(spacing: 2) {
-                            Image(systemName: "arrow.triangle.branch")
-                                .font(.system(size: 10))
-                            Text(branch)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-
-                    if let title = session.aiTitle {
-                        Text(title)
-                            .font(.system(size: 10))
-                            .lineLimit(1)
-                            .foregroundColor(.secondary)
-                    }
                 }
             }
 
