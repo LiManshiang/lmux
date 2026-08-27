@@ -460,6 +460,13 @@ class ContentViewModel: ObservableObject {
             self?.statusMessage = message
             self?.errorMessage = message
         }
+        mgr.onAgentBound = { [weak self] in
+            // An agent conversation ID was just bound to this session in the
+            // backend; refresh so the edit sheet and sidebar context row show it.
+            Task { @MainActor in
+                await self?.refreshSessions()
+            }
+        }
         terminalManagers[sessionID] = mgr
         return mgr
     }

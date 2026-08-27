@@ -31,6 +31,13 @@ final class MockAgentService: AgentSessionService {
     func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)? {
         contextResults[sessionID]
     }
+
+    func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
+        boundCBC[sessionID] = cbcSessionID
+    }
+
+    /// Records the most recent setCBCSessionID binding per session.
+    var boundCBC: [String: String] = [:]
 }
 
 final class CodebuddyProviderTests: XCTestCase {

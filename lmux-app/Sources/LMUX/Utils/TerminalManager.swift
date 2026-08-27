@@ -28,6 +28,11 @@ class TerminalManager: ObservableObject {
     var onFirstOutput: (() -> Void)?
     /// Called on main actor when starting a process fails (e.g. executable not found).
     var onConnectError: ((String) -> Void)?
+    /// Called on main actor when an agent conversation ID gets bound to the
+    /// session (agent detection or resume), after it was persisted to the
+    /// backend. Lets the view model refresh the session list so the edit sheet
+    /// and sidebar show the binding without waiting for the next poll.
+    var onAgentBound: (() -> Void)?
 
     /// The SwiftTerm LocalProcessTerminalView (NSView with built-in PTY)
     private(set) var terminalView: LocalProcessTerminalView?
@@ -207,6 +212,16 @@ class TerminalManager: ObservableObject {
 
         // Persist for session restore on app restart
         SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbcSessionID, agentType: agentType, launchMode: .agent)
+
+        // Persist the binding to the backend so the session record (edit sheet,
+        // sidebar, lazy restore) reflects the conversation ID, not just
+        // restore.json.
+        if let id = cbcSessionID, !id.isEmpty, let service = agentSessionService {
+            Task {
+                try? await service.setCBCSessionID(sessionID: sessionID, cbcSessionID: id)
+                onAgentBound?()
+            }
+        }
     }
 
     private func startIdleTimer() {
@@ -561,6 +576,15 @@ class TerminalManager: ObservableObject {
                 service: service
             )
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
+            // Persist the binding to the backend so the session record (edit
+            // sheet, sidebar context row) and lazy restore see it too. This is
+            // the only path that learns the ID for an agent launched inside a
+            // bash session, so without it the backend cbc_session_id stays
+            // empty and the binding only survives via restore.json.
+            if let cbc, !cbc.isEmpty {
+                try? await service.setCBCSessionID(sessionID: sessionID, cbcSessionID: cbc)
+                onAgentBound?()
+            }
         }
     }
 

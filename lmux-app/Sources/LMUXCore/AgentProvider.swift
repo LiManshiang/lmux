@@ -33,6 +33,11 @@ public protocol AgentSessionService {
     func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String?
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool
     func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)?
+
+    /// Persist the agent conversation ID bound to a session in the backend, so
+    /// the session record (edit sheet, sidebar, lazy restore) reflects the
+    /// binding even when detection was the only path that learned the ID.
+    func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws
 }
 
 /// Encapsulates everything that is agent-specific. Main flow (connect,
