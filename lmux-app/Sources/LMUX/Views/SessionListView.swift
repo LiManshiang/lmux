@@ -342,21 +342,13 @@ private struct SessionRowContent: View {
             .onAppear { attentionPulse = needsAttention }
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(session.name)
-                        .font(.system(size: 13))
-                        .fontWeight(isSelected ? .semibold : .regular)
-                        .lineLimit(1)
-                    // Agent badge, always mounted so it observes the manager:
-                    // appears live when an agent is detected in the shell,
-                    // hidden for plain bash sessions.
-                    AgentBadge(
-                        manager: manager,
-                        configuredAgent: viewModel.configuredAgentType(for: session.id),
-                        isAgentSession: (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
-                            || viewModel.isAgentMode(for: session.id)
-                    )
-                }
+                // Session name only on the first line — the agent badge lives
+                // on the status line below so a long name is never truncated
+                // by it.
+                Text(session.name)
+                    .font(.system(size: 13))
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .lineLimit(1)
 
                 // Conversation context usage, under the session name.
                 // Show for agent sessions (known cbc) and for bash sessions
@@ -390,6 +382,16 @@ private struct SessionRowContent: View {
                             .foregroundColor(.orange)
                         }
                     }
+
+                    // Agent badge to the right of the elapsed duration. Kept on
+                    // this line (not the name line) so a long session name is
+                    // never truncated by it.
+                    AgentBadge(
+                        manager: manager,
+                        configuredAgent: viewModel.configuredAgentType(for: session.id),
+                        isAgentSession: (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
+                            || viewModel.isAgentMode(for: session.id)
+                    )
 
                     if let branch = session.gitBranch {
                         HStack(spacing: 2) {
