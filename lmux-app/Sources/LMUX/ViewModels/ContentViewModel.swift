@@ -563,6 +563,45 @@ class ContentViewModel: ObservableObject {
         return false
     }
 
+    /// Pre-computed grouping of the given sessions into one bucket per agent
+    /// type plus an "unbound" bucket. Computed with a single restore.json read
+    /// (and a single pass over the sessions), so a large list never triggers
+    /// N×M `loadAll()`/dictionary lookups from the view body.
+    struct SessionGrouping {
+        var bound: [AgentType: [SessionSummary]] = [:]
+        var unbound: [SessionSummary] = []
+        var agentOrder: [AgentType] = [.codebuddy, .claude]
+    }
+
+    func groupSessions(_ list: [SessionSummary]) -> SessionGrouping {
+        let restore = SessionRestore.loadAll()
+        var grouping = SessionGrouping()
+
+        for session in list {
+            var bound = false
+            if let cbc = session.cbcSessionID, !cbc.isEmpty {
+                bound = true
+            } else if let cbc = detectedCBCs[session.id], !cbc.isEmpty {
+                bound = true
+            } else if restore.contains(where: { $0.sessionID == session.id && $0.launchMode == .agent }) {
+                bound = true
+            } else if terminalManagers[session.id]?.detectedAgentType != nil {
+                bound = true
+            }
+
+            if bound {
+                let agent = currentAgentType(for: session.id)
+                grouping.bound[agent, default: []].append(session)
+            } else {
+                grouping.unbound.append(session)
+            }
+        }
+
+        // Keep a stable group order for the sidebar.
+        grouping.agentOrder = [.codebuddy, .claude].filter { grouping.bound[$0]?.isEmpty == false }
+        return grouping
+    }
+
     /// Release a terminal manager when its session is deleted.
     func releaseTerminalManager(for sessionID: String) {
         if let mgr = terminalManagers[sessionID] {

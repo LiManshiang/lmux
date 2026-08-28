@@ -96,8 +96,10 @@ struct SessionListView: View {
                     // Only sessions actually bound to an agent conversation go
                     // into an agent group; a freshly created (or plain bash)
                     // session with no conversation stays in the "未启动" group.
-                    let boundToAgent = others.filter { viewModel.isBoundToAgent($0) }
-                    let unbound = others.filter { !viewModel.isBoundToAgent($0) }
+                    // The grouping is pre-computed once (single restore.json
+                    // read) instead of per-session lookups in the view body.
+                    let grouping = viewModel.groupSessions(others)
+                    let unbound = grouping.unbound
 
                     if !unbound.isEmpty {
                         GroupHeader(title: "未启动", count: unbound.count, isCollapsed: $unboundCollapsed)
@@ -108,11 +110,8 @@ struct SessionListView: View {
                         }
                     }
 
-                    let agents = [AgentType.codebuddy, .claude].filter { agent in
-                        boundToAgent.contains { viewModel.currentAgentType(for: $0.id) == agent }
-                    }
-                    ForEach(agents, id: \.self) { agent in
-                        let rows = boundToAgent.filter { viewModel.currentAgentType(for: $0.id) == agent }
+                    ForEach(grouping.agentOrder, id: \.self) { agent in
+                        let rows = grouping.bound[agent] ?? []
                         if !rows.isEmpty {
                             GroupHeader(title: agent.displayName, count: rows.count, isCollapsed: collapseBinding(for: agent))
                             if !(collapseState[agent] ?? false) {

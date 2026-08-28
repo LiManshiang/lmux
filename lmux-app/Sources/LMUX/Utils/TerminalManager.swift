@@ -503,45 +503,67 @@ class TerminalManager: ObservableObject {
         // timer below re-reads it every tick and starts working as soon as it
         // appears. Bailing here would silently disable agent detection.
 
-        // Poll at 3s so a freshly launched agent (and its context-usage row)
-        // shows up within a few seconds instead of after a 10s wait.
-        agentDetectionTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            guard let self, self.processRunning, self.processPID > 0 else { return }
-            let currentPID = self.backend?.detectionRootPID ?? 0
-            guard currentPID > 0 else { return }
-            Self.detectionQueue.async { [weak self] in
-                guard let self else { return }
-                let result = self.detectRunningAgent(shellPID: currentPID)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, let result, self.currentSessionID == sessionID else { return }
-                // Persist on agent-type change, or whenever the command line
-                // carries a resumable ID, or while the restore entry has no
-                // cbc yet. The last case is the retry window: a freshly
-                // launched agent may not have created its conversation file
-                // when detection first runs, so the cbc is still nil — we
-                // must keep trying so the bind eventually lands.
-                let alreadyBound = self.detectedAgentType == result.agentType
-                    && result.cbcSessionID == nil
-                    && SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID != nil
-                guard !alreadyBound else { return }
-                self.detectedAgentType = result.agentType
-                self.persistAgentDetection(
-                    agentType: result.agentType,
-                    // Only an explicit `--resume` ID is authoritative. A
-                    // `--session-id` (lmux's fresh-launch isolation) or a
-                    // fresh launch must go through find-session so the
-                    // binding tracks the conversation the user is actually
-                    // using (they may /resume away immediately).
-                    cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
-                    notBefore: result.processStartTime,
-                    sessionID: sessionID,
-                    projectDir: projectDir
-                )
+        // Poll at 5s so a freshly launched agent (and its context-usage row)
+        // shows up quickly, then settle to 10s once an agent is bound. The
+        // detection pass walks the process tree and reads command lines, so a
+        // constant 3s tick wastes CPU on idle machines and large process
+        // trees. Each tick re-schedules itself with the next interval.
+        var nextInterval: TimeInterval = 5.0
+        var timer: Timer?
+        func scheduleTick() {
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: nextInterval, repeats: false) { [weak self] _ in
+                guard let self, self.processRunning, self.processPID > 0 else {
+                    self?.agentDetectionTimer = nil
+                    return
                 }
+                let currentPID = self.backend?.detectionRootPID ?? 0
+                guard currentPID > 0 else {
+                    // Surface not ready yet; retry soon without walking the
+                    // process tree.
+                    nextInterval = 3.0
+                    scheduleTick()
+                    return
+                }
+                Self.detectionQueue.async { [weak self] in
+                    guard let self else { return }
+                    let result = self.detectRunningAgent(shellPID: currentPID)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, let result, self.currentSessionID == sessionID else { return }
+                    // Persist on agent-type change, or whenever the command
+                    // line carries a resumable ID, or while the restore entry
+                    // has no cbc yet. The last case is the retry window: a
+                    // freshly launched agent may not have created its
+                    // conversation file when detection first runs, so the cbc
+                    // is still nil — we must keep trying so the bind lands.
+                    let alreadyBound = self.detectedAgentType == result.agentType
+                        && result.cbcSessionID == nil
+                        && SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID != nil
+                    guard !alreadyBound else { return }
+                    self.detectedAgentType = result.agentType
+                    self.persistAgentDetection(
+                        agentType: result.agentType,
+                        // Only an explicit `--resume` ID is authoritative. A
+                        // `--session-id` (lmux's fresh-launch isolation) or a
+                        // fresh launch must go through find-session so the
+                        // binding tracks the conversation the user is actually
+                        // using (they may /resume away immediately).
+                        cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
+                        notBefore: result.processStartTime,
+                        sessionID: sessionID,
+                        projectDir: projectDir
+                    )
+                    }
+                }
+                // Once an agent is bound, poll less often — the expensive
+                // process-tree walk only needs to confirm the agent is still
+                // the same one.
+                nextInterval = (self.detectedAgentType != nil) ? 10.0 : 5.0
+                scheduleTick()
             }
+            agentDetectionTimer = timer
         }
-        // Fire immediately, then again at 3s and 10s for quick detection (agent might not be running yet).
-        agentDetectionTimer?.fire()
+        scheduleTick()
 
         let alreadyDetected = self.detectedAgentType != nil
 
