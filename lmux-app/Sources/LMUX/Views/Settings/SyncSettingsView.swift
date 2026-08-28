@@ -4,6 +4,7 @@ import LMUXCore
 
 /// Cross-device sync settings: enable flag, cloud directory, path mappings.
 struct SyncSettingsView: View {
+    @EnvironmentObject var viewModel: ContentViewModel
     @State private var syncEnabled = SessionSync.isEnabled
     @State private var syncDir = SessionSync.syncDir ?? ""
     @State private var mappings = SessionSync.pathMappings
@@ -14,9 +15,23 @@ struct SyncSettingsView: View {
                 Toggle("Enable session sync", isOn: $syncEnabled)
                     .toggleStyle(.switch)
 
-                Text("Only pinned (starred) sessions sync. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate.")
+                Text("Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate.")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+
+                Button {
+                    Task { await viewModel.syncNow() }
+                } label: {
+                    HStack(spacing: 4) {
+                        if viewModel.syncInProgress {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
+                        Text(viewModel.syncInProgress ? "Syncing…" : "Sync Now")
+                    }
+                }
+                .disabled(!syncEnabled || viewModel.syncInProgress)
             }
 
             Section("Sync Directory") {
