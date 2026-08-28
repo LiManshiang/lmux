@@ -92,6 +92,10 @@ struct ContentView: View {
             EditSessionSheet(session: session)
                 .environmentObject(viewModel)
         }
+        .sheet(isPresented: $viewModel.showUsageStats) {
+            UsageStatsView()
+                .environmentObject(viewModel)
+        }
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }

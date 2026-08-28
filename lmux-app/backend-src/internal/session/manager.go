@@ -237,6 +237,20 @@ func (m *Manager) SetCBCSessionID(id, cbcSessionID string) error {
 	return m.store.Save(sess)
 }
 
+// SetPinned toggles the pinned (starred) flag that keeps a session at the
+// top of the sidebar.
+func (m *Manager) SetPinned(id string, pinned bool) (*Session, error) {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	sess.Pinned = pinned
+	if err := m.store.Save(sess); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
 // Save persists an existing session record (name, project dir, agent type,
 // etc. may have been modified in place).
 func (m *Manager) Save(sess *Session) error {

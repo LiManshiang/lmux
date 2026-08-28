@@ -18,6 +18,9 @@ class ContentViewModel: ObservableObject {
     @Published var selectedFullSession: Session?
     @Published var showNewSessionSheet = false
     @Published var showHelp = false
+    @Published var showUsageStats = false
+    @Published var usageStats: [SessionUsageStat] = []
+    @Published var usageStatsLoading = false
     @Published var backendRunning = false
     @Published var backendStarting = false
     @Published var isLoading = false
@@ -540,6 +543,26 @@ class ContentViewModel: ObservableObject {
         SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.launchMode == .agent
     }
 
+    /// True when the session is actually bound to an agent conversation —
+    /// either via a known conversation id, a live-detected one, or an agent
+    /// launch mode. Used to keep unstarted sessions out of the agent groups.
+    func isBoundToAgent(_ session: SessionSummary) -> Bool {
+        if let cbc = session.cbcSessionID, !cbc.isEmpty {
+            return true
+        }
+        if let cbc = detectedCBCs[session.id], !cbc.isEmpty {
+            return true
+        }
+        if isAgentMode(for: session.id) {
+            return true
+        }
+        // A claude/codebuddy agent detected live inside a bash session.
+        if let mgr = terminalManagers[session.id], mgr.detectedAgentType != nil {
+            return true
+        }
+        return false
+    }
+
     /// Release a terminal manager when its session is deleted.
     func releaseTerminalManager(for sessionID: String) {
         if let mgr = terminalManagers[sessionID] {
@@ -611,6 +634,40 @@ class ContentViewModel: ObservableObject {
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "lmux-complete-\(sessionID)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// Session IDs and the highest context threshold already notified for
+    /// each. Prevents repeated notifications while the context stays above
+    /// a threshold; the entry is reset when usage drops below it again.
+    private var notifiedContextThresholds: [String: Int] = [:]
+
+    /// Fire a desktop notification when a session's context usage crosses a
+    /// high-water mark (e.g. 80% / 90%), reminding the user to run /compact.
+    /// Each (session, threshold) pair notifies at most once per crossing —
+    /// usage must drop below the threshold before it can fire again.
+    func notifyIfContextHigh(sessionID: String, percent: Int) {
+        // Use thresholds >= 80 and >= 90; ignore lower values.
+        let thresholds = [80, 90]
+        guard let hit = thresholds.last(where: { percent >= $0 }) else {
+            // Below any threshold: clear the notch so a future rise re-fires.
+            notifiedContextThresholds[sessionID] = nil
+            return
+        }
+        let notified = notifiedContextThresholds[sessionID] ?? 0
+        guard hit > notified else { return }
+        notifiedContextThresholds[sessionID] = hit
+
+        let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
+        let content = UNMutableNotificationContent()
+        content.title = "Context \(percent)%"
+        content.body = "\(name) 上下文已用 \(percent)%。建议执行 /compact 压缩。"
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "lmux-context-\(sessionID)-\(hit)-\(UUID().uuidString)",
             content: content,
             trigger: nil
         )
@@ -980,7 +1037,7 @@ class ContentViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let _ = try await api.createSession(
+            let created = try await api.createSession(
                 projectDir: projectDir,
                 name: name,
                 cbcSessionID: cbcSessionID,
@@ -988,11 +1045,11 @@ class ContentViewModel: ObservableObject {
             )
             await refreshSessions()
             showToast("Session created")
-            // auto-select the new session so terminal connects immediately
-            if let created = sessions.first(where: { $0.projectDir == projectDir && $0.name == (name ?? "") }) {
-                selectedSession = created
-            } else if let first = sessions.first {
-                selectedSession = first
+            // Auto-select the new session so the terminal connects immediately.
+            // Use the created session's id (never a name/project match, which
+            // can hit an older pinned session with the same project).
+            if let session = sessions.first(where: { $0.id == created.id }) {
+                selectSession(session)
             }
             showNewSessionSheet = false
         } catch {
@@ -1024,6 +1081,16 @@ class ContentViewModel: ObservableObject {
             _ = try await api.renameSession(id: id, name: name)
             await refreshSessions()
             showToast("Session renamed")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Toggle the pinned (starred) flag that keeps a session at the top.
+    func togglePin(session: SessionSummary) async {
+        do {
+            _ = try await api.setPinned(id: session.id, pinned: !session.pinned)
+            await refreshSessions()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1076,6 +1143,69 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Load per-session usage statistics (tokens / credit / model) for the
+    /// statistics panel.
+    func loadUsageStats() async {
+        guard backendRunning else { return }
+        usageStatsLoading = true
+        defer { usageStatsLoading = false }
+        do {
+            usageStats = try await api.sessionUsageStats()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Cross-device sync
+
+    /// One sync pass: export changed pinned sessions to the sync directory and
+    /// import newer remote files. Called from the polling timer.
+    func syncIfEnabled() async {
+        guard SessionSync.isEnabled, SessionSync.syncDir != nil else { return }
+
+        // Export: pinned sessions whose conversation changed. Incremental —
+        // the backend returns only the appended JSONL, merged into the local
+        // sync copy.
+        for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
+            guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+            do {
+                let since = SessionSync.exportedOffset(for: cbcID)
+                let bundle = try await api.exportSession(sessionID: session.id, since: since)
+                let result = SessionSync.applyIncrementalExport(bundle)
+                if result == .needsFullExport {
+                    // Local copy missing or out of sync: drop the tracked
+                    // offset and resend the full conversation.
+                    SessionSync.resetExportedOffset(for: cbcID)
+                    let full = try await api.exportSession(sessionID: session.id)
+                    _ = SessionSync.applyIncrementalExport(full)
+                }
+            } catch {
+                // Session may not have a conversation yet; ignore.
+                continue
+            }
+        }
+
+        // Import: newer remote files from the sync directory.
+        var importedAny = false
+        let imported = await SessionSync.importIfChanged { bundle in
+            // Apply path mappings so the remote machine's paths resolve here.
+            var mapped = bundle
+            mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
+            mapped.content = SessionSync.applyPathMappings(bundle.content)
+
+            do {
+                let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "new")
+                importedAny = true
+            } catch {
+                throw error
+            }
+        }
+        if importedAny {
+            await refreshSessions()
+            showToast("Imported \(imported.count) synced session(s)")
+        }
+    }
+
     func attachToSession(_ session: SessionSummary) async {
         selectSession(session)
     }
@@ -1090,6 +1220,12 @@ class ContentViewModel: ObservableObject {
 
     /// Re-launch sessions that were running before the app was last quit.
     private func restoreRunningSessions() async {
+        // Settings: "Restore last selected session on launch" (default on).
+        guard UserDefaults.standard.object(forKey: "lmux_restore_last_session") == nil ||
+                UserDefaults.standard.bool(forKey: "lmux_restore_last_session") else {
+            return
+        }
+
         var entries = SessionRestore.loadAll()
         guard !entries.isEmpty else { return }
 
@@ -1179,6 +1315,7 @@ class ContentViewModel: ObservableObject {
         pollTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshSessions()
+                await self?.syncIfEnabled()
             }
         }
     }

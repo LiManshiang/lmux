@@ -21,6 +21,7 @@ type Session struct {
 	Status       Status    `json:"status"`
 	AiTitle      string    `json:"ai_title,omitempty"`
 	GitBranch    string    `json:"git_branch,omitempty"`
+	Pinned       bool      `json:"pinned"`
 	Pid          int       `json:"pid"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -57,5 +58,6 @@ type Summary struct {
 	Status         Status `json:"status"`
 	AiTitle        string `json:"ai_title,omitempty"`
 	GitBranch      string `json:"git_branch,omitempty"`
+	Pinned         bool   `json:"pinned"`
 	NeedsAttention bool   `json:"needs_attention"`
 }

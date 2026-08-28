@@ -44,6 +44,7 @@ struct LmuxApp: App {
                 Button("Stop Session") { viewModel.stopCurrentSession() }
                     .keyboardShortcut("k", modifiers: .command)
                 Divider()
+                Button("Usage Statistics…") { viewModel.showUsageStats = true }
                 Button("Export Sessions…") { viewModel.promptExportSessions() }
                 Button("Import Sessions…") { viewModel.promptImportSessions() }
             }

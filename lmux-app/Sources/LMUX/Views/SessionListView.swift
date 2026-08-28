@@ -4,6 +4,52 @@ import LMUXCore
 struct SessionListView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @FocusState private var searchFocused: Bool
+    @State private var pinnedCollapsed = false
+    @State private var unboundCollapsed = false
+    @State private var collapseState: [AgentType: Bool] = [:]
+
+    private func collapseBinding(for agent: AgentType) -> Binding<Bool> {
+        Binding(
+            get: { collapseState[agent] ?? false },
+            set: { collapseState[agent] = $0 }
+        )
+    }
+    private func sessionRow(_ session: SessionSummary) -> some View {
+        SessionRowView(session: session)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                viewModel.selectSession(session)
+            }
+            .contextMenu {
+                Button("Attach in Terminal") {
+                    Task { await viewModel.attachToSession(session) }
+                }
+                Divider()
+                Button(session.pinned ? "Unpin (取消置顶)" : "Pin to Top (置顶)") {
+                    Task { await viewModel.togglePin(session: session) }
+                }
+                Divider()
+                Button("Export Session…") {
+                    viewModel.promptExportSession(session)
+                }
+                Button("Import Session…") {
+                    viewModel.promptImportSession()
+                }
+                Divider()
+                Button("Edit Session…") {
+                    viewModel.promptEditSession(session)
+                }
+                .disabled(session.status == .running)
+                Button("Rename...") {
+                    showRenameAlert(session)
+                }
+                Button("Delete", role: .destructive) {
+                    confirmDelete(session)
+                }
+            }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,37 +79,48 @@ struct SessionListView: View {
 
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(viewModel.visibleSessions) { session in
-                        SessionRowView(session: session)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                viewModel.selectSession(session)
+                    let pinned = viewModel.visibleSessions.filter { $0.pinned }
+                    let others = viewModel.visibleSessions.filter { !$0.pinned }
+
+                    // Pinned (starred) sessions at the very top.
+                    if !pinned.isEmpty {
+                        GroupHeader(title: "置顶", count: pinned.count, isCollapsed: $pinnedCollapsed)
+                        if !pinnedCollapsed {
+                            ForEach(pinned) { session in
+                                sessionRow(session)
                             }
-                            .contextMenu {
-                                Button("Attach in Terminal") {
-                                    Task { await viewModel.attachToSession(session) }
-                                }
-                                Divider()
-                                Button("Export Session…") {
-                                    viewModel.promptExportSession(session)
-                                }
-                                Button("Import Session…") {
-                                    viewModel.promptImportSession()
-                                }
-                                Divider()
-                                Button("Edit Session…") {
-                                    viewModel.promptEditSession(session)
-                                }
-                                .disabled(session.status == .running)
-                                Button("Rename...") {
-                                    showRenameAlert(session)
-                                }
-                                Button("Delete", role: .destructive) {
-                                    confirmDelete(session)
+                        }
+                    }
+
+                    // Regular sessions grouped by agent type, each collapsible.
+                    // Only sessions actually bound to an agent conversation go
+                    // into an agent group; a freshly created (or plain bash)
+                    // session with no conversation stays in the "未启动" group.
+                    let boundToAgent = others.filter { viewModel.isBoundToAgent($0) }
+                    let unbound = others.filter { !viewModel.isBoundToAgent($0) }
+
+                    if !unbound.isEmpty {
+                        GroupHeader(title: "未启动", count: unbound.count, isCollapsed: $unboundCollapsed)
+                        if !unboundCollapsed {
+                            ForEach(unbound) { session in
+                                sessionRow(session)
+                            }
+                        }
+                    }
+
+                    let agents = [AgentType.codebuddy, .claude].filter { agent in
+                        boundToAgent.contains { viewModel.currentAgentType(for: $0.id) == agent }
+                    }
+                    ForEach(agents, id: \.self) { agent in
+                        let rows = boundToAgent.filter { viewModel.currentAgentType(for: $0.id) == agent }
+                        if !rows.isEmpty {
+                            GroupHeader(title: agent.displayName, count: rows.count, isCollapsed: collapseBinding(for: agent))
+                            if !(collapseState[agent] ?? false) {
+                                ForEach(rows) { session in
+                                    sessionRow(session)
                                 }
                             }
+                        }
                     }
                 }
                 .padding(.vertical, 4)
@@ -116,6 +173,35 @@ struct SessionListView: View {
         if alert.runModal() == .alertFirstButtonReturn {
             Task { await viewModel.deleteSession(id: session.id) }
         }
+    }
+}
+
+/// A collapsible group header for the session list (pinned / agent groups).
+private struct GroupHeader: View {
+    let title: String
+    let count: Int
+    @Binding var isCollapsed: Bool
+
+    var body: some View {
+        Button {
+            isCollapsed.toggle()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Text("\(count)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary.opacity(0.7))
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
     }
 }
 
@@ -294,6 +380,9 @@ private struct ContextUsageView: View {
                 if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
                     percent = usage.percent
                     model = usage.model
+                    // Alert the user when context crosses 80%/90% so they can
+                    // /compact before the conversation is too long.
+                    viewModel.notifyIfContextHigh(sessionID: sessionID, percent: percent)
                 }
                 // Refresh the selected session frequently; background sessions
                 // refresh slowly to reduce backend load.
@@ -348,13 +437,19 @@ private struct SessionRowContent: View {
             .onAppear { attentionPulse = needsAttention }
 
             VStack(alignment: .leading, spacing: 2) {
-                // Session name only on the first line — the agent badge lives
-                // on the status line below so a long name is never truncated
-                // by it.
-                Text(session.name)
-                    .font(.system(size: 13))
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .lineLimit(1)
+                // Session name on the first line (with the pinned star inline
+                // before it) so a long name is never truncated by the star.
+                HStack(spacing: 4) {
+                    if session.pinned {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.yellow)
+                    }
+                    Text(session.name)
+                        .font(.system(size: 13))
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .lineLimit(1)
+                }
 
                 // Conversation context usage, under the session name.
                 // Only agent-bound sessions get a context row. The cbc order:

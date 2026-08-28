@@ -1,0 +1,80 @@
+import SwiftUI
+import AppKit
+import LMUXCore
+
+/// Cross-device sync settings: enable flag, cloud directory, path mappings.
+struct SyncSettingsView: View {
+    @State private var syncEnabled = SessionSync.isEnabled
+    @State private var syncDir = SessionSync.syncDir ?? ""
+    @State private var mappings = SessionSync.pathMappings
+
+    var body: some View {
+        Form {
+            Section("Cross-Device Sync") {
+                Toggle("Enable session sync", isOn: $syncEnabled)
+                    .toggleStyle(.switch)
+
+                Text("Only pinned (starred) sessions sync. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Sync Directory") {
+                HStack(spacing: 6) {
+                    TextField("~/Library/Mobile Documents/…/lmux-sync", text: $syncDir)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Browse...") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.canCreateDirectories = true
+                        panel.message = "Select a directory that syncs to your other machines (iCloud Drive, Syncthing, …)"
+                        if panel.runModal() == .OK {
+                            syncDir = panel.url?.path ?? syncDir
+                        }
+                    }
+                }
+            }
+
+            Section("Path Mappings (old machine path → this machine)") {
+                ForEach($mappings) { $mapping in
+                    HStack(spacing: 6) {
+                        TextField("/Users/limanshiang/proj", text: $mapping.from)
+                            .textFieldStyle(.roundedBorder)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        TextField("/Users/manshiangli/proj", text: $mapping.to)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            mappings.removeAll { $0.id == mapping.id }
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button {
+                    mappings.append(PathMapping(from: "", to: ""))
+                } label: {
+                    Image(systemName: "plus.circle")
+                    Text("Add Mapping")
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .formStyle(.grouped)
+        .onChange(of: syncEnabled) { _ in persistSyncSettings() }
+        .onChange(of: syncDir) { _ in persistSyncSettings() }
+        .onChange(of: mappings) { _ in persistSyncSettings() }
+    }
+
+    private func persistSyncSettings() {
+        SessionSync.isEnabled = syncEnabled
+        SessionSync.syncDir = syncDir.isEmpty ? nil : syncDir
+        SessionSync.pathMappings = mappings.filter { !$0.from.isEmpty && !$0.to.isEmpty }
+    }
+}

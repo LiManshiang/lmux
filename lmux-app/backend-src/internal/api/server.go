@@ -42,6 +42,13 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	mux.HandleFunc("/api/sessions/usage", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.SessionUsageStats(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	mux.HandleFunc("/api/sessions/", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if id := extractIDFromPath(path, "export"); id != "" && r.Method == http.MethodGet {
@@ -54,6 +61,10 @@ func (s *Server) Start() error {
 		}
 		if id := extractIDFromPath(path, "edit"); id != "" && r.Method == http.MethodPost {
 			h.UpdateSession(w, r)
+			return
+		}
+		if id := extractIDFromPath(path, "pin"); id != "" && r.Method == http.MethodPost {
+			h.PinSession(w, r)
 			return
 		}
 		if id := extractIDFromPath(path, "cbc-session"); id != "" && r.Method == http.MethodPost {
