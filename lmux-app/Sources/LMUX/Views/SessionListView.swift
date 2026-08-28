@@ -290,8 +290,15 @@ private struct ContextUsageView: View {
                     cbc = await viewModel.findAgentSession(agent: agent, projectDir: projectDir)
                 }
                 if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
-                    percent = usage.percent
-                    model = usage.model
+                    // Only touch @State when a value actually changes — an
+                    // unconditional write re-renders the row on every poll,
+                    // which reads as flicker on slower machines.
+                    if percent != usage.percent {
+                        percent = usage.percent
+                    }
+                    if model != usage.model {
+                        model = usage.model
+                    }
                 }
                 // Refresh the selected session frequently; background sessions
                 // refresh slowly to reduce backend load.
@@ -299,8 +306,8 @@ private struct ContextUsageView: View {
                 if percent != 0 || model != nil {
                     try? await Task.sleep(nanoseconds: (active ? 60 : 180) * 1_000_000_000)
                 } else {
-                    // Backend may not be ready yet on launch; retry quickly.
-                    try? await Task.sleep(nanoseconds: (active ? 5 : 30) * 1_000_000_000)
+                    // Backend may not be ready yet on launch; retry slowly.
+                    try? await Task.sleep(nanoseconds: (active ? 10 : 30) * 1_000_000_000)
                 }
             }
         }
