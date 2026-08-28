@@ -18,12 +18,16 @@ class ContentViewModel: ObservableObject {
     @Published var selectedFullSession: Session?
     @Published var showNewSessionSheet = false
     @Published var showHelp = false
+    @Published var showUsageStats = false
+    @Published var usageStats: [SessionUsageStat] = []
+    @Published var usageStatsLoading = false
     @Published var backendRunning = false
     @Published var backendStarting = false
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var toastMessage: String?
+    @Published var syncInProgress = false
     private var toastTask: Task<Void, Never>?
 
     let api = APIClient()
@@ -1039,6 +1043,137 @@ class ContentViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Toggle the pinned (starred) flag that keeps a session at the top.
+    func togglePin(session: SessionSummary) async {
+        do {
+            _ = try await api.setPinned(id: session.id, pinned: !session.pinned)
+            await refreshSessions()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Load per-session usage statistics (tokens / credit / model) for the
+    /// statistics panel.
+    func loadUsageStats() async {
+        guard backendRunning else { return }
+        usageStatsLoading = true
+        defer { usageStatsLoading = false }
+        do {
+            usageStats = try await api.sessionUsageStats()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Cross-device sync
+
+    /// Manual sync pass: export changed pinned sessions to the sync directory
+    /// and import newer remote files. Sync is explicit ("Sync Now", or
+    /// prompted on quit) — never automatic.
+    func syncIfEnabled() async {
+        guard SessionSync.isEnabled, SessionSync.syncDir != nil else { return }
+
+        // Export: pinned sessions whose conversation changed. Incremental —
+        // the backend returns only the appended JSONL, merged into the local
+        // sync copy.
+        for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
+            guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+            do {
+                let since = SessionSync.exportedOffset(for: cbcID)
+                let bundle = try await api.exportSession(sessionID: session.id, since: since)
+                let result = SessionSync.applyIncrementalExport(bundle)
+                if result == .needsFullExport {
+                    // Local copy missing or out of sync: drop the tracked
+                    // offset and resend the full conversation.
+                    SessionSync.resetExportedOffset(for: cbcID)
+                    let full = try await api.exportSession(sessionID: session.id)
+                    _ = SessionSync.applyIncrementalExport(full)
+                }
+            } catch {
+                // Session may not have a conversation yet; ignore.
+                continue
+            }
+        }
+
+        // Import: newer remote files from the sync directory.
+        var importedAny = false
+        let imported = await SessionSync.importIfChanged { bundle in
+            // Apply path mappings so the remote machine's paths resolve here.
+            var mapped = bundle
+            mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
+            mapped.content = SessionSync.applyPathMappings(bundle.content)
+
+            do {
+                let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "new")
+                importedAny = true
+            } catch {
+                throw error
+            }
+        }
+        if importedAny {
+            await refreshSessions()
+            showToast("Imported \(imported.count) synced session(s)")
+        }
+    }
+
+    /// Whether sync is enabled AND at least one pinned session exists — the
+    /// condition used to offer a sync prompt on quit.
+    var hasPinnedSessionsForSync: Bool {
+        guard SessionSync.isEnabled, SessionSync.syncDir != nil else { return false }
+        return sessions.contains { $0.pinned }
+    }
+
+    /// Manual "Sync Now": exports pinned sessions and imports remote changes.
+    @discardableResult
+    func syncNow() async -> Int {
+        guard SessionSync.isEnabled, SessionSync.syncDir != nil else {
+            showToast("Sync not configured — enable it in Settings")
+            return 0
+        }
+        syncInProgress = true
+        defer { syncInProgress = false }
+
+        var importedCount = 0
+        do {
+            // Export pass (same logic as syncIfEnabled).
+            for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
+                guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+                do {
+                    let since = SessionSync.exportedOffset(for: cbcID)
+                    let bundle = try await api.exportSession(sessionID: session.id, since: since)
+                    let result = SessionSync.applyIncrementalExport(bundle)
+                    if result == .needsFullExport {
+                        SessionSync.resetExportedOffset(for: cbcID)
+                        let full = try await api.exportSession(sessionID: session.id)
+                        _ = SessionSync.applyIncrementalExport(full)
+                    }
+                } catch {
+                    continue
+                }
+            }
+
+            // Import pass.
+            var importedAny = false
+            let imported = await SessionSync.importIfChanged { bundle in
+                var mapped = bundle
+                mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
+                mapped.content = SessionSync.applyPathMappings(bundle.content)
+                do {
+                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "new")
+                    importedAny = true
+                } catch {
+                    throw error
+                }
+            }
+            importedCount = imported.count
+            if importedAny {
+                await refreshSessions()
+            }
+        }
+        return importedCount
     }
 
     func attachToSession(_ session: SessionSummary) async {

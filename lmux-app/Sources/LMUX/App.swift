@@ -3,6 +3,20 @@ import AppKit
 import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Set by the SwiftUI App once the view model exists, so termination can
+    /// offer a final manual sync.
+    weak var viewModel: ContentViewModel?
+
+    /// Guards the terminate reply so only the first (sync-done or timeout)
+    /// reply reaches AppKit.
+    private var didReplyToTerminate = false
+
+    private func replyToTerminate(_ sender: NSApplication, shouldTerminate: Bool) {
+        guard !didReplyToTerminate else { return }
+        didReplyToTerminate = true
+        sender.reply(toApplicationShouldTerminate: shouldTerminate)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         // Only request notification permission when the user hasn't decided yet,
@@ -11,6 +25,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard settings.authorizationStatus == .notDetermined else { return }
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let viewModel, viewModel.hasPinnedSessionsForSync else {
+            return .terminateNow
+        }
+
+        // Ask before syncing on quit. Defer termination until the (async) sync
+        // completes so the export isn't cut off by process exit.
+        let alert = NSAlert()
+        alert.messageText = "Sync before quitting?"
+        alert.informativeText = "You have pinned sessions. Sync them to your shared directory before quitting? This keeps the other machine up to date."
+        // NSAlert lays buttons out right-to-left: first addButton is the
+        // rightmost (default, Return key). Sync & Quit stays the default;
+        // Cancel sits on the far left but is always visible.
+        alert.addButton(withTitle: "Sync & Quit")
+        alert.addButton(withTitle: "Quit Without Syncing")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let response = alert.runModal()
+        if response == .alertThirdButtonReturn {
+            // Cancel: stay running, no sync.
+            return .terminateCancel
+        }
+        guard response == .alertFirstButtonReturn else {
+            return .terminateNow
+        }
+
+        // Defer termination; reply with true once the export finishes.
+        // (Do NOT call reply(false) here — that cancels the termination and
+        // the later reply(true) is ignored, leaving the app running.)
+        // A hard cap ensures the app quits even if a sync request hangs.
+        let syncTask = Task { @MainActor in
+            await viewModel.syncNow()
+            replyToTerminate(sender, shouldTerminate: true)
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 30_000_000_000) // 30s cap
+            syncTask.cancel()
+            replyToTerminate(sender, shouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
@@ -24,7 +81,10 @@ struct LmuxApp: App {
             ContentView()
                 .environmentObject(viewModel)
                 .frame(minWidth: 800, minHeight: 500)
-                .onAppear { viewModel.startBackend() }
+                .onAppear {
+                    appDelegate.viewModel = viewModel
+                    viewModel.startBackend()
+                }
         }
         .windowStyle(.titleBar)
         .commands {
@@ -44,6 +104,13 @@ struct LmuxApp: App {
                 Button("Stop Session") { viewModel.stopCurrentSession() }
                     .keyboardShortcut("k", modifiers: .command)
                 Divider()
+                Button("Sync Now") {
+                    Task { await viewModel.syncNow() }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(viewModel.syncInProgress)
+                Divider()
+                Button("Usage Statistics…") { viewModel.showUsageStats = true }
                 Button("Export Sessions…") { viewModel.promptExportSessions() }
                 Button("Import Sessions…") { viewModel.promptImportSessions() }
             }

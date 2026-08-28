@@ -46,6 +46,10 @@ struct SessionListView: View {
                                     Task { await viewModel.attachToSession(session) }
                                 }
                                 Divider()
+                                Button(session.pinned ? "Unpin (取消置顶)" : "Pin to Top (置顶)") {
+                                    Task { await viewModel.togglePin(session: session) }
+                                }
+                                Divider()
                                 Button("Export Session…") {
                                     viewModel.promptExportSession(session)
                                 }
@@ -342,13 +346,17 @@ private struct SessionRowContent: View {
             .onAppear { attentionPulse = needsAttention }
 
             VStack(alignment: .leading, spacing: 2) {
-                // Session name only on the first line — the agent badge lives
-                // on the status line below so a long name is never truncated
-                // by it.
-                Text(session.name)
-                    .font(.system(size: 13))
-                    .fontWeight(isSelected ? .semibold : .regular)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if session.pinned {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.yellow)
+                    }
+                    Text(session.name)
+                        .font(.system(size: 13))
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .lineLimit(1)
+                }
 
                 // Conversation context usage, under the session name.
                 // Show for agent sessions (known cbc) and for bash sessions

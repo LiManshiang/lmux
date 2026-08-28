@@ -246,8 +246,15 @@ class TerminalManager: ObservableObject {
             Task.detached {
                 let (cpu, mem) = Self.queryPerf(pid: pid)
                 await MainActor.run {
-                    self.cpuPercent = cpu
-                    self.memoryMB = mem
+                    // Only publish when a value actually changes, so the
+                    // sidebar doesn't re-render on every tick (visible as
+                    // flicker on slower machines).
+                    if cpu != self.cpuPercent {
+                        self.cpuPercent = cpu
+                    }
+                    if mem != self.memoryMB {
+                        self.memoryMB = mem
+                    }
                 }
             }
         }
@@ -499,7 +506,12 @@ class TerminalManager: ObservableObject {
                         && result.cbcSessionID == nil
                         && SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID != nil
                     guard !alreadyBound else { return }
-                    self.detectedAgentType = result.agentType
+                    // Publish only on an actual change to avoid needless
+                    // sidebar re-renders (flicker) when the same agent keeps
+                    // being re-detected on each poll.
+                    if self.detectedAgentType != result.agentType {
+                        self.detectedAgentType = result.agentType
+                    }
                     self.persistAgentDetection(
                         agentType: result.agentType,
                         cmdLineSessionID: result.cbcSessionID,

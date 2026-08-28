@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -230,6 +231,98 @@ func TestExportSession(t *testing.T) {
 	}
 }
 
+func TestExportSessionIncremental(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	body := `{"project_dir":"/tmp/proj","name":"s1","agent_type":"codebuddy","cbc_session_id":"conv1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateSession status = %d", w.Code)
+	}
+	sessionID := idOf(w)
+
+	projDir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line1 := `{"sessionId":"conv1","type":"user"}` + "\n"
+	convPath := filepath.Join(projDir, "conv1.jsonl")
+	if err := os.WriteFile(convPath, []byte(line1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full export (since=0): returns all content and the new offset.
+	req = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/export", nil)
+	w = httptest.NewRecorder()
+	h.ExportSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ExportSession full status = %d", w.Code)
+	}
+	var full struct {
+		Content string `json:"content"`
+		Offset  int64  `json:"offset"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &full)
+	if full.Content != line1 {
+		t.Errorf("full content = %q, want %q", full.Content, line1)
+	}
+	offset := full.Offset
+	if offset <= 0 {
+		t.Fatalf("offset = %d, want > 0", offset)
+	}
+
+	// Append a second line, then export with since=<offset>.
+	line2 := `{"sessionId":"conv1","type":"assistant"}` + "\n"
+	if err := os.WriteFile(convPath, []byte(line1+line2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/export?since="+strconv.FormatInt(offset, 10), nil)
+	w = httptest.NewRecorder()
+	h.ExportSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ExportSession incremental status = %d", w.Code)
+	}
+	var inc struct {
+		Content string `json:"content"`
+		Offset  int64  `json:"offset"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &inc)
+	if inc.Content != line2 {
+		t.Errorf("incremental content = %q, want %q", inc.Content, line2)
+	}
+	if inc.Offset != int64(len(line1)+len(line2)) {
+		t.Errorf("incremental offset = %d, want %d", inc.Offset, len(line1)+len(line2))
+	}
+
+	// since beyond EOF: empty content, offset clamped to file size.
+	req = httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/export?since=999999", nil)
+	w = httptest.NewRecorder()
+	h.ExportSession(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &inc)
+	if inc.Content != "" {
+		t.Errorf("clamped content = %q, want empty", inc.Content)
+	}
+	if inc.Offset != int64(len(line1)+len(line2)) {
+		t.Errorf("clamped offset = %d, want file size", inc.Offset)
+	}
+}
+
+// idOf extracts the session id from a CreateSession response recorder body.
+func idOf(w *httptest.ResponseRecorder) string {
+	var created struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	return created.Session.ID
+}
+
 func TestExportSessionNoConversation(t *testing.T) {
 	ensureProjDir(t)
 	h := newTestHandler(t)
@@ -394,5 +487,111 @@ func TestUpdateSessionRejectsRunning(t *testing.T) {
 	h.UpdateSession(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("UpdateSession running status = %d, want 400", w.Code)
+	}
+}
+
+func TestPinSession(t *testing.T) {
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	body := `{"project_dir":"/tmp/proj","name":"s","agent_type":"codebuddy"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSession(w, req)
+	var created struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	id := created.Session.ID
+
+	// Pin.
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/pin", strings.NewReader(`{"pinned":true}`))
+	w = httptest.NewRecorder()
+	h.PinSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PinSession status = %d: %s", w.Code, w.Body.String())
+	}
+	var sess struct {
+		Pinned bool `json:"pinned"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &sess)
+	if !sess.Pinned {
+		t.Errorf("expected pinned=true after pin")
+	}
+
+	// Unpin.
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/pin", strings.NewReader(`{"pinned":false}`))
+	w = httptest.NewRecorder()
+	h.PinSession(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &sess)
+	if sess.Pinned {
+		t.Errorf("expected pinned=false after unpin")
+	}
+
+	// Missing pinned → bad request.
+	req = httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/pin", strings.NewReader(`{}`))
+	w = httptest.NewRecorder()
+	h.PinSession(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PinSession missing pinned status = %d, want 400", w.Code)
+	}
+}
+
+func TestSessionUsageStats(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	// Session bound to a codebuddy conversation with usage records.
+	body := `{"project_dir":"/tmp/proj","name":"s1","agent_type":"codebuddy","cbc_session_id":"u1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateSession status = %d", w.Code)
+	}
+
+	// Write usage-bearing JSONL: 1000 input tokens, 200 output, deepseek model.
+	projDir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conv := `{"sessionId":"u1","type":"message","providerData":{"model":"deepseek-v4-flash"},"message":{"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0}}}` + "\n"
+	if err := os.WriteFile(filepath.Join(projDir, "u1.jsonl"), []byte(conv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/sessions/usage", nil)
+	w = httptest.NewRecorder()
+	h.SessionUsageStats(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SessionUsageStats status = %d", w.Code)
+	}
+	var resp struct {
+		Stats []struct {
+			ID            string  `json:"id"`
+			Tokens        int64   `json:"tokens"`
+			ContextWindow int64   `json:"context_window"`
+			Model         string  `json:"model"`
+			Credit        float64 `json:"credit"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Stats) != 1 {
+		t.Fatalf("expected 1 stat, got %d: %s", len(resp.Stats), w.Body.String())
+	}
+	if resp.Stats[0].Tokens != 1000 {
+		t.Errorf("tokens = %d, want 1000", resp.Stats[0].Tokens)
+	}
+	if resp.Stats[0].ContextWindow != codebuddy.ContextWindowForModel("deepseek-v4-flash") {
+		t.Errorf("context_window = %d", resp.Stats[0].ContextWindow)
+	}
+	if resp.Stats[0].Model != "deepseek-v4-flash" {
+		t.Errorf("model = %q", resp.Stats[0].Model)
 	}
 }

@@ -72,6 +72,10 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showHelp) {
             HelpView()
         }
+        .sheet(isPresented: $viewModel.showUsageStats) {
+            UsageStatsView()
+                .environmentObject(viewModel)
+        }
         .sheet(item: $viewModel.editingSession) { session in
             EditSessionSheet(session: session)
                 .environmentObject(viewModel)

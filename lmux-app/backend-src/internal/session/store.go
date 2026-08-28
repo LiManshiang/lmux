@@ -79,6 +79,11 @@ func migrate(db *sql.DB) error {
 		db.Exec("ALTER TABLE sessions ADD COLUMN agent_type TEXT DEFAULT 'codebuddy'")
 		db.Exec("PRAGMA user_version = 1")
 	}
+	// Migration: add pinned (starred) column for sidebar pinning.
+	if version < 2 {
+		db.Exec("ALTER TABLE sessions ADD COLUMN pinned INTEGER DEFAULT 0")
+		db.Exec("PRAGMA user_version = 2")
+	}
 	return nil
 }
 
@@ -87,8 +92,8 @@ func (s *Store) Save(sess *Session) error {
 	sess.UpdatedAt = time.Now()
 	query := `
 	INSERT INTO sessions (id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pid, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		project_dir=excluded.project_dir,
@@ -97,13 +102,18 @@ func (s *Store) Save(sess *Session) error {
 		status=excluded.status,
 		ai_title=excluded.ai_title,
 		git_branch=excluded.git_branch,
+		pinned=excluded.pinned,
 		pid=excluded.pid,
 		updated_at=excluded.updated_at
 	`
+	pinned := 0
+	if sess.Pinned {
+		pinned = 1
+	}
 	_, err := s.db.Exec(query,
 		sess.ID, sess.Name, sess.ProjectDir, sess.CBCSessionID,
 		sess.AgentType, string(sess.Status), sess.AiTitle, sess.GitBranch,
-		sess.Pid, sess.CreatedAt, sess.UpdatedAt,
+		pinned, sess.Pid, sess.CreatedAt, sess.UpdatedAt,
 	)
 	return err
 }
@@ -111,7 +121,7 @@ func (s *Store) Save(sess *Session) error {
 // Get retrieves a session by ID.
 func (s *Store) Get(id string) (*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
 		FROM sessions WHERE id = ?`
 	row := s.db.QueryRow(query, id)
 	return scanSession(row)
@@ -121,19 +131,19 @@ func (s *Store) Get(id string) (*Session, error) {
 // conversation ID, or an error when none exists.
 func (s *Store) FindByCBCSessionID(cbcID string) (*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
 		FROM sessions WHERE cbc_session_id = ? LIMIT 1`
 	row := s.db.QueryRow(query, cbcID)
 	return scanSession(row)
 }
 
-// List returns all sessions ordered by creation time descending. Creation
-// order keeps the sidebar list stable — updated_at reorders rows whenever any
-// session becomes active.
+// List returns all sessions ordered by pinned first, then creation time
+// descending. Creation order keeps the sidebar list stable — updated_at
+// reorders rows whenever any session becomes active.
 func (s *Store) List() ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
-		FROM sessions ORDER BY created_at DESC`
+		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
+		FROM sessions ORDER BY pinned DESC, created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -152,12 +162,13 @@ func (s *Store) List() ([]*Session, error) {
 }
 
 // ListSummaries returns lightweight session summaries for the polling path,
-// selecting only the fields actually used by the frontend. Ordered by creation
-// time so the sidebar stays stable.
+// selecting only the fields actually used by the frontend. Pinned sessions
+// sort first so the sidebar shows them at the top; the rest stay in creation
+// order so the sidebar stays stable.
 func (s *Store) ListSummaries() ([]Summary, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch
-		FROM sessions ORDER BY created_at DESC`
+		agent_type, status, ai_title, git_branch, pinned
+		FROM sessions ORDER BY pinned DESC, created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -169,8 +180,9 @@ func (s *Store) ListSummaries() ([]Summary, error) {
 		var sm Summary
 		var statusStr string
 		var cbcID, agentType, aiTitle, gitBranch sql.NullString
+		var pinned int
 		if err := rows.Scan(&sm.ID, &sm.Name, &sm.ProjectDir,
-			&cbcID, &agentType, &statusStr, &aiTitle, &gitBranch); err != nil {
+			&cbcID, &agentType, &statusStr, &aiTitle, &gitBranch, &pinned); err != nil {
 			return nil, err
 		}
 		sm.CBCSessionID = cbcID.String
@@ -178,6 +190,7 @@ func (s *Store) ListSummaries() ([]Summary, error) {
 		sm.Status = Status(statusStr)
 		sm.AiTitle = aiTitle.String
 		sm.GitBranch = gitBranch.String
+		sm.Pinned = pinned != 0
 		summaries = append(summaries, sm)
 	}
 	return summaries, rows.Err()
@@ -192,7 +205,7 @@ func (s *Store) Delete(id string) error {
 // ListByStatus returns sessions filtered by status, ordered by creation time.
 func (s *Store) ListByStatus(status Status) ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
 		FROM sessions WHERE status = ? ORDER BY created_at DESC`
 	rows, err := s.db.Query(query, string(status))
 	if err != nil {
@@ -214,29 +227,33 @@ func (s *Store) ListByStatus(status Status) ([]*Session, error) {
 func scanSession(row *sql.Row) (*Session, error) {
 	sess := &Session{}
 	var status string
+	var pinned int
 	err := row.Scan(
 		&sess.ID, &sess.Name, &sess.ProjectDir, &sess.CBCSessionID,
 		&sess.AgentType, &status, &sess.AiTitle, &sess.GitBranch,
-		&sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
+		&pinned, &sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	sess.Status = Status(status)
+	sess.Pinned = pinned != 0
 	return sess, nil
 }
 
 func scanSessionFromRows(rows *sql.Rows) (*Session, error) {
 	sess := &Session{}
 	var status string
+	var pinned int
 	err := rows.Scan(
 		&sess.ID, &sess.Name, &sess.ProjectDir, &sess.CBCSessionID,
 		&sess.AgentType, &status, &sess.AiTitle, &sess.GitBranch,
-		&sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
+		&pinned, &sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	sess.Status = Status(status)
+	sess.Pinned = pinned != 0
 	return sess, nil
 }

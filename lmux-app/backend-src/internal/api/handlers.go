@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +45,68 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"summaries": summaries,
+	})
+}
+
+// SessionUsageStats returns per-session context/cost figures for the usage
+// statistics panel: tokens, context window, model and estimated credit for
+// every session that has a bound conversation.
+func (h *Handler) SessionUsageStats(w http.ResponseWriter, r *http.Request) {
+	sessions, err := h.mgr.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type usageStat struct {
+		ID           string  `json:"id"`
+		Name         string  `json:"name"`
+		AgentType    string  `json:"agent_type"`
+		Model        string  `json:"model"`
+		Tokens       int64   `json:"tokens"`
+		ContextWindow int64  `json:"context_window"`
+		Credit       float64 `json:"credit"`
+	}
+
+	stats := make([]usageStat, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.CBCSessionID == "" {
+			continue
+		}
+		var tokens int64
+		var model string
+		var window int64
+		var credit float64
+
+		switch sess.AgentType {
+		case "claude":
+			tokens = codebuddy.GetClaudeContextTokens(sess.ProjectDir, sess.CBCSessionID)
+			window = codebuddy.ContextWindowForModel("claude")
+			model = "claude"
+		default:
+			var err error
+			tokens, model, err = codebuddy.GetSessionContext(sess.CBCSessionID)
+			if err != nil {
+				// Session may be empty (0-byte JSONL); report it anyway.
+				tokens = 0
+			}
+			window = codebuddy.ContextWindowForModel(model)
+			credit, _ = codebuddy.GetSessionCreditUsage(sess.CBCSessionID)
+		}
+
+		stats = append(stats, usageStat{
+			ID:            sess.ID,
+			Name:          sess.Name,
+			AgentType:     sess.AgentType,
+			Model:         model,
+			Tokens:        tokens,
+			ContextWindow: window,
+			Credit:        credit,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"stats": stats,
 	})
 }
 
@@ -401,6 +465,32 @@ func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// PinSession toggles the pinned (starred) flag that keeps a session at the
+// top of the sidebar.
+func (h *Handler) PinSession(w http.ResponseWriter, r *http.Request) {
+	id := extractIDFromPath(r.URL.Path, "pin")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+
+	var body struct {
+		Pinned *bool `json:"pinned"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Pinned == nil {
+		writeError(w, http.StatusBadRequest, "missing pinned")
+		return
+	}
+
+	sess, err := h.mgr.SetPinned(id, *body.Pinned)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sess)
+}
+
 // sessionFileFor resolves the JSONL path for a session's conversation.
 func sessionFileFor(agentType, projectDir, cbcSessionID string) string {
 	if agentType == "claude" {
@@ -412,6 +502,11 @@ func sessionFileFor(agentType, projectDir, cbcSessionID string) string {
 // ExportSession returns a self-contained export bundle for a session's
 // conversation, including the agent type, project directory, conversation ID,
 // and the full raw JSONL conversation content.
+//
+// The optional `since` query param (byte offset) enables incremental export:
+// only the JSONL bytes after `since` are returned in `content`, and the
+// response carries the new total `offset` (current file size). The sync layer
+// uses this to transfer only the appended lines of a growing conversation.
 func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 	id := extractID(r.URL.Path, "/api/sessions/")
 	if id == "" {
@@ -430,21 +525,51 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := sessionFileFor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
-	content, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "conversation file not found")
 		return
 	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	total := info.Size()
+
+	var since int64
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		if parsed, err := strconv.ParseInt(sinceStr, 10, 64); err == nil && parsed >= 0 {
+			since = parsed
+		}
+	}
+	// Clamp: a since offset larger than the file means no new content.
+	if since > total {
+		since = total
+	}
+
+	// Read only the appended portion after `since`.
+	buf := make([]byte, total-since)
+	if len(buf) > 0 {
+		if _, err := f.ReadAt(buf, since); err != nil && err != io.EOF {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"format":         "lmux-session",
-		"version":        1,
-		"name":           sess.Name,
-		"agent_type":     sess.AgentType,
-		"project_dir":    sess.ProjectDir,
-		"cbc_session_id": sess.CBCSessionID,
-		"exported_at":    time.Now().Format(time.RFC3339),
-		"content":        string(content),
+		"format":              "lmux-session",
+		"version":             1,
+		"name":                sess.Name,
+		"agent_type":          sess.AgentType,
+		"project_dir":         sess.ProjectDir,
+		"cbc_session_id":      sess.CBCSessionID,
+		"exported_at":         time.Now().Format(time.RFC3339),
+		"content":             string(buf),
+		"offset":              total,
+		"content_modified_at": info.ModTime().Unix(),
 	})
 }
 

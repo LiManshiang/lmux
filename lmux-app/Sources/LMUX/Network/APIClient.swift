@@ -67,6 +67,16 @@ class APIClient: AgentSessionService {
         return resp.summaries ?? []
     }
 
+    /// Per-session context/cost figures for the usage statistics panel.
+    func sessionUsageStats() async throws -> [SessionUsageStat] {
+        struct Response: Codable {
+            let stats: [SessionUsageStat]?
+        }
+        let data = try await get("/api/sessions/usage")
+        let resp = try decode(Response.self, from: data)
+        return resp.stats ?? []
+    }
+
     func getSession(id: String) async throws -> Session {
         let data = try await get("/api/sessions/\(id)")
         struct Response: Codable {
@@ -101,6 +111,15 @@ class APIClient: AgentSessionService {
 
     func deleteSession(id: String) async throws {
         _ = try await delete("/api/sessions/\(id)")
+    }
+
+    /// Pin (star) or unpin a session so it stays at the top of the sidebar.
+    func setPinned(id: String, pinned: Bool) async throws -> Session {
+        struct Body: Codable {
+            let pinned: Bool
+        }
+        let data = try await post("/api/sessions/\(id)/pin", body: Body(pinned: pinned))
+        return try decode(Session.self, from: data)
     }
 
     func renameSession(id: String, name: String) async throws -> Session {
@@ -214,8 +233,15 @@ class APIClient: AgentSessionService {
     // MARK: - Session export / import
 
     /// Fetches a self-contained export bundle for a session's conversation.
-    func exportSession(sessionID: String) async throws -> SessionExportBundle {
-        let data = try await get("/api/sessions/\(sessionID)/export")
+    /// Pass `since` (byte offset) to fetch only the appended JSONL portion —
+    /// the bundle's `content` then holds the increment and `offset` the new
+    /// total size.
+    func exportSession(sessionID: String, since: Int64 = 0) async throws -> SessionExportBundle {
+        var url = "/api/sessions/\(sessionID)/export"
+        if since > 0 {
+            url += "?since=\(since)"
+        }
+        let data = try await get(url)
         return try decode(SessionExportBundle.self, from: data)
     }
 
