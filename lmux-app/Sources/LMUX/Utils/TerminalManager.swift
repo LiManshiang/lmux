@@ -227,9 +227,9 @@ class TerminalManager: ObservableObject {
     private func startIdleTimer() {
         startPerfMonitoring()
         idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             guard let self = self, self.processRunning else { return }
-            let idle = Date().timeIntervalSince(self.lastActivityTime) > 3.0
+            let idle = Date().timeIntervalSince(self.lastActivityTime) > 8.0
             if self.isIdle != idle {
                 self.isIdle = idle
             }
@@ -240,7 +240,7 @@ class TerminalManager: ObservableObject {
     /// sidebar can surface runaway agents.
     private func startPerfMonitoring() {
         perfTimer?.invalidate()
-        perfTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        perfTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
             let pid = self.processPID
             Task.detached {

@@ -386,8 +386,12 @@ private struct SessionRowContent: View {
                 HStack(spacing: 4) {
                     if viewModel.isSessionActive(session.id) {
                         // formattedElapsed is computed on read; TimelineView
-                        // re-evaluates every second so the clock ticks live.
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                        // re-evaluates periodically so the clock ticks.
+                        // Refresh every 5s (not 1s): a 1s tick re-renders the
+                        // row every second, which on ProMotion/120Hz displays
+                        // keeps toggling the screen's adaptive refresh rate
+                        // and reads as a periodic grey flash.
+                        TimelineView(.periodic(from: .now, by: 5)) { context in
                             HStack(spacing: 2) {
                                 Image(systemName: "clock")
                                     .font(.system(size: 9))
