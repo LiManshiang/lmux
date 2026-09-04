@@ -121,7 +121,13 @@ struct LmuxApp: App {
         }
 
         Settings {
+            // The Settings window is a separate scene: environmentObject
+            // values from the WindowGroup do NOT propagate here. SyncSettings
+            // reads the shared ContentViewModel via @EnvironmentObject, so it
+            // must be injected explicitly — otherwise opening the Sync pane
+            // crashes with EXC_BAD_INSTRUCTION (EnvironmentObject.error()).
             PreferencesView()
+                .environmentObject(viewModel)
         }
     }
 }
