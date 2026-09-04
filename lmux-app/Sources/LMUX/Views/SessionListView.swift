@@ -408,30 +408,15 @@ private struct SessionRowContent: View {
 
                     // Agent badge to the right of the elapsed duration. Kept on
                     // this line (not the name line) so a long session name is
-                    // never truncated by it.
+                    // never truncated by it. Always mounted so it observes the
+                    // manager: appears live when an agent is detected in the
+                    // shell, hidden for plain bash sessions.
                     AgentBadge(
                         manager: manager,
                         configuredAgent: viewModel.configuredAgentType(for: session.id),
                         isAgentSession: (session.cbcSessionID != nil && !session.cbcSessionID!.isEmpty)
                             || viewModel.isAgentMode(for: session.id)
                     )
-
-                    if let branch = session.gitBranch {
-                        HStack(spacing: 2) {
-                            Image(systemName: "arrow.triangle.branch")
-                                .font(.system(size: 10))
-                            Text(branch)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(.secondary)
-                    }
-
-                    if let title = session.aiTitle {
-                        Text(title)
-                            .font(.system(size: 10))
-                            .lineLimit(1)
-                            .foregroundColor(.secondary)
-                    }
                 }
             }
 
