@@ -241,12 +241,68 @@ enum SessionSync {
 
     // MARK: - Import
 
+    /// What to do when both sides modified the same conversation since the
+    /// last sync (there is no line-level merge; the user decides).
+    enum SyncConflictChoice {
+        /// Keep this Mac's version: skip the import and mark the remote file
+        /// processed so the prompt does not reappear on every sync.
+        case keepLocal
+        /// Overwrite the local conversation with the cloud version.
+        case useRemote
+        /// Import the cloud version as a separate session (new session id).
+        case importAsNew
+    }
+
+    /// Context shown to the user when a sync conflict is detected.
+    struct SyncConflictInfo {
+        let cbcSessionID: String
+        let sessionName: String
+        let agentType: String
+        let remoteModified: Date
+        let localModified: Date?
+    }
+
+    /// codebuddy encodes a project dir without the leading slash
+    /// (/Users/x -> Users-x); claude keeps it (-Users-x).
+    static func encodedProjectDir(agentType: String, projectDir: String) -> String {
+        if agentType == "claude" {
+            return projectDir.replacingOccurrences(of: "/", with: "-")
+        }
+        var s = projectDir
+        if s.hasPrefix("/") { s.removeFirst() }
+        return s.replacingOccurrences(of: "/", with: "-")
+    }
+
+    /// Local JSONL file for a conversation, or nil when it does not exist.
+    static func localJSONLURL(agentType: String, cbcID: String, projectDir: String) -> URL? {
+        let root = agentType == "claude" ? ".claude/projects" : ".codebuddy/projects"
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(
+            "\(root)/\(encodedProjectDir(agentType: agentType, projectDir: projectDir))/\(cbcID).jsonl"
+        )
+    }
+
+    /// True when the local JSONL has grown past the offset we last pushed to
+    /// the cloud — i.e. this Mac has conversation changes that the remote
+    /// file cannot contain. Used to detect a two-sided edit (sync conflict).
+    static func hasUnsyncedLocalChanges(agentType: String, cbcID: String, projectDir: String) -> Bool {
+        guard let url = localJSONLURL(agentType: agentType, cbcID: cbcID, projectDir: projectDir),
+              let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return false
+        }
+        return Int64(size) > exportedOffset(for: cbcID)
+    }
+
     /// Scan the sync directory and import any remote file that is newer than
     /// the last one processed. `importBundle` performs the actual backend
-    /// import and returns the imported session's id (or throws).
+    /// import (mode is "overwrite", or "new" when the user chooses to keep
+    /// both versions) and returns the imported session's id (or throws).
+    /// `onConflict` is consulted when both sides changed the same
+    /// conversation; returning nil lets the caller skip that file entirely.
     /// Returns the list of imported cbc ids.
     static func importIfChanged(
-        importBundle: (SessionExportBundle) async throws -> Void
+        importBundle: (SessionExportBundle, String) async throws -> Void,
+        onConflict: ((SyncConflictInfo) async -> SyncConflictChoice)? = nil
     ) async -> [String] {
         guard let dir = sessionsDir() else { return [] }
         let fm = FileManager.default
@@ -269,8 +325,35 @@ enum SessionSync {
             // Never import our own exports (loop prevention).
             if bundle.deviceId == deviceID { continue }
 
+            var mode = "overwrite"
+            // Two-sided edit: the remote file changed AND this Mac has local
+            // conversation changes that were never pushed. Overwriting would
+            // silently destroy one side, so ask the user instead.
+            if hasUnsyncedLocalChanges(
+                agentType: bundle.agentType,
+                cbcID: cbcID,
+                projectDir: bundle.projectDir) {
+                guard let onConflict else { continue }
+                let info = SyncConflictInfo(
+                    cbcSessionID: cbcID,
+                    sessionName: bundle.name,
+                    agentType: bundle.agentType,
+                    remoteModified: mtime,
+                    localModified: nil)
+                let choice = await onConflict(info)
+                switch choice {
+                case .keepLocal:
+                    lastImportedFileMtime[cbcID] = mtime.timeIntervalSince1970
+                    continue
+                case .useRemote:
+                    mode = "overwrite"
+                case .importAsNew:
+                    mode = "new"
+                }
+            }
+
             do {
-                try await importBundle(bundle)
+                try await importBundle(bundle, mode)
                 lastImportedFileMtime[cbcID] = mtime.timeIntervalSince1970
                 imported.append(cbcID)
             } catch {

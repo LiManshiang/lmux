@@ -1109,18 +1109,61 @@ class ContentViewModel: ObservableObject {
 
         // Import pass: "overwrite" updates the existing session with the same
         // cbc id (or creates one on first import), so repeated syncs never
-        // spawn duplicates.
-        let imported = await SessionSync.importIfChanged { bundle in
-            var mapped = bundle
-            mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
-            mapped.content = SessionSync.applyPathMappings(bundle.content)
-            let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "overwrite")
-        }
+        // spawn duplicates. A remote file that changed while this Mac also has
+        // unsynced local changes is a conflict — the user picks which version
+        // wins (no silent overwrite).
+        var importedAny = false
+        let imported = await SessionSync.importIfChanged(
+            importBundle: { bundle, mode in
+                var mapped = bundle
+                mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
+                mapped.content = SessionSync.applyPathMappings(bundle.content)
+                let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
+                importedAny = true
+            },
+            onConflict: { info in
+                await Self.promptSyncConflict(info)
+            }
+        )
         importedCount = imported.count
         if importedCount > 0 {
             await refreshSessions()
         }
         return importedCount
+    }
+
+    /// Modal prompt for a sync conflict (both this Mac and the cloud changed
+    /// the same conversation since the last sync). There is no line-level
+    /// merge, so the user decides which version wins.
+    @MainActor
+    static func promptSyncConflict(_ info: SessionSync.SyncConflictInfo) async -> SessionSync.SyncConflictChoice {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
+        fmt.timeStyle = .short
+        let remote = "Cloud: \(fmt.string(from: info.remoteModified))"
+        let local = info.localModified.map { "This Mac: \(fmt.string(from: $0))" } ?? "This Mac: has unsynced changes"
+
+        let alert = NSAlert()
+        alert.messageText = "Sync conflict: \(info.sessionName)"
+        alert.informativeText = """
+            This conversation was modified on both this Mac and another device. \
+            Only one version can be kept.
+
+            \(local)
+            \(remote)
+            """
+        alert.alertStyle = .warning
+        // NSAlert lays buttons out right-to-left: the first addButton is the
+        // rightmost default (Return key).
+        alert.addButton(withTitle: "Use Cloud Version")
+        alert.addButton(withTitle: "Import Cloud as New Session")
+        alert.addButton(withTitle: "Keep This Mac's Version")
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn: return .useRemote
+        case .alertSecondButtonReturn: return .importAsNew
+        default: return .keepLocal
+        }
     }
 
     func attachToSession(_ session: SessionSummary) async {
