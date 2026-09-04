@@ -1070,58 +1070,6 @@ class ContentViewModel: ObservableObject {
 
     // MARK: - Cross-device sync
 
-    /// Manual sync pass: export changed pinned sessions to the sync directory
-    /// and import newer remote files. Sync is explicit ("Sync Now", or
-    /// prompted on quit) — never automatic.
-    func syncIfEnabled() async {
-        guard SessionSync.isEnabled, SessionSync.syncDir != nil else { return }
-
-        // Export: pinned sessions whose conversation changed. Incremental —
-        // the backend returns only the appended JSONL, merged into the local
-        // sync copy.
-        for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
-            guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
-            do {
-                let since = SessionSync.exportedOffset(for: cbcID)
-                let bundle = try await api.exportSession(sessionID: session.id, since: since)
-                let result = SessionSync.applyIncrementalExport(bundle)
-                if result == .needsFullExport {
-                    // Local copy missing or out of sync: drop the tracked
-                    // offset and resend the full conversation.
-                    SessionSync.resetExportedOffset(for: cbcID)
-                    let full = try await api.exportSession(sessionID: session.id)
-                    _ = SessionSync.applyIncrementalExport(full)
-                }
-            } catch {
-                // Session may not have a conversation yet; ignore.
-                continue
-            }
-        }
-
-        // Import: newer remote files from the sync directory.
-        // Import: newer remote files from the sync directory. "overwrite"
-        // updates the existing session with the same cbc id (or creates one
-        // on first import), so repeated syncs never spawn duplicates.
-        var importedAny = false
-        let imported = await SessionSync.importIfChanged { bundle in
-            // Apply path mappings so the remote machine's paths resolve here.
-            var mapped = bundle
-            mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
-            mapped.content = SessionSync.applyPathMappings(bundle.content)
-
-            do {
-                let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "overwrite")
-                importedAny = true
-            } catch {
-                throw error
-            }
-        }
-        if importedAny {
-            await refreshSessions()
-            showToast("Imported \(imported.count) synced session(s)")
-        }
-    }
-
     /// Whether sync is enabled AND at least one pinned session exists — the
     /// condition used to offer a sync prompt on quit.
     var hasPinnedSessionsForSync: Bool {
@@ -1140,41 +1088,37 @@ class ContentViewModel: ObservableObject {
         defer { syncInProgress = false }
 
         var importedCount = 0
-        do {
-            // Export pass (same logic as syncIfEnabled).
-            for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
-                guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
-                do {
-                    let since = SessionSync.exportedOffset(for: cbcID)
-                    let bundle = try await api.exportSession(sessionID: session.id, since: since)
-                    let result = SessionSync.applyIncrementalExport(bundle)
-                    if result == .needsFullExport {
-                        SessionSync.resetExportedOffset(for: cbcID)
-                        let full = try await api.exportSession(sessionID: session.id)
-                        _ = SessionSync.applyIncrementalExport(full)
-                    }
-                } catch {
-                    continue
+        // Export pass: incremental — the backend returns only the appended
+        // JSONL, merged into the local sync copy.
+        for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
+            guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+            do {
+                let since = SessionSync.exportedOffset(for: cbcID)
+                let bundle = try await api.exportSession(sessionID: session.id, since: since)
+                let result = SessionSync.applyIncrementalExport(bundle)
+                if result == .needsFullExport {
+                    SessionSync.resetExportedOffset(for: cbcID)
+                    let full = try await api.exportSession(sessionID: session.id)
+                    _ = SessionSync.applyIncrementalExport(full)
                 }
+            } catch {
+                // Session may not have a conversation yet; ignore.
+                continue
             }
+        }
 
-            // Import pass.
-            var importedAny = false
-            let imported = await SessionSync.importIfChanged { bundle in
-                var mapped = bundle
-                mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
-                mapped.content = SessionSync.applyPathMappings(bundle.content)
-                do {
-                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "overwrite")
-                    importedAny = true
-                } catch {
-                    throw error
-                }
-            }
-            importedCount = imported.count
-            if importedAny {
-                await refreshSessions()
-            }
+        // Import pass: "overwrite" updates the existing session with the same
+        // cbc id (or creates one on first import), so repeated syncs never
+        // spawn duplicates.
+        let imported = await SessionSync.importIfChanged { bundle in
+            var mapped = bundle
+            mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
+            mapped.content = SessionSync.applyPathMappings(bundle.content)
+            let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "overwrite")
+        }
+        importedCount = imported.count
+        if importedCount > 0 {
+            await refreshSessions()
         }
         return importedCount
     }
