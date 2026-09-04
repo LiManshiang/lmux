@@ -434,6 +434,32 @@ func FindRecentClaudeSession(projectDir string) string {
 	return findRecentCached(projDir, nil)
 }
 
+// ClaudeSessionFileExists reports whether a claude conversation JSONL with
+// this ID exists under any project directory in ~/.claude/projects. Claude
+// session IDs are UUIDs unique across projects, so scanning by name is
+// sufficient — this lets the frontend tell a real claude conversation ID
+// apart from a codebuddy ID that was saved on the wrong agent.
+func ClaudeSessionFileExists(sessionID string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	root := filepath.Join(home, ".claude", "projects")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, entry.Name(), sessionID+".jsonl")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // FindRecentClaudeSessionAfter returns the most recently created claude
 // conversation ID created after the given time (agent process start), or ""
 // when there is none. Scopes a fresh launch to the conversation it created.
@@ -550,17 +576,28 @@ func GetSessionContext(sessionID string) (int64, string, error) {
 // GetSessionUsage returns the latest accumulated input tokens, cached input
 // tokens, summed output tokens, and the model ID for a session, read from its
 // JSONL (same source as the context percentage, so it stays live).
+//
+// The same session ID can exist under several project directories (e.g. the
+// conversation was started in ~ and later continued in /Volumes/...). The
+// stale copy shadows the live one if we just take the first directory hit —
+// the sidebar then shows a frozen model name and context size. Pick the most
+// recently modified file instead: only the live conversation keeps growing.
 func GetSessionUsage(sessionID string) (input, cacheRead, output int64, model string, err error) {
 	dirs, err := FindUserSessionsDirs()
 	if err != nil {
 		return 0, 0, 0, "", err
 	}
 	var filePath string
+	var newest time.Time
 	for _, dir := range dirs {
 		p := filepath.Join(dir, sessionID+".jsonl")
-		if _, err := os.Stat(p); err == nil {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if filePath == "" || info.ModTime().After(newest) {
 			filePath = p
-			break
+			newest = info.ModTime()
 		}
 	}
 	if filePath == "" {

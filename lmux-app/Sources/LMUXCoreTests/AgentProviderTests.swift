@@ -31,6 +31,13 @@ final class MockAgentService: AgentSessionService {
     func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)? {
         contextResults[sessionID]
     }
+
+    /// Records setCBCSessionID calls so tests can assert backend persistence.
+    var setCBCCalls: [(sessionID: String, cbcSessionID: String)] = []
+
+    func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
+        setCBCCalls.append((sessionID, cbcSessionID))
+    }
 }
 
 final class CodebuddyProviderTests: XCTestCase {
@@ -158,8 +165,8 @@ final class CodebuddyProviderTests: XCTestCase {
 
 final class ClaudeProviderTests: XCTestCase {
     func testResumesClaudeCBC() async {
-        // cbc is not a codebuddy conversation -> kept and resumed.
-        let svc = MockAgentService(validResults: ["claude-1": false])
+        // cbc has a claude conversation file (claude-valid) -> kept and resumed.
+        let svc = MockAgentService(validResults: ["claude-1": true])
         let decision = await ClaudeProvider().resolveSession(
             cbcSessionID: "claude-1", projectDir: "/p", allowHistoryLookup: true, service: svc)
         guard case .resume(let id) = decision else {
@@ -169,10 +176,11 @@ final class ClaudeProviderTests: XCTestCase {
     }
 
     func testDiscardsCodebuddyCBC() async {
-        // cbc is a valid codebuddy conversation -> must not be passed to claude.
+        // cbc has no claude conversation file (it is a codebuddy ID) -> must
+        // not be passed to claude; claude history is consulted instead.
         let svc = MockAgentService(
             findResults: [.claude: "claude-found"],
-            validResults: ["cbc-1": true])
+            validResults: ["cbc-1": false])
         let decision = await ClaudeProvider().resolveSession(
             cbcSessionID: "cbc-1", projectDir: "/p", allowHistoryLookup: true, service: svc)
         guard case .resume(let id) = decision else {
@@ -250,11 +258,12 @@ final class ClaudeProviderTests: XCTestCase {
     }
 
     func testResolutionDiscardedCodebuddyStillLooksUpClaudeHistory() async {
-        // When the stored ID was a codebuddy conversation (wrongly associated
-        // with claude), claude history is still consulted for a valid claude ID.
+        // When the stored ID was a codebuddy conversation (no claude file,
+        // wrongly associated with claude), claude history is still consulted
+        // for a valid claude ID.
         let svc = MockAgentService(
             findResults: [.claude: "claude-valid"],
-            validResults: ["codebuddy-id": true])
+            validResults: ["codebuddy-id": false])
         let decision = await ClaudeProvider().resolveSession(
             cbcSessionID: "codebuddy-id", projectDir: "/p", allowHistoryLookup: true, service: svc)
         guard case .resume(let id) = decision else {

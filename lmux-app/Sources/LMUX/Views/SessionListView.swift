@@ -468,7 +468,13 @@ private struct SessionRowContent: View {
                 } else if let detectedCBC, !detectedCBC.isEmpty {
                     ContextUsageView(sessionID: session.id, agent: currentAgent, cbcSessionID: detectedCBC, projectDir: session.projectDir)
                 } else if let detectedAgent {
-                    ContextUsageView(sessionID: session.id, agent: detectedAgent, cbcSessionID: nil, projectDir: session.projectDir)
+                    // An agent was detected but the viewModel has no CBC for it
+                    // yet. Pass the manager's precisely detected conversation
+                    // id instead of nil: nil makes the row fall back to a
+                    // project-wide find-session guess, which can point at
+                    // another session's conversation — its usage (including
+                    // the model name) then never reflects this session.
+                    ContextUsageView(sessionID: session.id, agent: detectedAgent, cbcSessionID: manager?.detectedCBCSessionID, projectDir: session.projectDir)
                 } else if viewModel.isAgentMode(for: session.id) {
                     // Agent-mode session restored after launch: detection state
                     // (detectedAgents) is in-memory and gone after restart, and

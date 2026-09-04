@@ -323,6 +323,13 @@ func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 			valid = info.HasAssistant
 		}
 	}
+	if agent == "claude" {
+		// A claude conversation is valid when its JSONL exists under
+		// ~/.claude/projects. Without this, ClaudeProvider would validate a
+		// claude ID against the codebuddy store, get false, and silently
+		// drop a perfectly good binding on restart.
+		valid = codebuddy.ClaudeSessionFileExists(id)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
 }
 
