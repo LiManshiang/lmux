@@ -1226,7 +1226,9 @@ class ContentViewModel: ObservableObject {
             }
         }
 
-        // Import: newer remote files from the sync directory.
+        // Import: newer remote files from the sync directory. "overwrite"
+        // updates the existing session with the same cbc id (or creates one
+        // on first import), so repeated syncs never spawn duplicates.
         var importedAny = false
         let imported = await SessionSync.importIfChanged { bundle in
             // Apply path mappings so the remote machine's paths resolve here.
@@ -1235,7 +1237,7 @@ class ContentViewModel: ObservableObject {
             mapped.content = SessionSync.applyPathMappings(bundle.content)
 
             do {
-                let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "new")
+                let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "overwrite")
                 importedAny = true
             } catch {
                 throw error
@@ -1291,7 +1293,7 @@ class ContentViewModel: ObservableObject {
                 mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
                 mapped.content = SessionSync.applyPathMappings(bundle.content)
                 do {
-                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "new")
+                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: "overwrite")
                     importedAny = true
                 } catch {
                     throw error

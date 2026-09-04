@@ -25,6 +25,7 @@ enum SessionSync {
     private static let mappingsKey = "lmux_path_mappings"
     private static let deviceIDKey = "lmux_device_id"
     private static let offsetsKey = "lmux_sync_offsets"
+    private static let importedMtimesKey = "lmux_sync_imported_mtimes"
 
     static var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: enabledKey) }
@@ -86,8 +87,18 @@ enum SessionSync {
         exportedOffsets = offsets
     }
 
-    /// cbc_session_id -> last remote file mtime we imported.
-    private static var lastImportedFileMtime: [String: TimeInterval] = [:]
+    /// cbc_session_id -> last remote file mtime we imported. Persisted so a
+    /// restart doesn't re-import every remote file (each import used to spawn
+    /// a duplicate session under conflictMode "new"; with "overwrite" it
+    /// would only refresh, but skipping is still cheaper and quieter).
+    private static var lastImportedFileMtime: [String: TimeInterval] {
+        get {
+            UserDefaults.standard.dictionary(forKey: importedMtimesKey) as? [String: TimeInterval] ?? [:]
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: importedMtimesKey)
+        }
+    }
 
     // MARK: - Path mapping
 
@@ -275,7 +286,7 @@ enum SessionSync {
 
     /// Reset in-memory and persisted state (tests).
     static func resetStateForTesting() {
-        lastImportedFileMtime = [:]
         UserDefaults.standard.removeObject(forKey: offsetsKey)
+        UserDefaults.standard.removeObject(forKey: importedMtimesKey)
     }
 }
