@@ -55,12 +55,15 @@ final class CodebuddyProviderTests: XCTestCase {
         let svc = MockAgentService(
             findResults: [.codebuddy: "found-1"],
             validResults: ["cbc-1": false])
+        // The stored cbc is not a valid conversation for this agent. We must
+        // NOT fall back to the project's most recent conversation (find-session
+        // returns whatever is newest in the project — usually ANOTHER session's
+        // conversation). Start a fresh agent conversation instead.
         let decision = await CodebuddyProvider().resolveSession(
             cbcSessionID: "cbc-1", projectDir: "/p", allowHistoryLookup: true, service: svc)
-        guard case .resume(let id) = decision else {
-            return XCTFail("expected resume, got \(decision)")
+        guard case .fresh = decision else {
+            return XCTFail("expected fresh, got \(decision)")
         }
-        XCTAssertEqual(id, "found-1")
     }
 
     func testFallsBackToBashWhenNothingFound() async {
@@ -100,12 +103,27 @@ final class CodebuddyProviderTests: XCTestCase {
     // conversation so the session can resume on restart)
 
     func testCodebuddyDetectionUsesExplicitResumeID() async {
-        let svc = MockAgentService(findResults: [.codebuddy: "other-session"])
-        // A --resume ID on the command line is authoritative.
+        let svc = MockAgentService(findResults: [.codebuddy: ""])
+        // No live conversation found (nothing written since launch): fall back
+        // to the --resume ID on the command line.
         let id = await CodebuddyProvider().detectionSessionID(
             cmdLineSessionID: "my-own", allowHistoryLookup: true,
-            projectDir: "/p", service: svc)
+            projectDir: "/p", notBefore: Date(), service: svc)
         XCTAssertEqual(id, "my-own")
+    }
+
+    func testCodebuddyDetectionPrefersCmdLineResumeOverFindSession() async {
+        // An explicit `--resume <id>` on the command line is authoritative.
+        // find-session guesses from file timestamps and, when several sessions
+        // share a project directory, frequently returns ANOTHER session's
+        // conversation — overriding the command line is what made a working
+        // lmux session silently rebind to a fresh empty conversation. The
+        // explicit resume must win.
+        let svc = MockAgentService(findResults: [.codebuddy: "find-session-guess"])
+        let id = await CodebuddyProvider().detectionSessionID(
+            cmdLineSessionID: "explicit-resume", allowHistoryLookup: true,
+            projectDir: "/p", notBefore: Date(), service: svc)
+        XCTAssertEqual(id, "explicit-resume")
     }
 
     func testCodebuddyDetectionScopesToProcessStart() async {
@@ -120,17 +138,18 @@ final class CodebuddyProviderTests: XCTestCase {
         XCTAssertEqual(svc.lastFindAfter, start)
     }
 
-    func testCodebuddyDetectionNoStartTimeBindsToRecentConversation() async {
-        // Regression: when the process start time cannot be resolved
-        // (observed start=nil), detection must still bind to the project's most
-        // recent conversation so the session resumes on next launch instead of
-        // starting fresh. (Without this the cbc stayed nil and re-entering the
-        // session always showed a fresh agent welcome page.)
+    func testCodebuddyDetectionNoStartTimeDoesNotBind() async {
+        // Regression: when the process start time cannot be resolved, detection
+        // must NOT bind to the project's most recent conversation. That recent
+        // conversation usually belongs to a DIFFERENT session — binding it
+        // makes several sessions share one cbc and restoring any of them
+        // resumes the wrong conversation. Return nil and let the next
+        // detection pick up the agent's own --resume ID.
         let svc = MockAgentService(findResults: [.codebuddy: "recent-convo"])
         let id = await CodebuddyProvider().detectionSessionID(
             cmdLineSessionID: nil, allowHistoryLookup: true,
             projectDir: "/p", notBefore: nil, service: svc)
-        XCTAssertEqual(id, "recent-convo")
+        XCTAssertNil(id)
     }
 
     func testCodebuddyDetectionSkipsHistoryForNewSession() async {
@@ -192,12 +211,12 @@ final class ClaudeProviderTests: XCTestCase {
     // another session's conversation on restart)
 
     func testDetectionUsesExplicitResumeIDWithoutHistoryLookup() async {
-        let svc = MockAgentService(findResults: [.claude: "other-session"])
-        // A --resume ID on the command line is authoritative even though
-        // find-session would return another session's conversation.
+        let svc = MockAgentService(findResults: [.claude: ""])
+        // No live conversation written since launch: fall back to the --resume
+        // ID on the command line.
         let id = await ClaudeProvider().detectionSessionID(
             cmdLineSessionID: "my-own", allowHistoryLookup: true,
-            projectDir: "/p", service: svc)
+            projectDir: "/p", notBefore: Date(), service: svc)
         XCTAssertEqual(id, "my-own")
     }
 
@@ -212,18 +231,17 @@ final class ClaudeProviderTests: XCTestCase {
         XCTAssertEqual(id, "recent-convo")
     }
 
-    func testDetectionNoStartTimeFallsBackToProjectHistory() async {
-        // When the process start time cannot be resolved, detection still binds
-        // to the project's most recent conversation. This is the detection
-        // phase (the agent is running right now), so the most recent
-        // conversation is the one the user just started — binding it lets the
-        // session restore on next launch. (Without this fallback the session
-        // had no cbc and could never resume.)
+    func testDetectionNoStartTimeDoesNotBind() async {
+        // When the process start time cannot be resolved, detection must not
+        // bind to the project's most recent conversation — that frequently
+        // belongs to another session and would make several sessions share one
+        // cbc (wrong restore). Return nil; the next detection picks up the
+        // agent's own --resume ID.
         let svc = MockAgentService(findResults: [.claude: "recent-convo"])
         let id = await ClaudeProvider().detectionSessionID(
             cmdLineSessionID: nil, allowHistoryLookup: true,
             projectDir: "/p", notBefore: nil, service: svc)
-        XCTAssertEqual(id, "recent-convo")
+        XCTAssertNil(id)
     }
 
     func testResolutionEmptyCBCDoesNotResumeOtherSession() async {
@@ -299,5 +317,24 @@ final class AgentBinaryLocatorTests: XCTestCase {
         let match = ClaudeProvider().detectProcess(cmdLine: "claude --dangerously-skip-permissions")
         XCTAssertNotNil(match, "fresh claude should still match")
         XCTAssertNil(match?.sessionID)
+    }
+
+    func testDetectProcessDistinguishesResumeFromSessionID() {
+        // `--resume <id>` is an explicit "continue this conversation" — the
+        // authoritative binding. `--session-id <id>` is lmux assigning a fresh
+        // isolated ID at launch and must NOT be treated as authoritative
+        // (otherwise a user who then /resume's away would never be tracked).
+        let resume = CodebuddyProvider().detectProcess(cmdLine: "codebuddy-code --permission-mode auto -y --resume abc-123")
+        XCTAssertEqual(resume?.sessionID, "abc-123")
+        XCTAssertTrue(resume?.isResume ?? false, "--resume must be authoritative")
+
+        let sessionID = CodebuddyProvider().detectProcess(cmdLine: "codebuddy-code --permission-mode auto -y --session-id abc-123")
+        XCTAssertEqual(sessionID?.sessionID, "abc-123")
+        XCTAssertFalse(sessionID?.isResume ?? true, "--session-id is NOT authoritative")
+
+        let fresh = CodebuddyProvider().detectProcess(cmdLine: "codebuddy-code --permission-mode auto -y")
+        XCTAssertNotNil(fresh)
+        XCTAssertNil(fresh?.sessionID)
+        XCTAssertFalse(fresh?.isResume ?? true, "fresh launch is not authoritative")
     }
 }

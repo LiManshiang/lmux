@@ -375,7 +375,11 @@ private struct SessionRowContent: View {
                 if let cbc = session.cbcSessionID, !cbc.isEmpty {
                     ContextUsageView(sessionID: session.id, agent: currentAgent, cbcSessionID: cbc, projectDir: session.projectDir)
                 } else if let mgr = manager, let detected = mgr.detectedAgentType {
-                    ContextUsageView(sessionID: session.id, agent: detected, cbcSessionID: nil, projectDir: session.projectDir)
+                    // Pass the precisely detected conversation id (resolved
+                    // from the process's open session files) — nil would make
+                    // the row fall back to a project-wide find-session guess,
+                    // which can show another session's context usage.
+                    ContextUsageView(sessionID: session.id, agent: detected, cbcSessionID: mgr.detectedCBCSessionID, projectDir: session.projectDir)
                 }
 
                 // Status line (observed live by SessionStatusView)

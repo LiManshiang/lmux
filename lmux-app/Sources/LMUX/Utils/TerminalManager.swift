@@ -49,6 +49,11 @@ class TerminalManager: ObservableObject {
     private var idleTimer: Timer?
     private var agentDetectionTimer: Timer?
     @Published private(set) var detectedAgentType: AgentType?
+    /// Conversation ID resolved once an agent is detected in the shell. Lets
+    /// the UI show context usage for the *right* conversation instead of
+    /// falling back to "most recent in project" (which can point at another
+    /// session).
+    @Published private(set) var detectedCBCSessionID: String?
     /// Used to fall back to the project's most recent conversation when agent
     /// detection finds an agent without a --resume ID (e.g. claude launched
     /// fresh). Set by ContentViewModel when the manager is created.
@@ -317,7 +322,7 @@ class TerminalManager: ObservableObject {
             detectedAgentType = result.agentType
             persistAgentDetection(
                 agentType: result.agentType,
-                cmdLineSessionID: result.cbcSessionID,
+                cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
                 notBefore: result.processStartTime,
                 sessionID: sid,
                 projectDir: detachProjectDir ?? NSHomeDirectory()
@@ -514,7 +519,7 @@ class TerminalManager: ObservableObject {
                     }
                     self.persistAgentDetection(
                         agentType: result.agentType,
-                        cmdLineSessionID: result.cbcSessionID,
+                        cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
                         notBefore: result.processStartTime,
                         sessionID: sessionID,
                         projectDir: projectDir
@@ -536,7 +541,7 @@ class TerminalManager: ObservableObject {
                 self.detectedAgentType = result.agentType
                 self.persistAgentDetection(
                     agentType: result.agentType,
-                    cmdLineSessionID: result.cbcSessionID,
+                    cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
                     notBefore: result.processStartTime,
                     sessionID: sessionID,
                     projectDir: projectDir
@@ -551,7 +556,7 @@ class TerminalManager: ObservableObject {
                 self.detectedAgentType = result.agentType
                 self.persistAgentDetection(
                     agentType: result.agentType,
-                    cmdLineSessionID: result.cbcSessionID,
+                    cmdLineSessionID: result.isResume ? result.cbcSessionID : nil,
                     notBefore: result.processStartTime,
                     sessionID: sessionID,
                     projectDir: projectDir
@@ -576,6 +581,7 @@ class TerminalManager: ObservableObject {
         guard currentSessionID == sessionID else { return }
         let provider = agentType.provider
         guard let service = agentSessionService else {
+            detectedCBCSessionID = cmdLineSessionID
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cmdLineSessionID, agentType: agentType, launchMode: .agent)
             return
         }
@@ -587,6 +593,23 @@ class TerminalManager: ObservableObject {
                 notBefore: notBefore,
                 service: service
             )
+            // Never clobber an existing valid binding. find-session guesses
+            // which conversation this session owns from file timestamps, and
+            // when several sessions share a project directory that guess is
+            // wrong as often as it is right — it would silently rebind a
+            // working session (e.g. one bound to a real conversation) to a
+            // fresh empty one, and restoring on next launch would lose the
+            // user's work. A binding that is already present and valid is
+            // authoritative; only an explicit `--resume <other>` (an actual
+            // user action) may change it.
+            if let existing = SessionRestore.loadAll().first(where: { $0.sessionID == sessionID })?.cbcSessionID,
+               !existing.isEmpty, existing != cbc,
+               await service.agentSessionValid(agent: agentType, sessionID: existing),
+               cmdLineSessionID == nil {
+                detectedCBCSessionID = existing
+                return
+            }
+            detectedCBCSessionID = cbc
             SessionRestore.save(sessionID: sessionID, projectDir: projectDir, cbcSessionID: cbc, agentType: agentType, launchMode: .agent)
             // Persist the binding to the backend so the session record (edit
             // sheet, sidebar context row) and lazy restore see it too. This is
@@ -608,11 +631,11 @@ class TerminalManager: ObservableObject {
 
     /// Walk child processes of `shellPID` to find known agent executables.
     /// Runs on background queue; does not access main-actor state.
-    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?, processStartTime: Date?)? {
+    nonisolated private func detectRunningAgent(shellPID: Int32) -> (agentType: AgentType, cbcSessionID: String?, isResume: Bool, processStartTime: Date?)? {
         // Check all descendants (not just direct children) in case agent runs in a subshell.
         guard let allPIDs = getDescendantPIDs(of: shellPID) else { return nil }
 
-        var best: (AgentType, String?)? = nil
+        var best: (AgentType, String?, Bool)? = nil
         var bestPriority = -1
         var bestStart: Date?
         for pid in allPIDs {
@@ -622,22 +645,31 @@ class TerminalManager: ObservableObject {
                 // Highest detection priority wins (e.g. a leftover codebuddy
                 // process must not shadow the claude the user launched).
                 if agent.detectionPriority > bestPriority {
-                    best = (agent, match.sessionID)
+                    // The command line only reflects the conversation at launch
+                    // time. A user can /resume to a different conversation
+                    // inside the agent, which changes the files the process
+                    // opens but not argv — so resolve the live conversation
+                    // from the process's open session files when possible.
+                    let liveID = openSessionID(of: pid)
+                    best = (agent, liveID ?? match.sessionID, match.isResume)
                     bestPriority = agent.detectionPriority
                     bestStart = getProcessStartTime(pid: pid)
                 }
             }
         }
         guard let best else { return nil }
-        return (agentType: best.0, cbcSessionID: best.1, processStartTime: bestStart)
+        return (agentType: best.0, cbcSessionID: best.1, isResume: best.2, processStartTime: bestStart)
     }
 
-    /// Start time of a process (from `ps -o lstart`), used to scope history
-    /// lookup to conversations created after the agent launch.
-    nonisolated private func getProcessStartTime(pid: Int32) -> Date? {
+    /// Conversation a process is actually using right now, read from the
+    /// `.codebuddy/projects/<dir>/<session-id>/...` files it has open (lsof).
+    /// More trustworthy than argv: `codebuddy` followed by `/resume <id>`
+    /// switches the conversation without changing the process command line.
+    /// Returns nil when no session path is open.
+    nonisolated private func openSessionID(of pid: Int32) -> String? {
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        task.arguments = ["-p", "\(pid)"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -645,22 +677,68 @@ class TerminalManager: ObservableObject {
             try task.run()
             task.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
-            let date = formatter.date(from: text)
-            if date == nil {
-                // Fall back to `ps -o lstart` with the default output even if
-                // trimming removed a trailing tab; some locale/ps versions
-                // emit a trailing tab after the year.
-                let alt = text.replacingOccurrences(of: "\t", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-                return formatter.date(from: alt)
-            }
-            return date
+            let text = String(data: data, encoding: .utf8) ?? ""
+            // Lines look like:
+            //   node 36049 ... /Users/<user>/.codebuddy/projects/Users-<user>/<session-id>/tool-results/...
+            let marker = "/.codebuddy/projects/"
+            guard let range = text.range(of: marker) else { return nil }
+            let after = text[range.upperBound...]
+            // Skip the encoded project dir (e.g. Users-<user>/), then take
+            // the session-id directory component.
+            guard let slash = after.firstIndex(of: "/") else { return nil }
+            let remainder = after[after.index(after: slash)...]
+            guard let end = remainder.firstIndex(of: "/") else { return nil }
+            return String(remainder[..<end])
         } catch {
             return nil
         }
+    }
+
+    /// Start time of a process. `ps -o lstart` only has second precision,
+    /// which is not enough to tell apart two agents launched in the same
+    /// second (common when the user opens two sessions back to back). Use
+    /// proc_pidinfo for microsecond precision so each freshly launched agent
+    /// can be matched to the conversation file it actually created.
+    nonisolated private func getProcessStartTime(pid: Int32) -> Date? {
+        if let micro = Self.microsecondStartTime(pid: pid) {
+            return micro
+        }
+        // Fall back to `ps -o lstart` (second precision) if proc_pidinfo is
+        // unavailable.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-p", "\(pid)", "-o", "lstart="]
+        // Force C locale: under a zh_CN system ps emits a localized date
+        // ("六 8月/15 16:58:33 2026") that the English DateFormatter below
+        // cannot parse, so every detection got a nil start time and no
+        // session ever bound a conversation.
+        task.environment = ["LC_ALL": "C", "LANG": "C"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return ProcessStartTimeParser.parse(text)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Process start time at microsecond precision via libproc.
+    nonisolated private static func microsecondStartTime(pid: Int32) -> Date? {
+        var info = proc_bsdinfo()
+        let size = MemoryLayout<proc_bsdinfo>.size
+        let r = withUnsafeMutablePointer(to: &info) { ptr in
+            proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, ptr, Int32(size))
+        }
+        guard r == size else { return nil }
+        let sec = info.pbi_start_tvsec
+        let usec = info.pbi_start_tvusec
+        guard sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(sec) + Double(usec) / 1_000_000.0)
     }
 
     /// Returns PIDs of all descendants (children recursively) of the given parent PID.

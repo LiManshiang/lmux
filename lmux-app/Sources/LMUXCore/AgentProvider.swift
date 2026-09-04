@@ -12,6 +12,15 @@ public enum AgentConnectDecision {
 /// there is no resumable session ID (e.g. claude started fresh).
 public struct AgentMatch {
     public let sessionID: String?
+    /// True when the ID came from `--resume <id>` (an explicit, authoritative
+    /// "continue this conversation"), false for `--session-id <id>` (lmux
+    /// assigns a fresh isolated ID at launch) or a fresh launch.
+    public let isResume: Bool
+
+    public init(sessionID: String?, isResume: Bool = false) {
+        self.sessionID = sessionID
+        self.isResume = isResume
+    }
 }
 
 /// Context usage for the sidebar (percentage + model).
@@ -65,7 +74,7 @@ public protocol AgentProvider {
     /// otherwise the agent matched (sessionID may be nil for a fresh session).
     func detectProcess(cmdLine: String) -> AgentMatch?
 
-    /// Context usage (tokens / window / credit) for a conversation of this
+    /// Context usage (tokens / window / model) for a conversation of this
     /// agent, or nil when unavailable. Implementation is agent-specific.
     func contextUsage(cbcSessionID: String?, projectDir: String, service: AgentSessionService) async -> ContextUsageInfo?
 }
@@ -109,18 +118,29 @@ public extension AgentProvider {
         notBefore: Date? = nil,
         service: AgentSessionService
     ) async -> String? {
+        guard allowHistoryLookup else { return nil }
+
+        // An explicit `--resume <id>` on the command line is authoritative.
+        // It means the agent (or lmux restoring it) explicitly chose that
+        // conversation, and it stays authoritative even when the user later
+        // /resume's inside the agent — argv doesn't change, so find-session's
+        // timestamp guess must never override it. Overriding it is what made
+        // a working lmux session silently rebind to another session's fresh
+        // conversation.
         if let id = cmdLineSessionID, !id.isEmpty {
             return id
         }
-        guard allowHistoryLookup else { return nil }
-        // A --resume ID on the command line is authoritative. Without one, the
-        // agent was launched fresh. Prefer a conversation created AFTER the
-        // process started (notBefore-scoped) so a freshly launched agent binds
-        // to its own new conversation rather than another session's. When the
-        // start time is unavailable (rare), fall back to the project's most
-        // recent conversation so the session still binds and restores on the
-        // next launch.
-        return await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore)
+
+        // Fresh launch (no --resume): the agent created its own conversation.
+        // find-session returns the one whose creation time is closest to the
+        // process start — each session binds to its own fresh file.
+        if let notBefore {
+            if let live = await service.findAgentSession(agent: type, projectDir: projectDir, after: notBefore),
+               !live.isEmpty {
+                return live
+            }
+        }
+        return nil
     }
 }
 
@@ -311,13 +331,13 @@ public struct CodebuddyProvider: AgentProvider {
         if cbcSessionID == nil || cbcSessionID!.isEmpty {
             return allowHistoryLookup ? .fresh : .bash
         }
-        if allowHistoryLookup,
-           let found = await service.findAgentSession(agent: .codebuddy, projectDir: projectDir, after: nil),
-           !found.isEmpty {
-            return .resume(sessionID: found)
-        }
-        // No valid conversation and no history to look up: plain shell.
-        return .bash
+        // The ID exists but is not a valid conversation for this agent. Start
+        // a fresh agent conversation rather than a shell — this is still an
+        // agent session, the user just has no recoverable conversation ID. Do
+        // NOT fall back to the project's most recent conversation here, which
+        // usually belongs to a DIFFERENT session and would make several
+        // sessions all resume the same conversation.
+        return allowHistoryLookup ? .fresh : .bash
     }
 
     public func findBinaryPath() -> String? {
@@ -335,7 +355,12 @@ public struct CodebuddyProvider: AgentProvider {
     public func detectProcess(cmdLine: String) -> AgentMatch? {
         let lower = cmdLine.lowercased()
         if lower.contains("codebuddy-code") || lower.contains("codebuddy") {
-            return AgentMatch(sessionID: extractSessionID(from: cmdLine))
+            // `--resume <id>` is an explicit "continue this conversation".
+            // `--session-id <id>` is lmux assigning a fresh isolated ID at
+            // launch (the user may then /resume away from it), so it is not
+            // authoritative.
+            let isResume = lower.contains(" --resume ") || lower.contains("--resume=")
+            return AgentMatch(sessionID: extractSessionID(from: cmdLine), isResume: isResume)
         }
         return nil
     }
