@@ -1261,60 +1261,86 @@ class ContentViewModel: ObservableObject {
         return sessions.contains { $0.pinned }
     }
 
-    /// Manual "Sync Now": exports pinned sessions and imports remote changes.
-    /// Returns the number of imported sessions (for a confirmation toast).
+    /// Manual "Sync Now": exports changed pinned sessions to the sync
+    /// directory and imports newer remote files. Returns per-pass counts so
+    /// the caller can tell the user whether anything actually happened.
+    ///
+    /// Result of a manual sync pass, for the confirmation toast / status.
+    struct SyncNowResult {
+        var exportedSessions = 0
+        var importedSessions = 0
+
+        /// True when nothing was exported or imported this pass (nothing to
+        /// do). Note: a session whose export silently failed (no conversation
+        /// yet) also lands here.
+        var isUpToDate: Bool { exportedSessions == 0 && importedSessions == 0 }
+    }
+
     @discardableResult
-    func syncNow() async -> Int {
+    func syncNow() async -> SyncNowResult {
         guard SessionSync.isEnabled, SessionSync.syncDir != nil else {
             showToast("Sync not configured — enable it in Settings")
-            return 0
+            return SyncNowResult()
         }
         syncInProgress = true
         defer { syncInProgress = false }
 
-        var importedCount = 0
-        do {
-            // Export pass (same logic as syncIfEnabled).
-            for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
-                guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
-                do {
-                    let since = SessionSync.exportedOffset(for: cbcID)
-                    let bundle = try await api.exportSession(sessionID: session.id, since: since)
-                    let result = SessionSync.applyIncrementalExport(bundle)
-                    if result == .needsFullExport {
-                        SessionSync.resetExportedOffset(for: cbcID)
-                        let full = try await api.exportSession(sessionID: session.id)
-                        _ = SessionSync.applyIncrementalExport(full)
-                    }
-                } catch {
-                    continue
+        var result = SyncNowResult()
+        // Export pass (same logic as syncIfEnabled).
+        for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
+            guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+            do {
+                let since = SessionSync.exportedOffset(for: cbcID)
+                let bundle = try await api.exportSession(sessionID: session.id, since: since)
+                let export = SessionSync.applyIncrementalExport(bundle)
+                if export == .needsFullExport {
+                    SessionSync.resetExportedOffset(for: cbcID)
+                    let full = try await api.exportSession(sessionID: session.id)
+                    _ = SessionSync.applyIncrementalExport(full)
+                    result.exportedSessions += 1
+                } else if export == .updated {
+                    result.exportedSessions += 1
                 }
-            }
-
-            // Import pass.
-            var importedAny = false
-            let imported = await SessionSync.importIfChanged(
-                importBundle: { bundle, mode in
-                    var mapped = bundle
-                    mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
-                    mapped.content = SessionSync.applyPathMappings(bundle.content)
-                    do {
-                        let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
-                        importedAny = true
-                    } catch {
-                        throw error
-                    }
-                },
-                onConflict: { info in
-                    await Self.promptSyncConflict(info)
-                }
-            )
-            importedCount = imported.count
-            if importedAny {
-                await refreshSessions()
+            } catch {
+                // Session may not have a conversation yet; ignore.
+                continue
             }
         }
-        return importedCount
+
+        // Import pass.
+        var importedAny = false
+        let imported = await SessionSync.importIfChanged(
+            importBundle: { bundle, mode in
+                var mapped = bundle
+                mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
+                mapped.content = SessionSync.applyPathMappings(bundle.content)
+                do {
+                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
+                    importedAny = true
+                } catch {
+                    throw error
+                }
+            },
+            onConflict: { info in
+                await Self.promptSyncConflict(info)
+            }
+        )
+        result.importedSessions = imported.count
+        if importedAny {
+            await refreshSessions()
+        }
+        return result
+    }
+
+    /// Surface the outcome of a manual sync. A no-op sync silently reporting
+    /// "0 sessions" left users unsure whether anything happened, so the
+    /// up-to-date case gets an explicit toast.
+    func reportSyncResult(_ result: SyncNowResult) {
+        if result.isUpToDate {
+            showToast("Everything is up to date")
+        } else {
+            showToast("Sync complete — \(result.exportedSessions) exported, \(result.importedSessions) imported")
+        }
     }
 
     /// Modal prompt for a sync conflict (both this Mac and the cloud changed
