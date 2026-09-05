@@ -26,6 +26,16 @@ enum SessionSync {
     private static let deviceIDKey = "lmux_device_id"
     private static let offsetsKey = "lmux_sync_offsets"
     private static let importedMtimesKey = "lmux_sync_imported_mtimes"
+    private static let agentMirrorEnabledKey = "lmux_agent_mirror_enabled"
+    /// relpath -> "size,mtime" of the local JSONL last pushed to the mirror.
+    private static let agentExportFpKey = "lmux_agent_export_fp"
+    /// relpath -> size the local JSONL had when it was last pulled back from
+    /// the mirror. Guards against re-export ping-pong: an agent JSONL cannot
+    /// carry a device id, so we remember sizes instead.
+    private static let agentImportedFpKey = "lmux_agent_import_fp"
+    /// Files larger than this are skipped for the agent mirror (a whole
+    /// iCloud-synced history this big would dominate the cloud folder).
+    private static let agentMirrorMaxBytes: Int64 = 50 << 20
 
     /// Sync state lives in a shared UserDefaults suite so both app products —
     /// the ghostty build (`com.manshiangli.lmux`) and the SwiftTerm macOS 12
@@ -59,7 +69,7 @@ enum SessionSync {
                 || legacy.string(forKey: deviceIDKey) != nil
                 || legacy.dictionary(forKey: offsetsKey) != nil
             guard hasConfig else { continue }
-            for key in [enabledKey, syncDirKey, mappingsKey, deviceIDKey, offsetsKey, importedMtimesKey] {
+            for key in [enabledKey, syncDirKey, mappingsKey, deviceIDKey, offsetsKey, importedMtimesKey, agentMirrorEnabledKey, agentExportFpKey, agentImportedFpKey] {
                 if let value = legacy.object(forKey: key) {
                     shared.set(value, forKey: key)
                 }
@@ -163,6 +173,201 @@ enum SessionSync {
         guard let dir = syncDir else { return nil }
         return URL(fileURLWithPath: dir).appendingPathComponent("agents", isDirectory: true)
             .appendingPathComponent(agentName, isDirectory: true)
+    }
+
+    /// Master toggle for mirroring raw agent JSONL to the sync directory.
+    static var agentMirrorEnabled: Bool {
+        get { defaults.bool(forKey: agentMirrorEnabledKey) }
+        set { defaults.set(newValue, forKey: agentMirrorEnabledKey) }
+    }
+
+    /// Outcome of one agent-mirror pass.
+    struct AgentMirrorCounts {
+        var exported = 0
+        var imported = 0
+        var conflicts = 0
+        var isActive = false
+    }
+
+    /// One full mirror pass: push local agent JSONL out to the cloud mirror,
+    /// then pull back anything the mirror has that we don't. Returns what
+    /// happened (for Sync Now reporting). No-op when disabled or unsynced.
+    @discardableResult
+    static func runAgentMirror() -> AgentMirrorCounts {
+        var counts = AgentMirrorCounts()
+        guard agentMirrorEnabled, syncDir != nil else { return counts }
+        counts.isActive = true
+
+        for agentName in ["codebuddy", "claude"] {
+            guard let localRoot = localRoot(agentName: agentName),
+                  let mirror = agentsDir(agentName: agentName) else { continue }
+            if !FileManager.default.fileExists(atPath: mirror.path) {
+                try? FileManager.default.createDirectory(at: mirror, withIntermediateDirectories: true)
+            }
+            let e = mirrorExport(agentName: agentName, localRoot: localRoot, mirrorRoot: mirror)
+            counts.exported += e
+            let imp = mirrorImport(agentName: agentName, localRoot: localRoot, mirrorRoot: mirror)
+            counts.imported += imp.imported
+            counts.conflicts += imp.conflicts
+        }
+        return counts
+    }
+
+    private static func localRoot(agentName: String) -> URL? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        switch agentName {
+        case "claude":
+            return home.appendingPathComponent(".claude/projects", isDirectory: true)
+        default:
+            return home.appendingPathComponent(".codebuddy/projects", isDirectory: true)
+        }
+    }
+
+    private static func agentExportFps() -> [String: String] {
+        defaults.dictionary(forKey: agentExportFpKey) as? [String: String] ?? [:]
+    }
+    private static func setAgentExportFps(_ fps: [String: String]) {
+        defaults.set(fps, forKey: agentExportFpKey)
+    }
+    private static func agentImportedFps() -> [String: Int64] {
+        defaults.dictionary(forKey: agentImportedFpKey) as? [String: Int64] ?? [:]
+    }
+    private static func setAgentImportedFps(_ fps: [String: Int64]) {
+        defaults.set(fps, forKey: agentImportedFpKey)
+    }
+
+    /// Push local JSONL that changed since the last export (or that we did not
+    /// just pull back) into the mirror. Appends the tail when the mirror copy
+    /// already exists (agent JSONL is append-only), else copies whole.
+    private static func mirrorExport(agentName: String, localRoot: URL, mirrorRoot: URL) -> Int {
+        var fps = agentExportFps()
+        var imported = agentImportedFps()
+        var exported = 0
+
+        guard let files = enumerateJSONL(under: localRoot) else { return 0 }
+        for local in files {
+            let rel = String(local.path.dropFirst(localRoot.path.count).drop(while: { $0 == "/" }))
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: local.path),
+                  let size = (attrs[.size] as? NSNumber)?.int64Value,
+                  let mod = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 else { continue }
+            guard size <= agentMirrorMaxBytes else { continue }
+
+            // Loop guard: never re-push a file whose current size is exactly
+            // what we pulled back from the mirror (nothing new locally).
+            if size <= (imported[rel] ?? 0) { continue }
+            // Unchanged since last export → skip.
+            if fps[rel] == "\(size),\(Int(mod))" { continue }
+
+            let mirrorFile = mirrorRoot.appendingPathComponent(rel)
+            do {
+                try FileManager.default.createDirectory(at: mirrorFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let mirrorSize = (try? FileManager.default.attributesOfItem(atPath: mirrorFile.path)[.size] as? NSNumber)?.int64Value ?? 0
+                if mirrorSize > 0, mirrorSize < size {
+                    // Append-only growth: copy just the new tail.
+                    let handle = try FileHandle(forWritingTo: mirrorFile)
+                    try handle.seekToEnd()
+                    let reader = try FileHandle(forReadingFrom: local)
+                    try reader.seek(toOffset: UInt64(mirrorSize))
+                    if let tail = try reader.readToEnd() {
+                        try handle.write(contentsOf: tail)
+                    }
+                    try handle.close()
+                    try reader.close()
+                } else {
+                    // Fresh copy (whole file) when no mirror or mirror is not a
+                    // strict prefix of local (different machine content).
+                    if FileManager.default.fileExists(atPath: mirrorFile.path) {
+                        try FileManager.default.removeItem(at: mirrorFile)
+                    }
+                    try FileManager.default.copyItem(at: local, to: mirrorFile)
+                }
+                fps[rel] = "\(size),\(Int(mod))"
+                exported += 1
+            } catch {
+                NSLog("agent mirror export %@: %@", rel, error.localizedDescription)
+            }
+        }
+        if !fps.isEmpty { setAgentExportFps(fps) }
+        return exported
+    }
+
+    /// Pull mirror JSONL back into the local agent projects root.
+    /// - Local missing → whole copy.
+    /// - Local grew since its last pull-back (this machine kept working) and
+    ///   the mirror is bigger still → conflict: keep local (the export pass
+    ///   will push our new tail next run) and count it.
+    /// - Local is an older version of the mirror (mirror is strictly longer
+    ///   and local hasn't changed since its last pull) → append the tail.
+    private static func mirrorImport(agentName: String, localRoot: URL, mirrorRoot: URL) -> (imported: Int, conflicts: Int) {
+        var imported = agentImportedFps()
+        var importedCount = 0
+        var conflicts = 0
+
+        guard let files = enumerateJSONL(under: mirrorRoot) else { return (0, 0) }
+        for mirror in files {
+            let rel = String(mirror.path.dropFirst(mirrorRoot.path.count).drop(while: { $0 == "/" }))
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: mirror.path),
+                  let remoteSize = (attrs[.size] as? NSNumber)?.int64Value else { continue }
+            guard remoteSize <= agentMirrorMaxBytes else { continue }
+
+            let local = localRoot.appendingPathComponent(rel)
+            let lastPullSize = imported[rel]
+            let localSize = (try? FileManager.default.attributesOfItem(atPath: local.path)[.size] as? NSNumber)?.int64Value ?? 0
+
+            if localSize == 0 {
+                // Not here yet — copy the mirror copy home.
+                do {
+                    try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: mirror, to: local)
+                    imported[rel] = remoteSize
+                    importedCount += 1
+                } catch {
+                    NSLog("agent mirror import %@: %@", rel, error.localizedDescription)
+                }
+            } else if let lastPullSize, localSize == lastPullSize, remoteSize > localSize {
+                // Local unchanged since we last pulled; mirror advanced → append.
+                do {
+                    let handle = try FileHandle(forWritingTo: local)
+                    try handle.seekToEnd()
+                    let reader = try FileHandle(forReadingFrom: mirror)
+                    try reader.seek(toOffset: UInt64(localSize))
+                    if let tail = try reader.readToEnd() {
+                        try handle.write(contentsOf: tail)
+                    }
+                    try handle.close()
+                    try reader.close()
+                    imported[rel] = remoteSize
+                    importedCount += 1
+                } catch {
+                    NSLog("agent mirror append %@: %@", rel, error.localizedDescription)
+                }
+            } else if remoteSize > localSize {
+                // This machine kept writing (localSize > lastPullSize) AND the
+                // mirror also grew → two-way change. Keep local; export pass
+                // pushes our tail next run. Count so Sync Now can tell.
+                conflicts += 1
+            }
+            // remoteSize <= localSize → local is newer/equal; export handles it.
+        }
+        if !imported.isEmpty { setAgentImportedFps(imported) }
+        return (importedCount, conflicts)
+    }
+
+    /// All *.jsonl files under a directory (recursive), newest first.
+    private static func enumerateJSONL(under root: URL) -> [URL]? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        var files: [URL] = []
+        for case let url as URL in enumerator {
+            if url.pathExtension == "jsonl" {
+                files.append(url)
+            }
+        }
+        files.sort { ($0.path) < ($1.path) }
+        return files
     }
 
     /// Ensure the conversation's JSONL exists locally. When it is missing,

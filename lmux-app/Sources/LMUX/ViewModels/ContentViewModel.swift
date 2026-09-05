@@ -1339,11 +1339,19 @@ class ContentViewModel: ObservableObject {
     struct SyncNowResult {
         var exportedSessions = 0
         var importedSessions = 0
+        /// Agent JSONL mirror counts (SessionSync.runAgentMirror), when the
+        /// Agent Conversations mirror toggle is on.
+        var agentExported = 0
+        var agentImported = 0
+        var agentConflicts = 0
 
         /// True when nothing was exported or imported this pass (nothing to
         /// do). Note: a session whose export silently failed (no conversation
         /// yet) also lands here.
-        var isUpToDate: Bool { exportedSessions == 0 && importedSessions == 0 }
+        var isUpToDate: Bool {
+            exportedSessions == 0 && importedSessions == 0
+                && agentExported == 0 && agentImported == 0
+        }
     }
 
     @discardableResult
@@ -1399,6 +1407,12 @@ class ContentViewModel: ObservableObject {
         if importedAny {
             await refreshSessions()
         }
+
+        // Agent JSONL mirror (pull + push of raw conversations).
+        let mirror = SessionSync.runAgentMirror()
+        result.agentExported = mirror.exported
+        result.agentImported = mirror.imported
+        result.agentConflicts = mirror.conflicts
         return result
     }
 
@@ -1406,10 +1420,21 @@ class ContentViewModel: ObservableObject {
     /// "0 sessions" left users unsure whether anything happened, so the
     /// up-to-date case gets an explicit toast.
     func reportSyncResult(_ result: SyncNowResult) {
-        if result.isUpToDate {
+        var parts: [String] = []
+        if result.exportedSessions > 0 || result.importedSessions > 0 {
+            parts.append("\(result.exportedSessions) exported, \(result.importedSessions) imported")
+        }
+        if result.agentExported > 0 || result.agentImported > 0 {
+            var agent = "\(result.agentExported) pushed, \(result.agentImported) pulled (agent)"
+            if result.agentConflicts > 0 {
+                agent += ", \(result.agentConflicts) conflict(s) kept local"
+            }
+            parts.append(agent)
+        }
+        if parts.isEmpty {
             showToast("Everything is up to date")
         } else {
-            showToast("Sync complete — \(result.exportedSessions) exported, \(result.importedSessions) imported")
+            showToast("Sync complete — \(parts.joined(separator: " · "))")
         }
     }
 

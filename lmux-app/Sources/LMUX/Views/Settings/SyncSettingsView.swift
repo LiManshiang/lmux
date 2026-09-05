@@ -8,6 +8,7 @@ struct SyncSettingsView: View {
     @State private var syncEnabled = SessionSync.isEnabled
     @State private var syncDir = SessionSync.syncDir ?? ""
     @State private var mappings = SessionSync.pathMappings
+    @State private var agentMirrorEnabled = SessionSync.agentMirrorEnabled
 
     var body: some View {
         Form {
@@ -55,6 +56,15 @@ struct SyncSettingsView: View {
                 }
             }
 
+            Section("Agent Conversations Sync") {
+                Toggle("Mirror all agent conversations", isOn: $agentMirrorEnabled)
+                    .toggleStyle(.switch)
+
+                Text("Raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects is mirrored to <sync dir>/agents and pulled back on other machines, so the Agent browser can find and resume every conversation. Only .jsonl files up to 50 MB sync; two-way changes keep the local copy.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
             Section("Path Mappings (old machine path → this machine)") {
                 ForEach($mappings) { $mapping in
                     HStack(spacing: 6) {
@@ -88,11 +98,13 @@ struct SyncSettingsView: View {
         .onChange(of: syncEnabled) { _ in persistSyncSettings() }
         .onChange(of: syncDir) { _ in persistSyncSettings() }
         .onChange(of: mappings) { _ in persistSyncSettings() }
+        .onChange(of: agentMirrorEnabled) { _ in persistSyncSettings() }
     }
 
     private func persistSyncSettings() {
         SessionSync.isEnabled = syncEnabled
         SessionSync.syncDir = syncDir.isEmpty ? nil : syncDir
         SessionSync.pathMappings = mappings.filter { !$0.from.isEmpty && !$0.to.isEmpty }
+        SessionSync.agentMirrorEnabled = agentMirrorEnabled
     }
 }
