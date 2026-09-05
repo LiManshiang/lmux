@@ -376,7 +376,9 @@ func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	hidden := 0
-	visible := convs[:0]
+	// Build a fresh slice: convs is shared with the 5s backend cache, so
+	// filtering it in place would mutate cached state under concurrent requests.
+	visible := make([]codebuddy.ConversationSummary, 0, len(convs))
 	for _, c := range convs {
 		if bound[c.SessionID] {
 			hidden++
