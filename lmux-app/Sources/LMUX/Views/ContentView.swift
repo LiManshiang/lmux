@@ -30,9 +30,23 @@ struct ContentView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .overlay {
+            // Modal "syncing" wait indicator: sync exports every pinned
+            // session plus the agent JSONL mirror, which can take a while.
+            if viewModel.syncInProgress {
+                SyncWaitingView()
+            }
+        }
         .animation(.easeOut(duration: 0.2), value: viewModel.toastMessage)
         .sheet(isPresented: $viewModel.showHelp) {
             HelpView()
+        }
+        .sheet(isPresented: $viewModel.showSettings) {
+            // Preferences as a sheet (the App menu Settings scene is separate;
+            // the (⋯) menu opens this one so the click always responds).
+            PreferencesView()
+                .environmentObject(viewModel)
+                .frame(width: 580, height: 440)
         }
         .sheet(item: $viewModel.editingSession) { session in
             EditSessionSheet(session: session)
@@ -182,8 +196,7 @@ struct ContentView: View {
             }
             Divider()
             Button {
-                // Same action the app menu "Settings…" (Cmd+,) uses.
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                viewModel.showSettings = true
             } label: {
                 Label("Settings…", systemImage: "gearshape")
             }
@@ -279,5 +292,32 @@ struct BackendLoadingView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Modal wait indicator shown while Sync Now is running (exporting every
+/// pinned session plus the agent JSONL mirror can take a while).
+struct SyncWaitingView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.regular)
+            Text("Syncing sessions…")
+                .font(.system(size: 12, weight: .medium))
+            Text("Exporting pinned sessions and agent conversations")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(NSColor.windowBackgroundColor))
+                .shadow(color: .black.opacity(0.2), radius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.secondary.opacity(0.25))
+        )
     }
 }

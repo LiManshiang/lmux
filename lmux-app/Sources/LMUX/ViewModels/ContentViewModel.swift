@@ -18,6 +18,7 @@ class ContentViewModel: ObservableObject {
     @Published var selectedFullSession: Session?
     @Published var showNewSessionSheet = false
     @Published var showHelp = false
+    @Published var showSettings = false
     @Published var showUsageStats = false
     @Published var usageStats: [SessionUsageStat] = []
     @Published var usageStatsLoading = false
