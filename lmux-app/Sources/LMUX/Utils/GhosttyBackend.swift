@@ -1,6 +1,8 @@
 import AppKit
-import GhosttyTerminal
 import LMUXCore
+
+#if canImport(GhosttyTerminal)
+import GhosttyTerminal
 
 /// libghostty-backed implementation of `TerminalBackend` (macOS 13+).
 ///
@@ -305,3 +307,4 @@ extension TerminalTheme {
         }
     }
 }
+#endif

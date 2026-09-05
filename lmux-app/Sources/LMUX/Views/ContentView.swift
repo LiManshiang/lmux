@@ -14,6 +14,7 @@ struct ContentView: View {
                         .font(.headline)
                     Spacer()
                     HStack(spacing: 4) {
+#if canImport(GhosttyTerminal)
                         if selectedRenderer == TerminalRendererSetting.ghostty {
                             Text("Ghostty")
                                 .font(.system(size: 8, weight: .bold))
@@ -27,6 +28,11 @@ struct ContentView: View {
                                 .font(.system(size: 8))
                                 .foregroundColor(.secondary)
                         }
+#else
+                        Text("SwiftTerm")
+                            .font(.system(size: 8))
+                            .foregroundColor(.secondary)
+#endif
                         Text(AppVersion.current)
                             .font(.system(size: 9))
                             .foregroundColor(.secondary)

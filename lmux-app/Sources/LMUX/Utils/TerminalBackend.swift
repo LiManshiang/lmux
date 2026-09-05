@@ -75,11 +75,17 @@ enum TerminalRendererSetting {
 }
 
 /// Creates backends per the user's renderer selection. Defaults to Ghostty
-/// on this branch (GPU rendering, macOS 13+); SwiftTerm remains selectable.
+/// when available (GPU rendering, macOS 13+); SwiftTerm is always available.
 @MainActor
 enum TerminalBackendFactory {
     /// The value that is used when the user never made an explicit choice.
-    static var defaultRenderer: String { TerminalRendererSetting.ghostty }
+    static var defaultRenderer: String {
+#if canImport(GhosttyTerminal)
+        TerminalRendererSetting.ghostty
+#else
+        TerminalRendererSetting.swiftterm
+#endif
+    }
 
     /// Resolve the selected renderer, falling back to the branch default.
     static var selectedRenderer: String {
@@ -89,7 +95,13 @@ enum TerminalBackendFactory {
     static func make() -> TerminalBackend {
         switch selectedRenderer {
         case TerminalRendererSetting.ghostty:
+#if canImport(GhosttyTerminal)
             return GhosttyBackend()
+#else
+            // Ghostty unavailable (macOS 12 SwiftTerm-only build): a leftover
+            // ghostty selection must not crash the app.
+            return SwiftTermBackend()
+#endif
         default:
             return SwiftTermBackend()
         }
@@ -97,7 +109,11 @@ enum TerminalBackendFactory {
 
     /// The human-readable label of the active backend (for preferences UI).
     static var currentName: String {
-        selectedRenderer == TerminalRendererSetting.ghostty ? "Ghostty (libghostty)" : "SwiftTerm"
+#if canImport(GhosttyTerminal)
+        return selectedRenderer == TerminalRendererSetting.ghostty ? "Ghostty (libghostty)" : "SwiftTerm"
+#else
+        return "SwiftTerm"
+#endif
     }
 
     static var isGhosttySelected: Bool {

@@ -8,6 +8,7 @@ struct TerminalSettingsView: View {
 
     var body: some View {
         Form {
+#if canImport(GhosttyTerminal)
             Section("Renderer") {
                 Picker("Renderer", selection: $selectedRenderer) {
                     Text("SwiftTerm").tag(TerminalRendererSetting.swiftterm)
@@ -20,6 +21,7 @@ struct TerminalSettingsView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
+#endif
 
             Section("Theme") {
                 ForEach(TerminalTheme.all) { theme in
