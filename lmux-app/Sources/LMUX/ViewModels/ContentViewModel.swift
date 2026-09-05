@@ -1176,6 +1176,13 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Latest working directory this session's agent recorded, if any. Used to
+    /// prefill the project directory in the edit sheet.
+    func agentWorkingDir(for session: SessionSummary) async -> String? {
+        guard let cbc = session.cbcSessionID, !cbc.isEmpty else { return nil }
+        return await api.agentCwd(agent: session.agentType, projectDir: session.projectDir, sessionID: cbc)
+    }
+
     /// Context usage (percentage + credit) for any agent's conversation,
     /// computed by that agent's provider.
     func agentContextUsage(agent: AgentType, cbcSessionID: String?, projectDir: String) async -> ContextUsageInfo? {

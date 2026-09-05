@@ -103,6 +103,21 @@ struct EditSessionSheet: View {
             projectDir = session.projectDir
             cbcSessionID = session.cbcSessionID ?? ""
             validateDir(projectDir)
+            prefillWorkingDirectory()
+        }
+    }
+
+    /// When the session has a bound conversation, prefill the project
+    /// directory with the agent's actual working directory (the folder it
+    /// last worked in), so edits reflect reality without hunting it down.
+    private func prefillWorkingDirectory() {
+        guard session.cbcSessionID?.isEmpty == false else { return }
+        Task {
+            guard let cwd = await viewModel.agentWorkingDir(for: session) else { return }
+            await MainActor.run {
+                projectDir = cwd
+                validateDir(cwd)
+            }
         }
     }
 
