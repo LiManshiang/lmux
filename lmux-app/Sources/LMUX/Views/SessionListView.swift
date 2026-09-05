@@ -3,7 +3,6 @@ import LMUXCore
 
 struct SessionListView: View {
     @EnvironmentObject var viewModel: ContentViewModel
-    @FocusState private var searchFocused: Bool
     @State private var pinnedCollapsed = false
     @State private var unboundCollapsed = false
     @State private var collapseState: [AgentType: Bool] = [:]
@@ -52,78 +51,52 @@ struct SessionListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Session search
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                TextField("Search sessions", text: $viewModel.searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($searchFocused)
-                if !viewModel.searchText.isEmpty {
-                    Button {
-                        viewModel.searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                let pinned = viewModel.visibleSessions.filter { $0.pinned }
+                let others = viewModel.visibleSessions.filter { !$0.pinned }
+
+                // Pinned (starred) sessions at the very top.
+                if !pinned.isEmpty {
+                    GroupHeader(title: "置顶", count: pinned.count, isCollapsed: $pinnedCollapsed)
+                    if !pinnedCollapsed {
+                        ForEach(pinned) { session in
+                            sessionRow(session)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    let pinned = viewModel.visibleSessions.filter { $0.pinned }
-                    let others = viewModel.visibleSessions.filter { !$0.pinned }
+                // Regular sessions grouped by agent type, each collapsible.
+                // Only sessions actually bound to an agent conversation go
+                // into an agent group; a freshly created (or plain bash)
+                // session with no conversation stays in the "未启动" group.
+                // The grouping is pre-computed once (single restore.json
+                // read) instead of per-session lookups in the view body.
+                let grouping = viewModel.groupSessions(others)
+                let unbound = grouping.unbound
 
-                    // Pinned (starred) sessions at the very top.
-                    if !pinned.isEmpty {
-                        GroupHeader(title: "置顶", count: pinned.count, isCollapsed: $pinnedCollapsed)
-                        if !pinnedCollapsed {
-                            ForEach(pinned) { session in
+                if !unbound.isEmpty {
+                    GroupHeader(title: "未启动", count: unbound.count, isCollapsed: $unboundCollapsed)
+                    if !unboundCollapsed {
+                        ForEach(unbound) { session in
+                            sessionRow(session)
+                        }
+                    }
+                }
+
+                ForEach(grouping.agentOrder, id: \.self) { agent in
+                    let rows = grouping.bound[agent] ?? []
+                    if !rows.isEmpty {
+                        GroupHeader(title: agent.displayName, count: rows.count, isCollapsed: collapseBinding(for: agent))
+                        if !(collapseState[agent] ?? false) {
+                            ForEach(rows) { session in
                                 sessionRow(session)
                             }
                         }
                     }
-
-                    // Regular sessions grouped by agent type, each collapsible.
-                    // Only sessions actually bound to an agent conversation go
-                    // into an agent group; a freshly created (or plain bash)
-                    // session with no conversation stays in the "未启动" group.
-                    // The grouping is pre-computed once (single restore.json
-                    // read) instead of per-session lookups in the view body.
-                    let grouping = viewModel.groupSessions(others)
-                    let unbound = grouping.unbound
-
-                    if !unbound.isEmpty {
-                        GroupHeader(title: "未启动", count: unbound.count, isCollapsed: $unboundCollapsed)
-                        if !unboundCollapsed {
-                            ForEach(unbound) { session in
-                                sessionRow(session)
-                            }
-                        }
-                    }
-
-                    ForEach(grouping.agentOrder, id: \.self) { agent in
-                        let rows = grouping.bound[agent] ?? []
-                        if !rows.isEmpty {
-                            GroupHeader(title: agent.displayName, count: rows.count, isCollapsed: collapseBinding(for: agent))
-                            if !(collapseState[agent] ?? false) {
-                                ForEach(rows) { session in
-                                    sessionRow(session)
-                                }
-                            }
-                        }
-                    }
                 }
-                .padding(.vertical, 4)
             }
+            .padding(.vertical, 4)
         }
         .background(Color(NSColor.windowBackgroundColor))
         .overlay {
@@ -143,9 +116,6 @@ struct SessionListView: View {
                     }
                 }
             }
-        }
-        .onChange(of: viewModel.searchFocusToken) { _ in
-            searchFocused = true
         }
     }
 
@@ -538,4 +508,39 @@ private struct SessionRowContent: View {
     }
 
     @State private var attentionPulse = false
+}
+
+/// Session search field. Lives at the bottom of the sidebar (below the list),
+/// keeping the top strip free for the bigger terminal area. Cmd+F focuses it.
+struct SessionSearchField: View {
+    @EnvironmentObject var viewModel: ContentViewModel
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            TextField("Search sessions", text: $viewModel.searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($searchFocused)
+            if !viewModel.searchText.isEmpty {
+                Button {
+                    viewModel.searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(NSColor.controlBackgroundColor))
+        .onChange(of: viewModel.searchFocusToken) { _ in
+            searchFocused = true
+        }
+    }
 }

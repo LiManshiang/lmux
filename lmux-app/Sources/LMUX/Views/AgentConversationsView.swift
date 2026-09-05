@@ -8,6 +8,7 @@ import LMUXCore
 /// which conversation to resume before acting on it.
 struct AgentBrowserView: View {
     @EnvironmentObject var viewModel: ContentViewModel
+    @AppStorage("sidebarTab") private var sidebarTab = "sessions"
     @State private var searchText = ""
     @State private var listWidth: CGFloat = 340
     @State private var selectedID: String?
@@ -45,14 +46,32 @@ struct AgentBrowserView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            leftPane
-                .frame(width: listWidth)
-            Rectangle()
-                .fill(Color.secondary.opacity(0.3))
-                .frame(width: 1)
-            previewPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            // Sessions / Agent switch: the Sessions page hosts its own in the
+            // sidebar, so this page needs its own copy at the top.
+            HStack {
+                Spacer()
+                Picker("Browse", selection: $sidebarTab) {
+                    Text("Sessions").tag("sessions")
+                    Text("Agent").tag("agent")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Browse sessions or agent conversations")
+                Spacer()
+            }
+            .padding(.vertical, 5)
+            Divider()
+            HStack(spacing: 0) {
+                leftPane
+                    .frame(width: listWidth)
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 1)
+                previewPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .task(id: filterID) {
             await viewModel.loadAgentConversations()

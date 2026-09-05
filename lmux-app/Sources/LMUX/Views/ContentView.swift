@@ -7,9 +7,7 @@ struct ContentView: View {
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
 
     var body: some View {
-        VStack(spacing: 0) {
-            topTabBar
-            Divider()
+        Group {
             if sidebarTab == "agent" {
                 AgentBrowserView()
                     .environmentObject(viewModel)
@@ -57,70 +55,74 @@ struct ContentView: View {
         }
     }
 
-    /// Narrow top bar. The Sessions / Agent switch is overlaid dead-center so
-    /// its position never shifts when the renderer badge or version text next
-    /// to the app icon changes.
-    private var topTabBar: some View {
-        ZStack {
-            HStack(spacing: 8) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
-                    .resizable()
-                    .frame(width: 15, height: 15)
-                Text("lmux")
-                    .font(.system(size: 13, weight: .semibold))
-                HStack(spacing: 4) {
+    /// The renderer badge (Ghostty when active, SwiftTerm otherwise).
+    private var rendererBadge: some View {
+        HStack(spacing: 4) {
 #if canImport(GhosttyTerminal)
-                    if selectedRenderer == TerminalRendererSetting.ghostty {
-                        Text("Ghostty")
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.2))
-                            .foregroundColor(.orange)
-                            .cornerRadius(4)
-                    } else {
-                        Text("SwiftTerm")
-                            .font(.system(size: 8))
-                            .foregroundColor(.secondary)
-                    }
+            if selectedRenderer == TerminalRendererSetting.ghostty {
+                Text("Ghostty")
+                    .font(.system(size: 8, weight: .bold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundColor(.orange)
+                    .cornerRadius(4)
+            } else {
+                Text("SwiftTerm")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+            }
 #else
-                    Text("SwiftTerm")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
+            Text("SwiftTerm")
+                .font(.system(size: 8))
+                .foregroundColor(.secondary)
 #endif
-                    Text(AppVersion.current)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-
-            Picker("Browse", selection: $sidebarTab) {
-                Text("Sessions").tag("sessions")
-                Text("Agent").tag("agent")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 240)
-            .fixedSize()
         }
-        .frame(height: 30)
+    }
+
+    /// App identity row shown at the very bottom of the sessions sidebar:
+    /// icon + name + renderer + version, left of the new-session button.
+    private var appIdentity: some View {
+        HStack(spacing: 6) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                .resizable()
+                .frame(width: 15, height: 15)
+            Text("lmux")
+                .font(.system(size: 12, weight: .semibold))
+            rendererBadge
+            Text(AppVersion.current)
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+        }
     }
 
     /// Classic sessions workspace: sidebar list + resizer + terminal detail.
     private var sessionsArea: some View {
         HStack(spacing: 0) {
-            // Sidebar
+            // Sidebar (top → bottom): tab switch, session list, search,
+            // app identity + new session. No top strip, so the terminal area
+            // is taller.
             VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    tabSwitch
+                        .fixedSize()
+                    Spacer()
+                }
+                .padding(.vertical, 6)
+
+                Divider()
+
                 SessionListView()
 
                 Divider()
 
-                // Only "new session" remains at the bottom; the refresh button
-                // was removed — the 15s poll keeps the list fresh and its
-                // circular-arrow icon read as a misleading "restore".
-                HStack {
+                SessionSearchField()
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    appIdentity
                     Spacer()
                     Button(action: {
                         Task { await viewModel.quickCreateSession() }
@@ -129,7 +131,6 @@ struct ContentView: View {
                     }
                     .disabled(!viewModel.backendRunning)
                     .help("New session")
-                    Spacer()
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -146,6 +147,18 @@ struct ContentView: View {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// Sessions / Agent switch, now in the sidebar strip where the search box
+    /// used to be (search moved to the bottom, above the identity row).
+    private var tabSwitch: some View {
+        Picker("Browse", selection: $sidebarTab) {
+            Text("Sessions").tag("sessions")
+            Text("Agent").tag("agent")
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .help("Browse sessions or agent conversations")
     }
 
     @ViewBuilder
