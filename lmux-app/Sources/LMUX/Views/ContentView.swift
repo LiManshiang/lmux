@@ -99,9 +99,9 @@ struct ContentView: View {
     /// Classic sessions workspace: sidebar list + resizer + terminal detail.
     private var sessionsArea: some View {
         HStack(spacing: 0) {
-            // Sidebar (top → bottom): tab switch, session list, search,
-            // app identity + new session. No top strip, so the terminal area
-            // is taller.
+            // Sidebar (top → bottom): tab switch, session list, New Session
+            // button, search, app identity + overflow menu. No top strip, so
+            // the terminal area is taller.
             VStack(spacing: 0) {
                 HStack {
                     Spacer()
@@ -117,6 +117,26 @@ struct ContentView: View {
 
                 Divider()
 
+                // New session as a full-width button above the search box.
+                Button(action: {
+                    Task { await viewModel.quickCreateSession() }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                        Text("New Session")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.accentColor)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Color.accentColor.opacity(0.1))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!viewModel.backendRunning)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+
                 SessionSearchField()
 
                 Divider()
@@ -124,13 +144,7 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     appIdentity
                     Spacer()
-                    Button(action: {
-                        Task { await viewModel.quickCreateSession() }
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                    .disabled(!viewModel.backendRunning)
-                    .help("New session")
+                    bottomMenu
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -147,6 +161,33 @@ struct ContentView: View {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// The (⋯) overflow menu in place of the old bottom "+": sync + about.
+    private var bottomMenu: some View {
+        Menu {
+            Button {
+                Task {
+                    let result = await viewModel.syncNow()
+                    viewModel.reportSyncResult(result)
+                }
+            } label: {
+                Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+            }
+            Divider()
+            Button {
+                NSApp.orderFrontStandardAboutPanel(nil)
+            } label: {
+                Label("About lmux", systemImage: "info.circle")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 15))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .menuIndicator(.hidden)
+        .help("Sync Now, About…")
     }
 
     /// Sessions / Agent switch, now in the sidebar strip where the search box
