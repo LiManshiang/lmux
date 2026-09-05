@@ -1366,6 +1366,8 @@ class ContentViewModel: ObservableObject {
         var agentExported = 0
         var agentImported = 0
         var agentConflicts = 0
+        /// Two-way mirror conflicts, presented to the user for resolution.
+        var agentConflictFiles: [SessionSync.AgentMirrorConflict] = []
 
         /// True when nothing was exported or imported this pass (nothing to
         /// do). Note: a session whose export silently failed (no conversation
@@ -1376,6 +1378,36 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Live phase of Sync Now, shown in the wait overlay.
+    enum SyncPhase: Equatable {
+        case idle
+        /// Exporting pinned session `current` of `total`.
+        case exporting(current: Int, total: Int)
+        /// Importing remote .lmuxsession bundles.
+        case importing
+        /// Agent JSONL mirror pass (`detail` e.g. "export CodeBuddy").
+        case mirroring(detail: String)
+    }
+
+    @Published private(set) var syncPhase: SyncPhase = .idle
+    /// Two-way agent-mirror conflicts surfaced after a Sync Now pass.
+    @Published var mirrorConflicts: [SessionSync.AgentMirrorConflict] = []
+    @Published var showMirrorConflicts = false
+
+    func dismissMirrorConflict(id: String) {
+        mirrorConflicts.removeAll { $0.id == id }
+    }
+
+    /// Replace the local JSONL with the mirror copy for a two-way conflict.
+    func resolveMirrorConflictUseRemote(_ conflict: SessionSync.AgentMirrorConflict) {
+        if SessionSync.resolveMirrorConflict(agentName: conflict.agentName, fileRel: conflict.fileRel) {
+            dismissMirrorConflict(id: conflict.id)
+            showToast("Replaced local copy with mirror version")
+        } else {
+            showToast("Could not resolve conflict — file missing")
+        }
+    }
+
     @discardableResult
     func syncNow() async -> SyncNowResult {
         guard SessionSync.isEnabled, SessionSync.syncDir != nil else {
@@ -1383,12 +1415,17 @@ class ContentViewModel: ObservableObject {
             return SyncNowResult()
         }
         syncInProgress = true
-        defer { syncInProgress = false }
+        defer {
+            syncInProgress = false
+            syncPhase = .idle
+        }
 
         var result = SyncNowResult()
         // Export pass (same logic as syncIfEnabled).
-        for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
+        let pinned = sessions.filter { $0.pinned && !($0.cbcSessionID ?? "").isEmpty }
+        for (idx, session) in pinned.enumerated() {
             guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+            syncPhase = .exporting(current: idx + 1, total: pinned.count)
             do {
                 let since = SessionSync.exportedOffset(for: cbcID)
                 let bundle = try await api.exportSession(sessionID: session.id, since: since)
@@ -1409,6 +1446,7 @@ class ContentViewModel: ObservableObject {
 
         // Import pass.
         var importedAny = false
+        syncPhase = .importing
         let imported = await SessionSync.importIfChanged(
             importBundle: { bundle, mode in
                 var mapped = bundle
@@ -1431,10 +1469,17 @@ class ContentViewModel: ObservableObject {
         }
 
         // Agent JSONL mirror (pull + push of raw conversations).
-        let mirror = SessionSync.runAgentMirror()
+        let mirror = SessionSync.runAgentMirror { [weak self] step in
+            self?.syncPhase = .mirroring(detail: step)
+        }
         result.agentExported = mirror.exported
         result.agentImported = mirror.imported
         result.agentConflicts = mirror.conflicts
+        result.agentConflictFiles = mirror.conflictFiles
+        if !mirror.conflictFiles.isEmpty {
+            mirrorConflicts = mirror.conflictFiles
+            showMirrorConflicts = true
+        }
         return result
     }
 

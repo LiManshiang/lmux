@@ -34,12 +34,16 @@ struct ContentView: View {
             // Modal "syncing" wait indicator: sync exports every pinned
             // session plus the agent JSONL mirror, which can take a while.
             if viewModel.syncInProgress {
-                SyncWaitingView()
+                SyncWaitingView(phase: viewModel.syncPhase)
             }
         }
         .animation(.easeOut(duration: 0.2), value: viewModel.toastMessage)
         .sheet(isPresented: $viewModel.showHelp) {
             HelpView()
+        }
+        .sheet(isPresented: $viewModel.showMirrorConflicts) {
+            MirrorConflictPanelView()
+                .environmentObject(viewModel)
         }
         .sheet(item: $viewModel.editingSession) { session in
             EditSessionSheet(session: session)
@@ -291,13 +295,26 @@ struct BackendLoadingView: View {
 /// Modal wait indicator shown while Sync Now is running (exporting every
 /// pinned session plus the agent JSONL mirror can take a while).
 struct SyncWaitingView: View {
+    let phase: ContentViewModel.SyncPhase
+
+    private var title: String {
+        switch phase {
+        case .idle, .importing:
+            return "Syncing sessions…"
+        case .exporting(let current, let total):
+            return "Exporting session \(current) of \(total)"
+        case .mirroring(let detail):
+            return "Agent conversations · \(detail)"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 10) {
             ProgressView()
                 .controlSize(.regular)
-            Text("Syncing sessions…")
+            Text(title)
                 .font(.system(size: 12, weight: .medium))
-            Text("Exporting pinned sessions and agent conversations")
+            Text("Syncing pinned sessions and agent conversations")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }

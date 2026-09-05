@@ -186,14 +186,30 @@ enum SessionSync {
         var exported = 0
         var imported = 0
         var conflicts = 0
+        var conflictFiles: [AgentMirrorConflict] = []
         var isActive = false
+    }
+
+    /// A two-way change on one conversation file: both this machine and the
+    /// mirror grew since the last sync. Surfaced for the user to resolve.
+    struct AgentMirrorConflict: Identifiable {
+        let agentName: String
+        let fileRel: String
+        let localSize: Int64
+        let localMTime: Int64
+        let remoteSize: Int64
+        let remoteMTime: Int64
+
+        var id: String { "\(agentName)|\(fileRel)" }
     }
 
     /// One full mirror pass: push local agent JSONL out to the cloud mirror,
     /// then pull back anything the mirror has that we don't. Returns what
     /// happened (for Sync Now reporting). No-op when disabled or unsynced.
+    /// `onStep` is invoked before each direction/agent so the UI can show
+    /// live progress.
     @discardableResult
-    static func runAgentMirror() -> AgentMirrorCounts {
+    static func runAgentMirror(onStep: ((String) -> Void)? = nil) -> AgentMirrorCounts {
         var counts = AgentMirrorCounts()
         guard agentMirrorEnabled, syncDir != nil else { return counts }
         counts.isActive = true
@@ -204,13 +220,20 @@ enum SessionSync {
             if !FileManager.default.fileExists(atPath: mirror.path) {
                 try? FileManager.default.createDirectory(at: mirror, withIntermediateDirectories: true)
             }
+            onStep?("Export \(displayName(agentName))")
             let e = mirrorExport(agentName: agentName, localRoot: localRoot, mirrorRoot: mirror)
             counts.exported += e
+            onStep?("Import \(displayName(agentName))")
             let imp = mirrorImport(agentName: agentName, localRoot: localRoot, mirrorRoot: mirror)
             counts.imported += imp.imported
-            counts.conflicts += imp.conflicts
+            counts.conflicts += imp.conflicts.count
+            counts.conflictFiles.append(contentsOf: imp.conflicts)
         }
         return counts
+    }
+
+    private static func displayName(_ agentName: String) -> String {
+        agentName == "claude" ? "Claude" : "CodeBuddy"
     }
 
     private static func localRoot(agentName: String) -> URL? {
@@ -252,39 +275,42 @@ enum SessionSync {
                   let mod = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 else { continue }
             guard size <= agentMirrorMaxBytes else { continue }
 
-            // Loop guard: never re-push a file whose current size is exactly
-            // what we pulled back from the mirror (nothing new locally).
-            if size <= (imported[rel] ?? 0) { continue }
-            // Unchanged since last export → skip.
-            if fps[rel] == "\(size),\(Int(mod))" { continue }
-
             let mirrorFile = mirrorRoot.appendingPathComponent(rel)
-            do {
-                try FileManager.default.createDirectory(at: mirrorFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-                let mirrorSize = (try? FileManager.default.attributesOfItem(atPath: mirrorFile.path)[.size] as? NSNumber)?.int64Value ?? 0
-                if mirrorSize > 0, mirrorSize < size {
-                    // Append-only growth: copy just the new tail.
-                    let handle = try FileHandle(forWritingTo: mirrorFile)
-                    try handle.seekToEnd()
-                    let reader = try FileHandle(forReadingFrom: local)
-                    try reader.seek(toOffset: UInt64(mirrorSize))
-                    if let tail = try reader.readToEnd() {
-                        try handle.write(contentsOf: tail)
+            let mirrorExists = FileManager.default.fileExists(atPath: mirrorFile.path)
+            let mirrorSize = mirrorExists
+                ? ((try? FileManager.default.attributesOfItem(atPath: mirrorFile.path)[.size] as? NSNumber)?.int64Value ?? 0)
+                : 0
+
+            let action = AgentMirrorPolicy.exportAction(.init(
+                localSize: size,
+                localMTime: Int64(mod),
+                mirrorExists: mirrorExists,
+                mirrorSize: mirrorSize,
+                lastExportFingerprint: fps[rel],
+                lastImportSize: imported[rel]
+            ))
+            switch action {
+            case .copyToMirror, .appendToMirror:
+                do {
+                    try FileManager.default.createDirectory(at: mirrorFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if action == .appendToMirror {
+                        // Append-only growth: copy just the new tail.
+                        try AgentMirrorIO.appendTail(from: local, to: mirrorFile, fromOffset: mirrorSize)
+                    } else {
+                        // Fresh copy (whole file) when no mirror exists or the
+                        // mirror is not a strict prefix (other machine content).
+                        if FileManager.default.fileExists(atPath: mirrorFile.path) {
+                            try FileManager.default.removeItem(at: mirrorFile)
+                        }
+                        try FileManager.default.copyItem(at: local, to: mirrorFile)
                     }
-                    try handle.close()
-                    try reader.close()
-                } else {
-                    // Fresh copy (whole file) when no mirror or mirror is not a
-                    // strict prefix of local (different machine content).
-                    if FileManager.default.fileExists(atPath: mirrorFile.path) {
-                        try FileManager.default.removeItem(at: mirrorFile)
-                    }
-                    try FileManager.default.copyItem(at: local, to: mirrorFile)
+                    fps[rel] = "\(size),\(Int(mod))"
+                    exported += 1
+                } catch {
+                    NSLog("agent mirror export %@: %@", rel, error.localizedDescription)
                 }
-                fps[rel] = "\(size),\(Int(mod))"
-                exported += 1
-            } catch {
-                NSLog("agent mirror export %@: %@", rel, error.localizedDescription)
+            case .skip, .copyToLocal, .appendToLocal, .conflictKeepLocal:
+                continue
             }
         }
         if !fps.isEmpty { setAgentExportFps(fps) }
@@ -298,12 +324,12 @@ enum SessionSync {
     ///   will push our new tail next run) and count it.
     /// - Local is an older version of the mirror (mirror is strictly longer
     ///   and local hasn't changed since its last pull) → append the tail.
-    private static func mirrorImport(agentName: String, localRoot: URL, mirrorRoot: URL) -> (imported: Int, conflicts: Int) {
+    private static func mirrorImport(agentName: String, localRoot: URL, mirrorRoot: URL) -> (imported: Int, conflicts: [AgentMirrorConflict]) {
         var imported = agentImportedFps()
         var importedCount = 0
-        var conflicts = 0
+        var conflicts: [AgentMirrorConflict] = []
 
-        guard let files = enumerateJSONL(under: mirrorRoot) else { return (0, 0) }
+        guard let files = enumerateJSONL(under: mirrorRoot) else { return (0, []) }
         for mirror in files {
             let rel = String(mirror.path.dropFirst(mirrorRoot.path.count).drop(while: { $0 == "/" }))
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: mirror.path),
@@ -311,11 +337,20 @@ enum SessionSync {
             guard remoteSize <= agentMirrorMaxBytes else { continue }
 
             let local = localRoot.appendingPathComponent(rel)
-            let lastPullSize = imported[rel]
-            let localSize = (try? FileManager.default.attributesOfItem(atPath: local.path)[.size] as? NSNumber)?.int64Value ?? 0
+            let localExists = FileManager.default.fileExists(atPath: local.path)
+            let localAttrs = try? FileManager.default.attributesOfItem(atPath: local.path)
+            let localSize = localExists ? ((localAttrs?[.size] as? NSNumber)?.int64Value ?? 0) : 0
+            let localMTime = Int64((localAttrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+            let remoteMTime = Int64((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
 
-            if localSize == 0 {
-                // Not here yet — copy the mirror copy home.
+            let action = AgentMirrorPolicy.importAction(.init(
+                localExists: localExists,
+                localSize: localSize,
+                lastImportSize: imported[rel],
+                remoteSize: remoteSize
+            ))
+            switch action {
+            case .copyToLocal:
                 do {
                     try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try FileManager.default.copyItem(at: mirror, to: local)
@@ -324,28 +359,29 @@ enum SessionSync {
                 } catch {
                     NSLog("agent mirror import %@: %@", rel, error.localizedDescription)
                 }
-            } else if let lastPullSize, localSize == lastPullSize, remoteSize > localSize {
-                // Local unchanged since we last pulled; mirror advanced → append.
+            case .appendToLocal:
                 do {
-                    let handle = try FileHandle(forWritingTo: local)
-                    try handle.seekToEnd()
-                    let reader = try FileHandle(forReadingFrom: mirror)
-                    try reader.seek(toOffset: UInt64(localSize))
-                    if let tail = try reader.readToEnd() {
-                        try handle.write(contentsOf: tail)
-                    }
-                    try handle.close()
-                    try reader.close()
+                    // Local unchanged since we last pulled; mirror advanced → append.
+                    try AgentMirrorIO.appendTail(from: mirror, to: local, fromOffset: localSize)
                     imported[rel] = remoteSize
                     importedCount += 1
                 } catch {
                     NSLog("agent mirror append %@: %@", rel, error.localizedDescription)
                 }
-            } else if remoteSize > localSize {
-                // This machine kept writing (localSize > lastPullSize) AND the
-                // mirror also grew → two-way change. Keep local; export pass
-                // pushes our tail next run. Count so Sync Now can tell.
-                conflicts += 1
+            case .conflictKeepLocal:
+                // This machine kept writing AND the mirror also grew → two-way
+                // change. Keep local (the export pass pushes our tail next
+                // run) and record it so the UI can let the user resolve it.
+                conflicts.append(AgentMirrorConflict(
+                    agentName: agentName,
+                    fileRel: rel,
+                    localSize: localSize,
+                    localMTime: localMTime,
+                    remoteSize: remoteSize,
+                    remoteMTime: remoteMTime
+                ))
+            case .skip, .copyToMirror, .appendToMirror:
+                continue
             }
             // remoteSize <= localSize → local is newer/equal; export handles it.
         }
@@ -380,6 +416,42 @@ enum SessionSync {
         }
         files.sort { $0.path < $1.path }
         return files
+    }
+
+    /// Resolve a two-way mirror conflict by replacing the local file with the
+    /// mirror copy. Bookkeeping is updated so the next export pass does not
+    /// push the old local content back (or re-import the same file).
+    /// Returns false when either side is missing.
+    static func resolveMirrorConflict(agentName: String, fileRel: String) -> Bool {
+        guard let localRoot = localRoot(agentName: agentName),
+              let mirrorRoot = agentsDir(agentName: agentName) else { return false }
+        let local = localRoot.appendingPathComponent(fileRel)
+        let mirror = mirrorRoot.appendingPathComponent(fileRel)
+        guard FileManager.default.fileExists(atPath: mirror.path) else { return false }
+
+        do {
+            if FileManager.default.fileExists(atPath: local.path) {
+                try FileManager.default.removeItem(at: local)
+            }
+            try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: mirror, to: local)
+
+            // Local is now exactly the mirror copy: remember it as "imported"
+            // so the export loop guard suppresses re-pushing it, and drop the
+            // old export fingerprint so the bookkeeping matches reality.
+            let attrs = try FileManager.default.attributesOfItem(atPath: local.path)
+            let newSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+            var imported = agentImportedFps()
+            imported[fileRel] = newSize
+            setAgentImportedFps(imported)
+            var fps = agentExportFps()
+            fps.removeValue(forKey: fileRel)
+            setAgentExportFps(fps)
+            return true
+        } catch {
+            NSLog("resolveMirrorConflict %@/%@: %@", agentName, fileRel, error.localizedDescription)
+            return false
+        }
     }
 
     /// Ensure the conversation's JSONL exists locally. When it is missing,
