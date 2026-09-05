@@ -364,6 +364,27 @@ func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"conversations": convs})
 }
 
+// AgentConversationPreview returns the recent readable user/assistant
+// messages of one conversation for the Agent browser's preview pane.
+func (h *Handler) AgentConversationPreview(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent      string `json:"agent"`
+		ProjectDir string `json:"project_dir"`
+		SessionID  string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.Agent == "" || body.ProjectDir == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/project_dir/session_id")
+		return
+	}
+	rows := codebuddy.PreviewConversation(body.Agent, body.ProjectDir, body.SessionID)
+	if rows == nil {
+		writeError(w, http.StatusNotFound, "conversation file not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"rows": rows})
+}
+
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
 // for a project directory by scanning JSONL files.
 func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {

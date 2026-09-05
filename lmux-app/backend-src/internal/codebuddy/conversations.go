@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -201,6 +202,150 @@ func probeJSONL(path, agentName string, size int64) ConversationSummary {
 		}
 	}
 	return conv
+}
+
+// MessageRow is one readable user/assistant message for the Agent browser's
+// conversation preview.
+type MessageRow struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// PreviewConversation returns the most recent plain-text user/assistant
+// messages of a conversation (tool calls/results and reasoning filtered out),
+// read from the JSONL tail so huge files stay cheap.
+func PreviewConversation(agent, projectDir, sessionID string) []MessageRow {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	var root, enc string
+	if agent == "claude" {
+		root = ".claude"
+		enc = encodeClaudeProjectDir(projectDir)
+	} else {
+		root = ".codebuddy"
+		enc = encodeCodebuddyProjectDir(projectDir)
+	}
+	path := filepath.Join(home, root, "projects", enc, sessionID+".jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	const tailSize = 128 << 10
+	off := st.Size() - tailSize
+	if off < 0 {
+		off = 0
+	}
+	buf := make([]byte, tailSize)
+	n, err := f.ReadAt(buf, off)
+	if err != nil && n == 0 {
+		return nil
+	}
+	buf = buf[:n]
+
+	const maxRows = 14
+	var rows []MessageRow
+	appendRow := func(role, text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		if len(text) > 600 {
+			text = text[:600] + "…"
+		}
+		rows = append(rows, MessageRow{Role: role, Text: text})
+		if len(rows) > maxRows {
+			rows = rows[len(rows)-maxRows:]
+		}
+	}
+
+	start := 0
+	for i := 0; i <= len(buf); i++ {
+		if i == len(buf) || buf[i] == '\n' {
+			line := bytes.TrimSpace(buf[start:i])
+			if len(line) > 0 {
+				observePreviewLine(agent, line, appendRow)
+			}
+			start = i + 1
+		}
+	}
+	return rows
+}
+
+func observePreviewLine(agent string, line []byte, appendRow func(role, text string)) {
+	if agent == "claude" {
+		var row struct {
+			Type    string `json:"type"`
+			Message struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &row) != nil {
+			return
+		}
+		if row.Type != "user" && row.Type != "assistant" {
+			return
+		}
+		role := row.Type
+		var text string
+		// content is either a plain string or an array of blocks.
+		var s string
+		if json.Unmarshal(row.Message.Content, &s) == nil {
+			text = s
+		} else {
+			var blocks []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(row.Message.Content, &blocks) == nil {
+				for _, b := range blocks {
+					if b.Type == "text" && b.Text != "" {
+						text += b.Text + "\n"
+					}
+				}
+			}
+		}
+		if text != "" {
+			appendRow(role, text)
+		}
+		return
+	}
+
+	// codebuddy rows.
+	var row struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(line, &row) != nil {
+		return
+	}
+	if row.Type != "message" {
+		return
+	}
+	if row.Role != "user" && row.Role != "assistant" {
+		return
+	}
+	var text string
+	for _, b := range row.Content {
+		if b.Type == "text" && b.Text != "" {
+			text += b.Text + "\n"
+		}
+	}
+	if text != "" {
+		appendRow(row.Role, text)
+	}
 }
 
 // observeJSONLLine parses one line, updating conv in place. Handles both
