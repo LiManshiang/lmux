@@ -1045,6 +1045,13 @@ class ContentViewModel: ObservableObject {
         return await agent.provider.contextUsage(cbcSessionID: cbcSessionID, projectDir: projectDir, service: api)
     }
 
+    /// Latest working directory this session's agent recorded, if any. Used to
+    /// prefill the project directory in the edit sheet.
+    func agentWorkingDir(for session: SessionSummary) async -> String? {
+        guard let cbc = session.cbcSessionID, !cbc.isEmpty else { return nil }
+        return await api.agentCwd(agent: session.agentType, projectDir: session.projectDir, sessionID: cbc)
+    }
+
     /// Look up the most recent conversation for any agent in a project dir.
     func findAgentSession(agent: AgentType, projectDir: String) async -> String? {
         guard backendRunning else { return nil }
