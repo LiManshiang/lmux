@@ -117,22 +117,19 @@ struct ContentView: View {
 
                 Divider()
 
+                // Only "new session" remains at the bottom; the refresh button
+                // was removed — the 15s poll keeps the list fresh and its
+                // circular-arrow icon read as a misleading "restore".
                 HStack {
-                    Button(action: {
-                        Task { await viewModel.refreshSessions() }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(!viewModel.backendRunning || viewModel.isLoading)
-
                     Spacer()
-
                     Button(action: {
                         Task { await viewModel.quickCreateSession() }
                     }) {
                         Image(systemName: "plus")
                     }
                     .disabled(!viewModel.backendRunning)
+                    .help("New session")
+                    Spacer()
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
