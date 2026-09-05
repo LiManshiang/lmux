@@ -281,7 +281,17 @@ class TerminalManager: ObservableObject {
 
     /// Resolve a process's current working directory via proc_pidinfo
     /// (PROC_PIDVNODEPATHINFO). Avoids spawning lsof on every poll.
+    ///
+    /// The pty layout is `lmux → login(processPID) → shell/node`; the login
+    /// process itself fails the vnode query (rc=0), so on failure we fall back
+    /// to its direct child, which is the process the user actually talks to
+    /// (it `cd`s / runs the agent).
     nonisolated private static func queryCwd(pid: Int32) -> String? {
+        if let path = queryCwdDirect(pid: pid) { return path }
+        return queryChildCwd(pid: pid)
+    }
+
+    nonisolated private static func queryCwdDirect(pid: Int32) -> String? {
         var info = proc_vnodepathinfo()
         let size = MemoryLayout<proc_vnodepathinfo>.size
         let rc = withUnsafeMutablePointer(to: &info) { ptr -> Int32 in
@@ -294,6 +304,17 @@ class TerminalManager: ObservableObject {
             raw.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
         }
         return path.isEmpty ? nil : path
+    }
+
+    /// proc_listchildpids of the given pid; returns the cwd of its first
+    /// live child (the login process has a single child — the shell/agent the
+    /// user talks to). Single-slot buffer keeps the call allocation-free and
+    /// avoids exclusivity traps with array buffers.
+    nonisolated private static func queryChildCwd(pid: Int32) -> String? {
+        var child: pid_t = 0
+        let n = proc_listchildpids(pid, &child, Int32(MemoryLayout<pid_t>.size))
+        guard n > 0, child > 0 else { return nil }
+        return queryCwdDirect(pid: child)
     }
 
     nonisolated private static func queryPerf(pid: Int32) -> (Double?, Double?) {
