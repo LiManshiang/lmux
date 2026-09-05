@@ -4,7 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     // Shared column width: the Sessions sidebar and the Agent list pane use the
     // same AppStorage key so switching pages keeps the same geometry.
-    @AppStorage("columnWidth") private var sidebarWidth = 300.0
+    @AppStorage("columnWidth") private var sidebarWidth = 275.0
     @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
 

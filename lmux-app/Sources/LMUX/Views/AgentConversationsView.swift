@@ -9,7 +9,7 @@ import LMUXCore
 struct AgentBrowserView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
-    @AppStorage("columnWidth") private var listWidth = 300.0
+    @AppStorage("columnWidth") private var listWidth = 275.0
     @State private var searchText = ""
     @State private var selectedID: String?
 
