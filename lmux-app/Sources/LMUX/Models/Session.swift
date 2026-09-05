@@ -130,6 +130,10 @@ struct SessionExportBundle: Codable {
     var name: String
     var agentType: String
     var projectDir: String
+    /// Last working directory the agent recorded in its conversation (where
+    /// it actually worked) at export time. Used as the auto import target;
+    /// nil for bundles exported before this field existed.
+    var cwd: String?
     var cbcSessionID: String
     let exportedAt: String?
     var content: String
@@ -149,6 +153,7 @@ struct SessionExportBundle: Codable {
         case name
         case agentType = "agent_type"
         case projectDir = "project_dir"
+        case cwd
         case cbcSessionID = "cbc_session_id"
         case exportedAt = "exported_at"
         case content

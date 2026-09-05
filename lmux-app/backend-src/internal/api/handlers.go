@@ -590,6 +590,7 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 		"name":                sess.Name,
 		"agent_type":          sess.AgentType,
 		"project_dir":         sess.ProjectDir,
+		"cwd":                 codebuddy.RecentSessionCwd(sess.AgentType, sess.ProjectDir, sess.CBCSessionID),
 		"cbc_session_id":      sess.CBCSessionID,
 		"exported_at":         time.Now().Format(time.RFC3339),
 		"content":             string(buf),

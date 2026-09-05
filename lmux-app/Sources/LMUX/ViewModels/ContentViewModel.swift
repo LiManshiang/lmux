@@ -116,9 +116,12 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    /// Present an open panel for a `.lmuxsession` file, let the user pick the
-    /// target project directory, and import the session. When a session for
-    /// the same conversation already exists, ask how to resolve the conflict.
+    /// Present an open panel for a `.lmuxsession` file and import the session.
+    /// The target project directory is taken from the bundle itself (the last
+    /// working directory the agent recorded) instead of asking the user to
+    /// pick one. When that directory does not exist locally (e.g. the session
+    /// came from another machine with a different path), tell the user and let
+    /// them pick the actual directory.
     func promptImportSession() {
         let filePanel = NSOpenPanel()
         filePanel.title = "Import Session"
@@ -131,15 +134,33 @@ class ContentViewModel: ObservableObject {
             return
         }
 
-        let dirPanel = NSOpenPanel()
-        dirPanel.title = "Choose Target Project Directory"
-        dirPanel.canChooseFiles = false
-        dirPanel.canChooseDirectories = true
-        dirPanel.prompt = "Import Here"
-        guard dirPanel.runModal() == .OK, let dirURL = dirPanel.url else { return }
+        // Auto target: the bundle's recorded working directory, path-mapped,
+        // falling back to its configured project dir.
+        let recorded = bundle.cwd ?? bundle.projectDir
+        let targetDir = SessionSync.applyPathMappings(recorded)
+
+        if !FileManager.default.fileExists(atPath: targetDir, isDirectory: nil) {
+            let alert = NSAlert()
+            alert.messageText = "Working Directory Not Found"
+            alert.informativeText = "This session's working directory doesn't exist on this Mac:\n\n\(targetDir)\n\nPick the folder this session should live in, or cancel."
+            alert.addButton(withTitle: "Choose Folder…")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+            let dirPanel = NSOpenPanel()
+            dirPanel.title = "Choose Session Working Directory"
+            dirPanel.canChooseFiles = false
+            dirPanel.canChooseDirectories = true
+            dirPanel.prompt = "Import Here"
+            guard dirPanel.runModal() == .OK, let dirURL = dirPanel.url else { return }
+            Task {
+                await importSession(bundle, into: dirURL.path)
+            }
+            return
+        }
 
         Task {
-            await importSession(bundle, into: dirURL.path)
+            await importSession(bundle, into: targetDir)
         }
     }
 
