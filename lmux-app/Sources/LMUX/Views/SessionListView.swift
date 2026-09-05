@@ -127,7 +127,10 @@ struct SessionListView: View {
         }
         .background(Color(NSColor.windowBackgroundColor))
         .overlay {
-            if viewModel.visibleSessions.isEmpty && !viewModel.isLoading {
+            // Empty state only once the backend is actually up and the first
+            // load finished — showing it earlier makes it flash over the list
+            // during launch.
+            if viewModel.visibleSessions.isEmpty && viewModel.backendRunning && !viewModel.isLoading {
                 VStack(spacing: 6) {
                     Text(viewModel.searchText.isEmpty ? "No sessions" : "No matching sessions")
                         .foregroundColor(.secondary)
