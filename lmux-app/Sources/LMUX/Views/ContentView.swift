@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var sidebarWidth: CGFloat = 240
     @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
+    @AppStorage("sidebarTab") private var sidebarTab = "sessions"
 
     var body: some View {
         HStack(spacing: 0) {
@@ -43,15 +44,34 @@ struct ContentView: View {
 
                 Divider()
 
-                SessionListView()
+                Picker("Browse", selection: $sidebarTab) {
+                    Text("Sessions").tag("sessions")
+                    Text("Agent").tag("agent")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+
+                if sidebarTab == "sessions" {
+                    SessionListView()
+                } else {
+                    AgentConversationsView()
+                }
 
                 Divider()
 
                 HStack {
-                    Button(action: { Task { await viewModel.refreshSessions() } }) {
+                    Button(action: {
+                        if sidebarTab == "sessions" {
+                            Task { await viewModel.refreshSessions() }
+                        } else {
+                            Task { await viewModel.loadAgentConversations() }
+                        }
+                    }) {
                         Image(systemName: "arrow.clockwise")
                     }
-                    .disabled(!viewModel.backendRunning || viewModel.isLoading)
+                    .disabled(!viewModel.backendRunning || viewModel.isLoading || viewModel.agentConversationsLoading)
 
                     Spacer()
 
@@ -60,7 +80,7 @@ struct ContentView: View {
                     }) {
                         Image(systemName: "plus")
                     }
-                    .disabled(!viewModel.backendRunning)
+                    .disabled(!viewModel.backendRunning || sidebarTab == "agent")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)

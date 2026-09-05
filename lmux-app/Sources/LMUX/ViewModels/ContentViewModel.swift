@@ -28,6 +28,17 @@ class ContentViewModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var toastMessage: String?
     @Published var syncInProgress = false
+
+    // MARK: - Agent browser state
+
+    /// Filesystem-level agent conversations for the current Agent filter.
+    @Published var agentConversations: [AgentConversation] = []
+    @Published var agentConversationsLoading = false
+    /// Selected filter: agent name ("", "codebuddy", "claude").
+    @Published var agentFilterName = ""
+    /// Selected filter: a single project directory, or "" for all.
+    @Published var agentFilterProjectDir = ""
+    @Published var agentConversationsError: String?
     private var toastTask: Task<Void, Never>?
 
     let api = APIClient()
@@ -1181,6 +1192,37 @@ class ContentViewModel: ObservableObject {
     func agentWorkingDir(for session: SessionSummary) async -> String? {
         guard let cbc = session.cbcSessionID, !cbc.isEmpty else { return nil }
         return await api.agentCwd(agent: session.agentType, projectDir: session.projectDir, sessionID: cbc)
+    }
+
+    /// Reload the Agent browser list for the current filter. Keeps the existing
+    /// list when a refresh fails so the UI doesn't flash empty.
+    func loadAgentConversations() async {
+        guard backendRunning else { return }
+        agentConversationsLoading = true
+        agentConversationsError = nil
+        defer { agentConversationsLoading = false }
+
+        let agent = agentFilterName.isEmpty ? nil : agentFilterName
+        let dir = agentFilterProjectDir.isEmpty ? nil : agentFilterProjectDir
+        do {
+            let result = try await api.agentConversations(agent: agent, projectDir: dir)
+            agentConversations = result
+        } catch {
+            agentConversationsError = error.localizedDescription
+        }
+    }
+
+    /// Resume a raw agent conversation as a new lmux session (and connect).
+    /// If the JSONL is missing locally, first try to pull it back from the
+    /// sync mirror so the agent can actually resume it.
+    func resumeAgentConversation(_ conv: AgentConversation) async {
+        guard let agentType = AgentType(rawValue: conv.agent) else {
+            showToast("Unknown agent \(conv.agent)")
+            return
+        }
+        let projectDir = conv.cwd ?? NSHomeDirectory()
+        SessionSync.restoreAgentFileIfMissing(agentName: conv.agent, sessionID: conv.id, projectDir: projectDir)
+        await createSession(projectDir: projectDir, name: nil, cbcSessionID: conv.id, agentType: agentType)
     }
 
     /// Context usage (percentage + credit) for any agent's conversation,

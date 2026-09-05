@@ -156,6 +156,36 @@ enum SessionSync {
         return URL(fileURLWithPath: dir).appendingPathComponent("sessions", isDirectory: true)
     }
 
+    // MARK: - Agent JSONL mirror
+
+    /// Mirror root inside the sync dir: `<syncDir>/agents/<agentName>`.
+    static func agentsDir(agentName: String) -> URL? {
+        guard let dir = syncDir else { return nil }
+        return URL(fileURLWithPath: dir).appendingPathComponent("agents", isDirectory: true)
+            .appendingPathComponent(agentName, isDirectory: true)
+    }
+
+    /// Ensure the conversation's JSONL exists locally. When it is missing,
+    /// pull it back from the sync mirror (M2 keeps an agent JSONL mirror next
+    /// to the .lmuxsession exports) so `agent --resume <id>` can find it.
+    /// No-op when there is no mirror copy or the local file already exists.
+    static func restoreAgentFileIfMissing(agentName: String, sessionID: String, projectDir: String) {
+        guard let mirrorRoot = agentsDir(agentName: agentName) else { return }
+        let enc = encodedProjectDir(agentType: agentName, projectDir: projectDir)
+        let local = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent((agentName == "claude" ? ".claude/projects" : ".codebuddy/projects") + "/\(enc)/\(sessionID).jsonl")
+        guard !FileManager.default.fileExists(atPath: local.path) else { return }
+
+        let mirrorFile = mirrorRoot.appendingPathComponent(enc).appendingPathComponent("\(sessionID).jsonl")
+        guard FileManager.default.fileExists(atPath: mirrorFile.path) else { return }
+        do {
+            try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: mirrorFile, to: local)
+        } catch {
+            NSLog("restoreAgentFileIfMissing: %@", error.localizedDescription)
+        }
+    }
+
     /// Build a human-readable sync file name: `<name>__<cbc8>.lmuxsession`.
     static func syncFileName(name: String, cbcID: String) -> String {
         let clean = SyncPathMapping.sanitizeFileName(name)

@@ -242,6 +242,30 @@ class APIClient: AgentSessionService {
         return cwd
     }
 
+    /// File-level list of every agent conversation, optionally filtered to one
+    /// agent and/or one project directory. agent "" and projectDir "" mean all.
+    func agentConversations(agent: String?, projectDir: String?) async throws -> [AgentConversation] {
+        struct Response: Codable {
+            let conversations: [AgentConversation]
+        }
+        var path = "/api/agent/conversations"
+        var queries: [String] = []
+        if let agent, !agent.isEmpty {
+            queries.append("agent=\(agent)")
+        }
+        if let projectDir, !projectDir.isEmpty {
+            guard let enc = projectDir.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+                throw APIError.invalidURL
+            }
+            queries.append("project_dir=\(enc)")
+        }
+        if !queries.isEmpty {
+            path += "?" + queries.joined(separator: "&")
+        }
+        let data = try await get(path)
+        return try decode(Response.self, from: data).conversations
+    }
+
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
         struct Body: Codable {
             let cbcSessionID: String
