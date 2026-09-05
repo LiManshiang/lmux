@@ -49,13 +49,24 @@ Then point `Package.swift`'s SwiftTerm dependency at your patched local clone.
 
 ## Build
 
+One code line, two app products (same Swift sources; Ghostty-specific code is
+behind `#if canImport(GhosttyTerminal)`):
+
 ```sh
 cd lmux-app
-swift build                 # frontend (LMUX + LMUXCore)
-cd backend-src && go build -o ../backend/lmux ./cmd/cbsm   # backend
+make test                   # unit tests (arch -arm64; avoids Rosetta x86 .build pollution)
+make app                    # lmux.app    — Ghostty renderer, macOS 13+ (.build/lmux.app)
+make app-st                 # lmux-st.app — SwiftTerm renderer, macOS 12 (.build-st/lmux-st.app)
+make app-x86                # lmux-st.app — x86_64 Intel + SwiftTerm + macOS 12
 ```
 
-Run the development build with `swift run`, or package the app bundle:
+- `make app-st` temporarily swaps `Package.st.swift` over `Package.swift`
+  (trap-restored) and builds into a separate `.build-st` scratch path, so the
+  two variants never pollute each other.
+- The backend binary is a **build product, not tracked in git**: every app*
+  target rebuilds it via `go build` (falls back to an existing `backend/lmux`
+  when Go is missing). New machines need Go installed.
+- Run the development build with `swift run`, or install a bundle:
 
 ```sh
 cp -R .build/lmux.app /Applications/lmux.app
@@ -67,7 +78,7 @@ The app launches its embedded backend automatically; no daemon setup needed.
 
 ```sh
 cd lmux-app
-swift test                  # LMUXCore unit tests (resolveSession, detection)
+make test                   # frontend LMUXCore unit tests (54 cases, arm64)
 cd backend-src && go test ./...   # backend unit tests (session CRUD, find-session, context)
 ```
 

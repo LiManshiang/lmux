@@ -34,17 +34,22 @@ git apply ../lmux-app/tools/patches/swiftterm-5.7-backport.patch
 
 ## 构建
 
+单一代码线、两种产物（同一份 Swift 源码，Ghostty 相关代码 `#if canImport(GhosttyTerminal)` 条件化）：
+
 ```sh
 cd lmux-app
-swift build                 # 前端（LMUX + LMUXCore）
-cd backend-src && go build -o ../backend/lmux ./cmd/cbsm   # 后端
+make test                   # 单元测试（arch -arm64，规避 Rosetta x86 污染）
+make app                    # lmux.app —— Ghostty 渲染，macOS 13+（产物 .build/lmux.app）
+make app-st                 # lmux-st.app —— SwiftTerm 渲染，macOS 12（产物 .build-st/lmux-st.app，独立 bundle id）
+make app-x86                # lmux-st.app —— x86_64 Intel + SwiftTerm + macOS 12
 ```
 
-运行开发版用 `swift run`，或打包 app：
-
-```sh
-cp -R .build/lmux.app /Applications/lmux.app
-```
+- `make app-st` 构建期间会临时把 `Package.st.swift` 换成 `Package.swift`（trap 自动还原），并独立使用 `.build-st` scratch 目录，不污染常规 `.build`。
+- 后端二进制是**构建产物，不入库**：每次 app* 目标都会尝试 `go build`（无 Go 工具链时复用已有 `backend/lmux`）。新机器需先装 Go。
+- 运行开发版用 `swift run`，或把产物拷到 /Applications：
+  ```sh
+  cp -R .build/lmux.app /Applications/lmux.app
+  ```
 
 app 会自动启动内置后端，无需额外配置守护进程。
 
@@ -52,7 +57,7 @@ app 会自动启动内置后端，无需额外配置守护进程。
 
 ```sh
 cd lmux-app
-swift test                  # LMUXCore 单元测试（resolveSession、进程检测）
+make test                   # 前端 LMUXCore 单元测试（54 用例，arm64）
 cd backend-src && go test ./...   # 后端单元测试（会话 CRUD、find-session、上下文统计）
 ```
 

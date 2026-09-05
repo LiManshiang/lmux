@@ -1,6 +1,29 @@
 # lmux 开发进度文档
 
-> 更新日期：2026-08-15 ｜ 当前分支：`master`（macOS 13+，Ghostty 双后端）｜ `swiftterm` 分支支持 macOS 12
+> 更新日期：2026-09-05 ｜ 当前：**单线双产物**（master 唯一开发线）
+>
+> ## 2026-09 工程重构：单线双产物
+>
+> swiftterm 分支已冻结（`git tag lmux-st-final`），其 macOS 12 / SwiftTerm
+> 能力并入 master：master 代码保持 macOS 12 可编译，Ghostty 相关代码用
+> `#if canImport(GhosttyTerminal)` 条件化。同源码产两种 bundle：
+>
+> - `make app` → `lmux.app`（Ghostty，macOS 13+，默认 Package.swift）
+> - `make app-st` → `lmux-st.app`（SwiftTerm，macOS 12，`Package.st.swift`
+>   临时切换 + `.build-st` scratch，trap 还原；独立 bundle id
+>   `com.manshiangli.lmux-st`，避免与 lmux.app 的 UserDefaults 冲突）
+> - `make app-x86` → x86_64 Intel 版 `lmux-st.app`
+>
+> 规则：**所有新功能只在 master 开发一次**。若用到 macOS 13+ API，按 macOS12
+> 兼容（`Compatibility.swift` 提供 `groupedForm()`/`CompatLabeledContent` 兜底
+> 或 `#available` 降级）。后端二进制（`backend/lmux`、`backend-src/bin/lmux`）
+> **不入库**，为 `make app*` 的构建产物。测试统一 `make test`
+> （`arch -arm64 swift test`，规避 Rosetta 终端把 .build 写成 x86_64 triple）。
+>
+> ---
+>
+> 历史（重构前，仅供参考；swiftterm 相关段落为冻结分支记录）：
+
 
 ## 一、项目简介
 

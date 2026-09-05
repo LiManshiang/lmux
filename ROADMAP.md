@@ -1,8 +1,7 @@
 # lmux — 进度与路线图
 
-**更新日期:** 2026-08-28
-**当前版本:** 1.0.136
-**分支:** master（含 Ghostty 双后端 + 会话绑定修复 + 导出/导入/编辑 + P0 三项 + 跨设备同步）
+**更新日期:** 2026-09-05
+**当前版本:** 1.0.171+（master 单线双产物；swiftterm 已冻结并入）
 
 ---
 
@@ -131,20 +130,24 @@
 
 ---
 
-## 分支状态
+## 分支状态（2026-09-05 重构后：单线双产物）
 
 ```
-master                    → 稳定主线（当前 1.0.132）
-swiftterm                 → 原 2.0 分支（改名），SwiftTerm 渲染
-feature/ghostty-renderer  → Ghostty 双后端（已并入 master）
-fix/crash-issues          → 崩溃/权限/性能修复（历史）
-perf/optimize-v1          → 性能优化（历史）
+master                    → 唯一开发线（当前 1.0.171+）
+                            make app      = lmux.app     Ghostty / macOS 13+
+                            make app-st   = lmux-st.app  SwiftTerm / macOS 12
+                            make app-x86  = lmux-st.app  Intel x86_64 / macOS 12
+swiftterm                 → 已冻结（git tag lmux-st-final），能力并入 master
+                            Package.st.swift 仅作 st 变体 manifest，代码与 master 同源
+feature/ghostty-renderer  → 已并入 master（历史）
 ```
 
 ## 构建与发布
 
 ```bash
-cd lmux-app && make app      # Swift 前端 + Go 后端 + 打包
+cd lmux-app && make app      # Swift 前端 + Go 后端 + 打包（backend 为构建产物，不入库）
+cd lmux-app && make app-st   # macOS 12 SwiftTerm 变体（独立 bundle id com.manshiangli.lmux-st）
+make test                    # 前端单元测试（arch -arm64）
 ./bump-version.sh            # 版本 +1（Version.swift + Info.plist）
-# 安装：替换 /Applications/lmux.app（旧版备份 lmux.app.bak）
+# 安装：替换 /Applications/lmux.app（旧版备份 lmux.app.bak）或 lmux-st.app
 ```
