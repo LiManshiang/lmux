@@ -168,7 +168,8 @@ struct ContentView: View {
         }
     }
 
-    /// The (⋯) overflow menu in place of the old bottom "+": sync + about.
+    /// The (⋯) overflow menu in place of the old bottom "+": sync, settings,
+    /// about.
     private var bottomMenu: some View {
         Menu {
             Button {
@@ -178,6 +179,13 @@ struct ContentView: View {
                 }
             } label: {
                 Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+            }
+            Divider()
+            Button {
+                // Same action the app menu "Settings…" (Cmd+,) uses.
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            } label: {
+                Label("Settings…", systemImage: "gearshape")
             }
             Divider()
             Button {
@@ -192,7 +200,7 @@ struct ContentView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .menuIndicator(.hidden)
-        .help("Sync Now, About…")
+        .help("Sync Now, Settings…, About…")
     }
 
     /// Sessions / Agent switch, now in the sidebar strip where the search box
