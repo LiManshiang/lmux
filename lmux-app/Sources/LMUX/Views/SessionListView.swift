@@ -128,14 +128,15 @@ struct SessionListView: View {
         .background(Color(NSColor.windowBackgroundColor))
         .overlay {
             if viewModel.visibleSessions.isEmpty && !viewModel.isLoading {
-                VStack {
+                VStack(spacing: 6) {
                     Text(viewModel.searchText.isEmpty ? "No sessions" : "No matching sessions")
                         .foregroundColor(.secondary)
                     if viewModel.searchText.isEmpty {
-                        Button("Restore from History") {
-                            Task { await viewModel.restoreAll() }
-                        }
-                        .padding(.top, 8)
+                        // Agent conversations (raw JSONL that was never opened
+                        // in lmux) are browsed and resumed from the Agent tab.
+                        Text("Browse all agent conversations from the Agent tab")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
                     }
                 }
             }

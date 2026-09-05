@@ -1275,19 +1275,6 @@ class ContentViewModel: ObservableObject {
         return found
     }
 
-    func restoreAll() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            let count = try await api.restoreAll()
-            statusMessage = "Restored \(count) sessions"
-            await refreshSessions()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     /// Load per-session usage statistics (tokens / credit / model) for the
     /// statistics panel.
     func loadUsageStats() async {

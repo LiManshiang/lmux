@@ -141,15 +141,6 @@ class APIClient: AgentSessionService {
         return try decode(Session.self, from: data)
     }
 
-    func restoreAll() async throws -> Int {
-        let data = try await post("/api/restore", body: Optional<String>.none)
-        struct Response: Codable {
-            let restored: Int
-        }
-        let resp = try decode(Response.self, from: data)
-        return resp.restored
-    }
-
     // MARK: - AgentSessionService (unified agent endpoints)
 
     func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String? {
