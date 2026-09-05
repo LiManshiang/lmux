@@ -47,7 +47,18 @@ class TerminalManager: ObservableObject {
     /// The shell/agent process's live working directory, polled with the CPU
     /// stats so the header can show where the session actually works (it can
     /// `cd` away from the configured projectDir). nil when unknown/not running.
+    ///
+    /// Published value is deliberately *relative*: the process starts in some
+    /// baseline directory (the pty login context, which often differs from
+    /// projectDir — e.g. `~/Library/.../lmuxsessions/sessions`), and that
+    /// baseline is NOT useful to show. We publish the cwd only once it
+    /// *deviates* from the baseline (a real user `cd`); otherwise the UI
+    /// falls back to the configured projectDir (the project picked at
+    /// import/edit time).
     @Published private(set) var currentWorkingDirectory: String?
+    /// First cwd observed for the current process; the header shows projectDir
+    /// until the process actually moves away from this.
+    private var baselineCwd: String?
     private var perfTimer: Timer?
     private var lastActivityTime: Date = Date()
     private var idleTimer: Timer?
@@ -202,6 +213,8 @@ class TerminalManager: ObservableObject {
         processRunning = true
         processStartTime = Date()
         processPID = backend.processPID
+        baselineCwd = nil
+        currentWorkingDirectory = nil
         lastActivityTime = Date()
         startIdleTimer()
 
@@ -287,8 +300,25 @@ class TerminalManager: ObservableObject {
                 await MainActor.run {
                     self.cpuPercent = cpu
                     self.memoryMB = mem
-                    if let cwd {
+                    guard let cwd else { return }
+                    if self.baselineCwd == nil {
+                        // First observation anchors the baseline (process
+                        // launch context). It is usually NOT the projectDir
+                        // (pty login dir), so it is not shown.
+                        self.baselineCwd = cwd
+                        if self.currentWorkingDirectory != nil {
+                            self.currentWorkingDirectory = nil
+                        }
+                        return
+                    }
+                    // Publish only deviations from the baseline — a real user
+                    // `cd`. Returning to the baseline clears the override so
+                    // the header shows projectDir again.
+                    let deviated = cwd != self.baselineCwd
+                    if deviated, cwd != self.currentWorkingDirectory {
                         self.currentWorkingDirectory = cwd
+                    } else if !deviated, self.currentWorkingDirectory != nil {
+                        self.currentWorkingDirectory = nil
                     }
                 }
             }
@@ -544,6 +574,8 @@ class TerminalManager: ObservableObject {
         processRunning = true
         processStartTime = Date()
         processPID = backend.processPID
+        baselineCwd = nil
+        currentWorkingDirectory = nil
         lastActivityTime = Date()
         startIdleTimer()
 
