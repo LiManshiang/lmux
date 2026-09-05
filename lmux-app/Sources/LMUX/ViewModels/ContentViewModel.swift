@@ -1231,9 +1231,8 @@ class ContentViewModel: ObservableObject {
         agentPreview = nil
         agentPreviewConversation = conv
         defer { agentPreviewLoading = false }
-        guard let cwd = conv.cwd, !cwd.isEmpty else { return }
         do {
-            agentPreview = try await api.agentConversationPreview(agent: conv.agent, projectDir: cwd, sessionID: conv.id)
+            agentPreview = try await api.agentConversationPreview(agent: conv.agent, sessionID: conv.id)
         } catch {
             agentPreview = AgentConversationPreview(rows: [])
         }
@@ -1248,7 +1247,12 @@ class ContentViewModel: ObservableObject {
             return
         }
         let projectDir = conv.cwd ?? NSHomeDirectory()
-        SessionSync.restoreAgentFileIfMissing(agentName: conv.agent, sessionID: conv.id, projectDir: projectDir)
+        SessionSync.restoreAgentFileIfMissing(
+            agentName: conv.agent,
+            sessionID: conv.id,
+            fileRel: conv.fileRel,
+            projectDir: projectDir
+        )
         await createSession(projectDir: projectDir, name: nil, cbcSessionID: conv.id, agentType: agentType)
     }
 

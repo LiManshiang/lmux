@@ -98,6 +98,33 @@ func TestProbeJSONLClaude(t *testing.T) {
 	}
 }
 
+func TestPreviewCodebuddyOutputTextBlocks(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTempJSONL(t, dir, "p.jsonl", strings.Join([]string{
+		`{"type":"message","role":"user","content":[{"type":"text","text":"hello old"}]}`,
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer new"}]}`,
+		`{"type":"function_call","name":"Bash"}`,
+		`{"type":"function_call_result","output":{"type":"text","text":"tool noise"}}`,
+		"",
+	}, "\n"))
+	data, _ := os.ReadFile(path)
+	var rows []MessageRow
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		observePreviewLine("codebuddy", []byte(line), func(role, text string) {
+			rows = append(rows, MessageRow{Role: role, Text: text})
+		})
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want 2", rows)
+	}
+	if rows[0].Role != "user" || strings.TrimSpace(rows[0].Text) != "hello old" {
+		t.Fatalf("row0 = %+v", rows[0])
+	}
+	if rows[1].Role != "assistant" || strings.TrimSpace(rows[1].Text) != "answer new" {
+		t.Fatalf("row1 = %+v", rows[1])
+	}
+}
+
 func TestScanProjectRootFiltered(t *testing.T) {
 	root := t.TempDir()
 	// Two encoded project dirs under the root.

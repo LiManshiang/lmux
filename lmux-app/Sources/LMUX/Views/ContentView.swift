@@ -57,37 +57,45 @@ struct ContentView: View {
         }
     }
 
-    /// Narrow top bar hosting the Sessions / Agent switch, sized so the
-    /// segmented control is not stretched across the whole window.
+    /// Narrow top bar. The Sessions / Agent switch is overlaid dead-center so
+    /// its position never shifts when the renderer badge or version text next
+    /// to the app icon changes.
     private var topTabBar: some View {
-        HStack(spacing: 10) {
-            Text("lmux")
-                .font(.system(size: 13, weight: .semibold))
-            HStack(spacing: 4) {
+        ZStack {
+            HStack(spacing: 8) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                    .resizable()
+                    .frame(width: 15, height: 15)
+                Text("lmux")
+                    .font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 4) {
 #if canImport(GhosttyTerminal)
-                if selectedRenderer == TerminalRendererSetting.ghostty {
-                    Text("Ghostty")
-                        .font(.system(size: 8, weight: .bold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.2))
-                        .foregroundColor(.orange)
-                        .cornerRadius(4)
-                } else {
+                    if selectedRenderer == TerminalRendererSetting.ghostty {
+                        Text("Ghostty")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.2))
+                            .foregroundColor(.orange)
+                            .cornerRadius(4)
+                    } else {
+                        Text("SwiftTerm")
+                            .font(.system(size: 8))
+                            .foregroundColor(.secondary)
+                    }
+#else
                     Text("SwiftTerm")
                         .font(.system(size: 8))
                         .foregroundColor(.secondary)
-                }
-#else
-                Text("SwiftTerm")
-                    .font(.system(size: 8))
-                    .foregroundColor(.secondary)
 #endif
-                Text(AppVersion.current)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+                    Text(AppVersion.current)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
             }
-            Spacer()
+            .padding(.horizontal, 12)
+
             Picker("Browse", selection: $sidebarTab) {
                 Text("Sessions").tag("sessions")
                 Text("Agent").tag("agent")
@@ -96,26 +104,8 @@ struct ContentView: View {
             .labelsHidden()
             .frame(width: 240)
             .fixedSize()
-            Spacer()
-            // Invisible right spacer that mirrors the left group's width so the
-            // segmented control stays visually centered.
-            HStack(spacing: 4) {
-                if selectedRenderer == TerminalRendererSetting.ghostty {
-                    Text("Ghostty")
-                        .font(.system(size: 8))
-                        .foregroundColor(.clear)
-                } else {
-                    Text("SwiftTerm")
-                        .font(.system(size: 8))
-                        .foregroundColor(.clear)
-                }
-                Text(AppVersion.current)
-                    .font(.system(size: 9))
-                    .foregroundColor(.clear)
-            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .frame(height: 30)
     }
 
     /// Classic sessions workspace: sidebar list + resizer + terminal detail.

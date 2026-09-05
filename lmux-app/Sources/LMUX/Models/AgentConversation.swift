@@ -10,6 +10,10 @@ struct AgentConversation: Codable, Identifiable, Hashable {
     let aiTitle: String?
     let summary: String?
     let cwd: String?
+    /// Path of the JSONL relative to the agent projects root. The file lives
+    /// under the encoded launch directory, which can differ from `cwd` after
+    /// the agent cd'd elsewhere — use this to locate/copy the file.
+    let fileRel: String?
     let size: Int64
     let mtime: Int64
 
@@ -19,6 +23,7 @@ struct AgentConversation: Codable, Identifiable, Hashable {
         case aiTitle = "ai_title"
         case summary
         case cwd
+        case fileRel = "file_rel"
         case size
         case mtime
     }

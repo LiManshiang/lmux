@@ -22,8 +22,13 @@ type ConversationSummary struct {
 	AITitle   string `json:"ai_title"`
 	Summary   string `json:"summary"`
 	CWD       string `json:"cwd"`
-	Size      int64  `json:"size"`
-	MTime     int64  `json:"mtime"` // unix seconds (file mod time)
+	// FileRel is the conversation file's path relative to the agent projects
+	// root (e.g. "Users-limanshiang/<id>.jsonl"). The file's directory is the
+	// encoded project it was launched under, which can differ from CWD once the
+	// agent cd'd elsewhere — so previews and restores locate files via FileRel.
+	FileRel string `json:"file_rel"`
+	Size    int64  `json:"size"`
+	MTime   int64  `json:"mtime"` // unix seconds (file mod time)
 }
 
 type conversationsCacheEntry struct {
@@ -91,47 +96,59 @@ func ListConversations(agent, projectDir string) ([]ConversationSummary, error) 
 }
 
 func scanProjectRoot(agentName, root, projectDir string) ([]ConversationSummary, error) {
-	// Restrict to one encoded directory when projectDir is given.
-	var walkDir string
+	// Determine the project directories to scan. When projectDir is given we
+	// scan only its encoded directory; otherwise every top-level directory.
+	// Only files directly under a project dir (depth 1) are conversations —
+	// deeper JSONL (subagents/, task sub-conversations) is agent-internal and
+	// is not browsable as a top-level conversation.
+	var dirs []string
 	if projectDir != "" {
 		enc := encodeAgentProjectDir(agentName, projectDir)
 		if enc == "" {
 			return nil, nil
 		}
-		walkDir = filepath.Join(root, enc)
+		dirs = []string{filepath.Join(root, enc)}
 	} else {
-		walkDir = root
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("scan %s: %w", root, err)
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				dirs = append(dirs, filepath.Join(root, e.Name()))
+			}
+		}
 	}
 
 	var out []ConversationSummary
-	err := filepath.WalkDir(walkDir, func(path string, d os.DirEntry, err error) error {
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return nil // skip unreadable entries
+			continue
 		}
-		if d.IsDir() {
-			return nil
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			item := probeJSONL(path, agentName, info.Size())
+			if item.SessionID == "" {
+				continue
+			}
+			if rel, err := filepath.Rel(root, path); err == nil {
+				item.FileRel = rel
+			}
+			item.Size = info.Size()
+			item.MTime = info.ModTime().Unix()
+			out = append(out, item)
 		}
-		if filepath.Ext(d.Name()) != ".jsonl" {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		item := probeJSONL(path, agentName, info.Size())
-		if item.SessionID == "" {
-			return nil
-		}
-		item.Size = info.Size()
-		item.MTime = info.ModTime().Unix()
-		out = append(out, item)
-		return nil
-	})
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("scan %s: %w", walkDir, err)
 	}
 	return out, nil
 }
@@ -143,6 +160,42 @@ func encodeAgentProjectDir(agentName, projectDir string) string {
 	default:
 		return encodeCodebuddyProjectDir(projectDir)
 	}
+}
+
+// findConversationFile returns the on-disk path of an agent conversation by
+// scanning the top-level encoded project directories for "<id>.jsonl".
+func findConversationFile(agent, sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	var root string
+	if agent == "claude" {
+		root = filepath.Join(home, ".claude", "projects")
+	} else {
+		root = filepath.Join(home, ".codebuddy", "projects")
+	}
+	target := sessionID + ".jsonl"
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(root, e.Name(), target)
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+			return p
+		}
+	}
+	// Some setups keep files directly in the root.
+	direct := filepath.Join(root, target)
+	if info, err := os.Stat(direct); err == nil && info.Mode().IsRegular() {
+		return direct
+	}
+	return ""
 }
 
 // probeJSONL reads a small head/tail window and extracts a conversation's id,
@@ -214,20 +267,15 @@ type MessageRow struct {
 // PreviewConversation returns the most recent plain-text user/assistant
 // messages of a conversation (tool calls/results and reasoning filtered out),
 // read from the JSONL tail so huge files stay cheap.
-func PreviewConversation(agent, projectDir, sessionID string) []MessageRow {
-	home, err := os.UserHomeDir()
-	if err != nil {
+//
+// The file is located by scanning the agent's project directories for the id
+// — the conversation's cwd can wander after cd, so directory-encoded-from-cwd
+// lookups miss many files.
+func PreviewConversation(agent, sessionID string) []MessageRow {
+	path := findConversationFile(agent, sessionID)
+	if path == "" {
 		return nil
 	}
-	var root, enc string
-	if agent == "claude" {
-		root = ".claude"
-		enc = encodeClaudeProjectDir(projectDir)
-	} else {
-		root = ".codebuddy"
-		enc = encodeCodebuddyProjectDir(projectDir)
-	}
-	path := filepath.Join(home, root, "projects", enc, sessionID+".jsonl")
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -339,7 +387,9 @@ func observePreviewLine(agent string, line []byte, appendRow func(role, text str
 	}
 	var text string
 	for _, b := range row.Content {
-		if b.Type == "text" && b.Text != "" {
+		// codebuddy text blocks are "text" in older files and "output_text"
+		// in newer ones; both carry the readable message in `text`.
+		if (b.Type == "text" || b.Type == "output_text") && b.Text != "" {
 			text += b.Text + "\n"
 		}
 	}

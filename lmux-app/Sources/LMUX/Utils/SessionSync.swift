@@ -353,20 +353,32 @@ enum SessionSync {
         return (importedCount, conflicts)
     }
 
-    /// All *.jsonl files under a directory (recursive), newest first.
+    /// All top-level conversation files under a directory (one level deep,
+    /// matching the backend's file_rel layout). Deeper JSONL (subagents/,
+    /// task sub-conversations) is agent-internal and not part of the mirror.
     private static func enumerateJSONL(under root: URL) -> [URL]? {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else {
+            return nil
+        }
         var files: [URL] = []
-        for case let url as URL in enumerator {
-            if url.pathExtension == "jsonl" {
-                files.append(url)
+        for entry in entries {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDir), isDir.boolValue {
+                // One level down: encoded project dir -> conversation JSONL.
+                if let inner = try? FileManager.default.contentsOfDirectory(
+                    at: entry,
+                    includingPropertiesForKeys: nil
+                ) {
+                    for file in inner where file.pathExtension == "jsonl" {
+                        files.append(file)
+                    }
+                }
+            } else if entry.pathExtension == "jsonl" {
+                // Files directly under the root.
+                files.append(entry)
             }
         }
-        files.sort { ($0.path) < ($1.path) }
+        files.sort { $0.path < $1.path }
         return files
     }
 
@@ -374,14 +386,24 @@ enum SessionSync {
     /// pull it back from the sync mirror (M2 keeps an agent JSONL mirror next
     /// to the .lmuxsession exports) so `agent --resume <id>` can find it.
     /// No-op when there is no mirror copy or the local file already exists.
-    static func restoreAgentFileIfMissing(agentName: String, sessionID: String, projectDir: String) {
-        guard let mirrorRoot = agentsDir(agentName: agentName) else { return }
-        let enc = encodedProjectDir(agentType: agentName, projectDir: projectDir)
-        let local = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent((agentName == "claude" ? ".claude/projects" : ".codebuddy/projects") + "/\(enc)/\(sessionID).jsonl")
-        guard !FileManager.default.fileExists(atPath: local.path) else { return }
+    ///
+    /// `fileRel` is the file's path relative to the agent projects root as
+    /// reported by the backend (mirror layout matches it). Falls back to the
+    /// encoded projectDir for older backends that lack `file_rel`.
+    static func restoreAgentFileIfMissing(agentName: String, sessionID: String, fileRel: String?, projectDir: String) {
+        let localRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(agentName == "claude" ? ".claude/projects" : ".codebuddy/projects", isDirectory: true)
+        let subpath: String
+        if let fileRel, !fileRel.isEmpty {
+            subpath = fileRel
+        } else {
+            subpath = "\(encodedProjectDir(agentType: agentName, projectDir: projectDir))/\(sessionID).jsonl"
+        }
 
-        let mirrorFile = mirrorRoot.appendingPathComponent(enc).appendingPathComponent("\(sessionID).jsonl")
+        let local = localRoot.appendingPathComponent(subpath)
+        guard !FileManager.default.fileExists(atPath: local.path) else { return }
+        guard let mirrorRoot = agentsDir(agentName: agentName) else { return }
+        let mirrorFile = mirrorRoot.appendingPathComponent(subpath)
         guard FileManager.default.fileExists(atPath: mirrorFile.path) else { return }
         do {
             try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)

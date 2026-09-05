@@ -368,16 +368,15 @@ func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request)
 // messages of one conversation for the Agent browser's preview pane.
 func (h *Handler) AgentConversationPreview(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Agent      string `json:"agent"`
-		ProjectDir string `json:"project_dir"`
-		SessionID  string `json:"session_id"`
+		Agent     string `json:"agent"`
+		SessionID string `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
-		body.Agent == "" || body.ProjectDir == "" || body.SessionID == "" {
-		writeError(w, http.StatusBadRequest, "invalid agent/project_dir/session_id")
+		body.Agent == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/session_id")
 		return
 	}
-	rows := codebuddy.PreviewConversation(body.Agent, body.ProjectDir, body.SessionID)
+	rows := codebuddy.PreviewConversation(body.Agent, body.SessionID)
 	if rows == nil {
 		writeError(w, http.StatusNotFound, "conversation file not found")
 		return
