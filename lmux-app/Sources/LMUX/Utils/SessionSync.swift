@@ -27,19 +27,60 @@ enum SessionSync {
     private static let offsetsKey = "lmux_sync_offsets"
     private static let importedMtimesKey = "lmux_sync_imported_mtimes"
 
+    /// Sync state lives in a shared UserDefaults suite so both app products —
+    /// the ghostty build (`com.manshiangli.lmux`) and the SwiftTerm macOS 12
+    /// build (`com.manshiangli.lmux-st`) — see the SAME sync directory, path
+    /// mappings, device id and offsets. `UserDefaults.standard` is scoped to
+    /// the bundle id, so the st variant would otherwise show an empty sync
+    /// config (different Sync settings layout) from the master build.
+    ///
+    /// First access migrates any existing per-bundle values (from before the
+    /// suite existed) into the shared domain.
+    private static let defaults: UserDefaults = {
+        let shared = UserDefaults(suiteName: "com.manshiangli.lmux.sync")!
+        migrateLegacySyncState(into: shared)
+        return shared
+    }()
+
+    /// Copy sync config written under an old per-bundle domain into the
+    /// shared suite, once. Candidate domains: this bundle, then the canonical
+    /// master bundle id (so a fresh st install inherits the master config).
+    private static func migrateLegacySyncState(into shared: UserDefaults) {
+        let alreadyHasData = shared.object(forKey: enabledKey) != nil
+            || shared.string(forKey: syncDirKey) != nil
+            || shared.string(forKey: deviceIDKey) != nil
+        guard !alreadyHasData else { return }
+
+        let candidates = [Bundle.main.bundleIdentifier, "com.manshiangli.lmux"].compactMap { $0 }
+        for bid in candidates {
+            guard let legacy = UserDefaults(suiteName: bid) else { continue }
+            let hasConfig = legacy.object(forKey: enabledKey) != nil
+                || legacy.string(forKey: syncDirKey) != nil
+                || legacy.string(forKey: deviceIDKey) != nil
+                || legacy.dictionary(forKey: offsetsKey) != nil
+            guard hasConfig else { continue }
+            for key in [enabledKey, syncDirKey, mappingsKey, deviceIDKey, offsetsKey, importedMtimesKey] {
+                if let value = legacy.object(forKey: key) {
+                    shared.set(value, forKey: key)
+                }
+            }
+            break
+        }
+    }
+
     static var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: enabledKey) }
-        set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
+        get { defaults.bool(forKey: enabledKey) }
+        set { defaults.set(newValue, forKey: enabledKey) }
     }
 
     static var syncDir: String? {
-        get { UserDefaults.standard.string(forKey: syncDirKey) }
-        set { UserDefaults.standard.set(newValue, forKey: syncDirKey) }
+        get { defaults.string(forKey: syncDirKey) }
+        set { defaults.set(newValue, forKey: syncDirKey) }
     }
 
     static var pathMappings: [PathMapping] {
         get {
-            guard let raw = UserDefaults.standard.array(forKey: mappingsKey) as? [[String]] else { return [] }
+            guard let raw = defaults.array(forKey: mappingsKey) as? [[String]] else { return [] }
             return raw.compactMap { pair in
                 guard pair.count == 2, !pair[0].isEmpty else { return nil }
                 return PathMapping(from: pair[0], to: pair[1])
@@ -47,16 +88,16 @@ enum SessionSync {
         }
         set {
             let raw = newValue.map { [$0.from, $0.to] }
-            UserDefaults.standard.set(raw, forKey: mappingsKey)
+            defaults.set(raw, forKey: mappingsKey)
         }
     }
 
     static var deviceID: String {
-        if let existing = UserDefaults.standard.string(forKey: deviceIDKey) {
+        if let existing = defaults.string(forKey: deviceIDKey) {
             return existing
         }
         let id = UUID().uuidString
-        UserDefaults.standard.set(id, forKey: deviceIDKey)
+        defaults.set(id, forKey: deviceIDKey)
         return id
     }
 
@@ -66,10 +107,10 @@ enum SessionSync {
     /// Persisted so an incremental export resumes correctly after restart.
     private static var exportedOffsets: [String: Int64] {
         get {
-            UserDefaults.standard.dictionary(forKey: offsetsKey) as? [String: Int64] ?? [:]
+            defaults.dictionary(forKey: offsetsKey) as? [String: Int64] ?? [:]
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: offsetsKey)
+            defaults.set(newValue, forKey: offsetsKey)
         }
     }
 
@@ -93,10 +134,10 @@ enum SessionSync {
     /// would only refresh, but skipping is still cheaper and quieter).
     private static var lastImportedFileMtime: [String: TimeInterval] {
         get {
-            UserDefaults.standard.dictionary(forKey: importedMtimesKey) as? [String: TimeInterval] ?? [:]
+            defaults.dictionary(forKey: importedMtimesKey) as? [String: TimeInterval] ?? [:]
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: importedMtimesKey)
+            defaults.set(newValue, forKey: importedMtimesKey)
         }
     }
 
@@ -369,7 +410,7 @@ enum SessionSync {
 
     /// Reset in-memory and persisted state (tests).
     static func resetStateForTesting() {
-        UserDefaults.standard.removeObject(forKey: offsetsKey)
-        UserDefaults.standard.removeObject(forKey: importedMtimesKey)
+        defaults.removeObject(forKey: offsetsKey)
+        defaults.removeObject(forKey: importedMtimesKey)
     }
 }
