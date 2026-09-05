@@ -163,3 +163,97 @@ func TestScanProjectRootFiltered(t *testing.T) {
 		t.Fatalf("filtered = %+v", onlyA)
 	}
 }
+
+func TestDedupeConversationsKeepsNewest(t *testing.T) {
+	items := []ConversationSummary{
+		{Agent: "codebuddy", SessionID: "same", MTime: 100},
+		{Agent: "codebuddy", SessionID: "same", MTime: 300},
+		{Agent: "codebuddy", SessionID: "other", MTime: 200},
+		{Agent: "claude", SessionID: "same", MTime: 500}, // different agent keeps both
+	}
+	got := dedupeConversations(items)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3 (%+v)", len(got), got)
+	}
+	// codebuddy|same must be the 300 entry.
+	for _, c := range got {
+		if c.Agent == "codebuddy" && c.SessionID == "same" && c.MTime != 300 {
+			t.Fatalf("duplicate not newest: %+v", c)
+		}
+	}
+}
+
+func TestFilterBoundConversations(t *testing.T) {
+	convs := []ConversationSummary{
+		{Agent: "codebuddy", SessionID: "a", MTime: 1},
+		{Agent: "codebuddy", SessionID: "b", MTime: 2},
+		{Agent: "claude", SessionID: "c", MTime: 3},
+	}
+	bound := map[string]bool{"b": true}
+	visible, hidden := FilterBoundConversations(convs, bound)
+	if hidden != 1 || len(visible) != 2 {
+		t.Fatalf("hidden=%d visible=%d, want 1/2", hidden, len(visible))
+	}
+	for _, c := range visible {
+		if c.SessionID == "b" {
+			t.Fatalf("bound session leaked through: %+v", c)
+		}
+	}
+}
+
+func TestPreviewClaudeRows(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTempJSONL(t, dir, "cl-p.jsonl", strings.Join([]string{
+		`{"type":"user","sessionId":"cl","message":{"role":"user","content":"plain string ask"}}`,
+		`{"type":"assistant","sessionId":"cl","message":{"role":"assistant","content":[{"type":"text","text":"blocks reply"},{"type":"tool_use","name":"Bash","input":{}}]}}`,
+		`{"type":"user","sessionId":"cl","message":{"role":"user","content":[{"type":"text","text":"second ask"}]}}`,
+		`{"type":"last-prompt","lastPrompt":"second ask"}`,
+		"",
+	}, "\n"))
+	data, _ := os.ReadFile(path)
+	var rows []MessageRow
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		observePreviewLine("claude", []byte(line), func(role, text string) {
+			rows = append(rows, MessageRow{Role: role, Text: text})
+		})
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v, want 3", rows)
+	}
+	if rows[0].Role != "user" || strings.TrimSpace(rows[0].Text) != "plain string ask" {
+		t.Fatalf("row0 = %+v", rows[0])
+	}
+	if rows[1].Role != "assistant" || !strings.Contains(rows[1].Text, "blocks reply") {
+		t.Fatalf("row1 = %+v", rows[1])
+	}
+	if rows[1].Role == "assistant" && strings.Contains(rows[1].Text, "Bash") {
+		t.Fatalf("tool_use leaked into assistant text: %+v", rows[1])
+	}
+	if rows[2].Role != "user" || strings.TrimSpace(rows[2].Text) != "second ask" {
+		t.Fatalf("row2 = %+v", rows[2])
+	}
+}
+
+func TestFindConversationInRoot(t *testing.T) {
+	root := t.TempDir()
+	encA := filepath.Join(root, "dir-a")
+	encB := filepath.Join(root, "dir-b")
+	if err := os.MkdirAll(encA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(encB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTempJSONL(t, encA, "id-x.jsonl", "{}")
+	writeTempJSONL(t, encB, "id-y.jsonl", "{}")
+	// A conversation id must be found wherever it lives.
+	if p := findConversationInRoot(root, "id-x"); p == "" || p != filepath.Join(encA, "id-x.jsonl") {
+		t.Fatalf("id-x found at %q", p)
+	}
+	if p := findConversationInRoot(root, "id-y"); p == "" {
+		t.Fatalf("id-y not found")
+	}
+	if p := findConversationInRoot(root, "missing"); p != "" {
+		t.Fatalf("missing returned %q", p)
+	}
+}

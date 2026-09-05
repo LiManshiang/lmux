@@ -91,17 +91,7 @@ func ListConversations(agent, projectDir string) ([]ConversationSummary, error) 
 	// to the original). Keep the newest per agent+id so the browser never
 	// shows duplicate rows (which also made a SwiftUI List highlight several
 	// rows sharing one tag).
-	byKey := make(map[string]ConversationSummary, len(out))
-	for _, c := range out {
-		key := c.Agent + "|" + c.SessionID
-		if prev, ok := byKey[key]; !ok || c.MTime > prev.MTime {
-			byKey[key] = c
-		}
-	}
-	out = make([]ConversationSummary, 0, len(byKey))
-	for _, c := range byKey {
-		out = append(out, c)
-	}
+	out = dedupeConversations(out)
 
 	sort.Slice(out, func(i, j int) bool { return out[i].MTime > out[j].MTime })
 
@@ -109,6 +99,36 @@ func ListConversations(agent, projectDir string) ([]ConversationSummary, error) 
 	conversationsCache = conversationsCacheEntry{agent: agent, projectDir: projectDir, at: time.Now(), items: out}
 	conversationsMu.Unlock()
 	return out, nil
+}
+
+// dedupeConversations keeps only the newest entry per agent+id.
+func dedupeConversations(items []ConversationSummary) []ConversationSummary {
+	byKey := make(map[string]ConversationSummary, len(items))
+	for _, c := range items {
+		key := c.Agent + "|" + c.SessionID
+		if prev, ok := byKey[key]; !ok || c.MTime > prev.MTime {
+			byKey[key] = c
+		}
+	}
+	out := make([]ConversationSummary, 0, len(byKey))
+	for _, c := range byKey {
+		out = append(out, c)
+	}
+	return out
+}
+
+// FilterBoundConversations drops conversations whose session id is in `bound`
+// (i.e. already attached to an lmux session) and returns how many were hidden.
+func FilterBoundConversations(convs []ConversationSummary, bound map[string]bool) (visible []ConversationSummary, hidden int) {
+	visible = make([]ConversationSummary, 0, len(convs))
+	for _, c := range convs {
+		if bound[c.SessionID] {
+			hidden++
+			continue
+		}
+		visible = append(visible, c)
+	}
+	return visible, hidden
 }
 
 func scanProjectRoot(agentName, root, projectDir string) ([]ConversationSummary, error) {
@@ -191,6 +211,12 @@ func findConversationFile(agent, sessionID string) string {
 	} else {
 		root = filepath.Join(home, ".codebuddy", "projects")
 	}
+	return findConversationInRoot(root, sessionID)
+}
+
+// findConversationInRoot looks for "<sessionID>.jsonl" directly under one of
+// the root's subdirectories (or the root itself).
+func findConversationInRoot(root, sessionID string) string {
 	target := sessionID + ".jsonl"
 
 	entries, err := os.ReadDir(root)
