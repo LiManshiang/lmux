@@ -63,16 +63,6 @@ struct ContentView: View {
         HStack(spacing: 10) {
             Text("lmux")
                 .font(.system(size: 13, weight: .semibold))
-            Spacer()
-            Picker("Browse", selection: $sidebarTab) {
-                Text("Sessions").tag("sessions")
-                Text("Agent").tag("agent")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 240)
-            .fixedSize()
-            Spacer()
             HStack(spacing: 4) {
 #if canImport(GhosttyTerminal)
                 if selectedRenderer == TerminalRendererSetting.ghostty {
@@ -96,6 +86,32 @@ struct ContentView: View {
                 Text(AppVersion.current)
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
+            }
+            Spacer()
+            Picker("Browse", selection: $sidebarTab) {
+                Text("Sessions").tag("sessions")
+                Text("Agent").tag("agent")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 240)
+            .fixedSize()
+            Spacer()
+            // Invisible right spacer that mirrors the left group's width so the
+            // segmented control stays visually centered.
+            HStack(spacing: 4) {
+                if selectedRenderer == TerminalRendererSetting.ghostty {
+                    Text("Ghostty")
+                        .font(.system(size: 8))
+                        .foregroundColor(.clear)
+                } else {
+                    Text("SwiftTerm")
+                        .font(.system(size: 8))
+                        .foregroundColor(.clear)
+                }
+                Text(AppVersion.current)
+                    .font(.system(size: 9))
+                    .foregroundColor(.clear)
             }
         }
         .padding(.horizontal, 12)

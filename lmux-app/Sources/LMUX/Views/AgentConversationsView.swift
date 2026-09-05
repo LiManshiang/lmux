@@ -14,6 +14,24 @@ struct AgentBrowserView: View {
 
     private var filterID: String { "\(viewModel.agentFilterName)|\(viewModel.agentFilterProjectDir)" }
 
+    /// Dropdown choices: the two known agents plus any extra agent found in the
+    /// current result set (so a future third agent appears automatically).
+    private var agentMenuOptions: [String] {
+        var set = Set(viewModel.agentConversations.map(\.agent))
+        set.insert(viewModel.agentFilterName)
+        set.insert("codebuddy")
+        set.insert("claude")
+        return set.filter { !$0.isEmpty }.sorted()
+    }
+
+    static func displayName(for agent: String) -> String {
+        switch agent {
+        case "codebuddy": return "CodeBuddy"
+        case "claude": return "Claude"
+        default: return agent
+        }
+    }
+
     private var filtered: [AgentConversation] {
         let items = viewModel.agentConversations
         guard !searchText.isEmpty else { return items }
@@ -54,13 +72,24 @@ struct AgentBrowserView: View {
 
     private var filters: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Picker("Agent", selection: $viewModel.agentFilterName) {
-                Text("All").tag("")
-                Text("CodeBuddy").tag("codebuddy")
-                Text("Claude").tag("claude")
+            HStack(spacing: 8) {
+                Image(systemName: "person.2")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                // Dropdown rather than segmented tabs so additional agents can
+                // be added later without overflowing the row. Options are the
+                // known agents plus any agent present in the loaded data.
+                Picker("Agent", selection: $viewModel.agentFilterName) {
+                    Text("All agents").tag("")
+                    ForEach(agentMenuOptions, id: \.self) { name in
+                        Text(AgentBrowserView.displayName(for: name)).tag(name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             HStack(spacing: 6) {
                 TextField("All directories (or type a path)", text: $viewModel.agentFilterProjectDir)
