@@ -33,7 +33,7 @@ ST_APP_NAME = lmux-st.app
 ST_APP_DIR = .build-st/$(ST_APP_NAME)
 ST_ICON_PNG = Resources/lmux-icon-st.png
 # SwiftPM places per-target products under <scratch>/<triple>/debug.
-BINARY_ST = .build-st/$(HOST_ARCH)-apple-macosx/debug/lmux
+BINARY_ST = .build-st/debug/lmux
 # st variant is a distinct bundle (isolated UserDefaults / launch services).
 ST_BUNDLE_ID = com.manshiangli.lmux-st
 
