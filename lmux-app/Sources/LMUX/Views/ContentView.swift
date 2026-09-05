@@ -103,12 +103,14 @@ struct ContentView: View {
             // button, search, app identity + overflow menu. No top strip, so
             // the terminal area is taller.
             VStack(spacing: 0) {
-                HStack {
-                    Spacer()
+                // Sessions/Agent switch pinned to the top-left, matching the
+                // Agent page so switching pages doesn't jump the control.
+                HStack(spacing: 0) {
                     tabSwitch
                         .fixedSize()
                     Spacer()
                 }
+                .padding(.horizontal, 12)
                 .padding(.vertical, 6)
 
                 Divider()
