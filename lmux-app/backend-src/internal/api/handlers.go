@@ -308,7 +308,6 @@ func (h *Handler) AgentFindSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // AgentSessionValid reports whether a session ID belongs to the given agent.
-// Only codebuddy currently supports validation.
 func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/agent/session-valid/")
 	parts := strings.SplitN(rest, "/", 2)
@@ -323,7 +322,32 @@ func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 			valid = info.HasAssistant
 		}
 	}
+	if agent == "claude" {
+		// A claude conversation is valid when its JSONL exists under
+		// ~/.claude/projects. Without this, ClaudeProvider would validate a
+		// claude ID against the codebuddy store, get false, and silently
+		// drop a perfectly good binding on restart.
+		valid = codebuddy.ClaudeSessionFileExists(id)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
+}
+
+// AgentRecentCwd returns the last working directory recorded in the agent's
+// conversation — where the agent most recently reported working (it can cd
+// between turns, independent of the process's own cwd).
+func (h *Handler) AgentRecentCwd(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent      string `json:"agent"`
+		ProjectDir string `json:"project_dir"`
+		SessionID  string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.Agent == "" || body.ProjectDir == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/project_dir/session_id")
+		return
+	}
+	cwd := codebuddy.RecentSessionCwd(body.Agent, body.ProjectDir, body.SessionID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cwd": cwd})
 }
 
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID

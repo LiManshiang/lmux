@@ -2,6 +2,7 @@ package codebuddy
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -246,6 +247,73 @@ func FindRecentSessionForProject(projectDir string) string {
 	return findRecentCached(filepath.Join(home, ".codebuddy", "projects", encoded), nil)
 }
 
+// encodeCodebuddyProjectDir maps a filesystem path to codebuddy's project
+// directory name (/Users/x/dev -> Users-x-dev, no leading dash).
+func encodeCodebuddyProjectDir(projectDir string) string {
+	s := strings.TrimPrefix(projectDir, "/")
+	return strings.ReplaceAll(s, "/", "-")
+}
+
+// RecentSessionCwd returns the last recorded working directory for a
+// conversation: the JSONL records a "cwd" field on every message, so this is
+// where the agent most recently reported working (it can cd between turns,
+// independent of the process's own cwd). Reads only the file tail rather
+// than the whole history. Returns "" when unavailable.
+func RecentSessionCwd(agent, projectDir, sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	var root, enc string
+	if agent == "claude" {
+		root = ".claude"
+		enc = encodeClaudeProjectDir(projectDir)
+	} else {
+		root = ".codebuddy"
+		enc = encodeCodebuddyProjectDir(projectDir)
+	}
+	path := filepath.Join(home, root, "projects", enc, sessionID+".jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	st, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	const tailSize = 256 << 10
+	off := st.Size() - tailSize
+	if off < 0 {
+		off = 0
+	}
+	buf := make([]byte, tailSize)
+	n, err := f.ReadAt(buf, off)
+	if err != nil && n == 0 {
+		return ""
+	}
+	buf = buf[:n]
+
+	last := ""
+	start := 0
+	for i := 0; i <= len(buf); i++ {
+		if i == len(buf) || buf[i] == '\n' {
+			line := bytes.TrimSpace(buf[start:i])
+			if len(line) > 0 {
+				var entry struct {
+					CWD string `json:"cwd"`
+				}
+				if json.Unmarshal(line, &entry) == nil && entry.CWD != "" {
+					last = entry.CWD
+				}
+			}
+			start = i + 1
+		}
+	}
+	return last
+}
+
 // FindRecentSessionForProjectAfter returns the most recently created codebuddy
 // conversation ID created after the given time, or "" when there is none.
 func FindRecentSessionForProjectAfter(projectDir string, after time.Time) string {
@@ -432,6 +500,32 @@ func FindRecentClaudeSession(projectDir string) string {
 	}
 	projDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectDir(projectDir))
 	return findRecentCached(projDir, nil)
+}
+
+// ClaudeSessionFileExists reports whether a claude conversation JSONL with
+// this ID exists under any project directory in ~/.claude/projects. Claude
+// session IDs are UUIDs unique across projects, so scanning by name is
+// sufficient — this lets the frontend tell a real claude conversation ID
+// apart from a codebuddy ID that was saved on the wrong agent.
+func ClaudeSessionFileExists(sessionID string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	root := filepath.Join(home, ".claude", "projects")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, entry.Name(), sessionID+".jsonl")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // FindRecentClaudeSessionAfter returns the most recently created claude

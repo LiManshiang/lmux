@@ -36,6 +36,13 @@ final class MockAgentService: AgentSessionService {
         boundCBC[sessionID] = cbcSessionID
     }
 
+    /// Mock agentCwd: returns a canned working dir per session, or nil.
+    var cwdResults: [String: String] = [:]
+
+    func agentCwd(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
+        cwdResults[sessionID]
+    }
+
     /// Records the most recent setCBCSessionID binding per session.
     var boundCBC: [String: String] = [:]
 }
