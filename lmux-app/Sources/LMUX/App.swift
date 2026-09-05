@@ -11,10 +11,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// reply reaches AppKit.
     private var didReplyToTerminate = false
 
+    /// Non-modal progress panel shown while the final sync runs on quit, so
+    /// the user knows the app is finishing, not hung.
+    private var syncPanel: NSPanel?
+
     private func replyToTerminate(_ sender: NSApplication, shouldTerminate: Bool) {
+        hideSyncPanel()
         guard !didReplyToTerminate else { return }
         didReplyToTerminate = true
         sender.reply(toApplicationShouldTerminate: shouldTerminate)
+    }
+
+    private func showSyncPanel() {
+        hideSyncPanel()
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 84),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Sync & Quit"
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.startAnimation(nil)
+
+        let label = NSTextField(labelWithString: "Synchronizing sessions before quitting…")
+        label.font = .systemFont(ofSize: 12)
+        label.lineBreakMode = .byTruncatingTail
+
+        let stack = NSStackView(views: [spinner, label])
+        stack.orientation = .horizontal
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = panel.contentView!
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -16),
+            stack.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+        ])
+
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        syncPanel = panel
+    }
+
+    private func hideSyncPanel() {
+        syncPanel?.close()
+        syncPanel = nil
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -57,9 +107,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Defer termination; reply with true once the export finishes.
         // (Do NOT call reply(false) here — that cancels the termination and
         // the later reply(true) is ignored, leaving the app running.)
-        // A hard cap ensures the app quits even if a sync request hangs.
+        // Show a progress panel so the quit doesn't look like a hang, and cap
+        // the sync so the app quits even if a sync request hangs.
+        showSyncPanel()
         let syncTask = Task { @MainActor in
-            await viewModel.syncNow()
+            _ = await viewModel.syncNow()
             replyToTerminate(sender, shouldTerminate: true)
         }
         Task {
@@ -105,7 +157,10 @@ struct LmuxApp: App {
                     .keyboardShortcut("k", modifiers: .command)
                 Divider()
                 Button("Sync Now") {
-                    Task { await viewModel.syncNow() }
+                    Task {
+                        let result = await viewModel.syncNow()
+                        viewModel.reportSyncResult(result)
+                    }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(viewModel.syncInProgress)

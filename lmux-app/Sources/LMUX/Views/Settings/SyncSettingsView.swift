@@ -20,7 +20,10 @@ struct SyncSettingsView: View {
                     .foregroundColor(.secondary)
 
                 Button {
-                    Task { await viewModel.syncNow() }
+                    Task {
+                        let result = await viewModel.syncNow()
+                        viewModel.reportSyncResult(result)
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         if viewModel.syncInProgress {
