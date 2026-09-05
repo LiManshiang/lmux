@@ -41,13 +41,6 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showHelp) {
             HelpView()
         }
-        .sheet(isPresented: $viewModel.showSettings) {
-            // Preferences as a sheet (the App menu Settings scene is separate;
-            // the (⋯) menu opens this one so the click always responds).
-            PreferencesView()
-                .environmentObject(viewModel)
-                .frame(width: 580, height: 440)
-        }
         .sheet(item: $viewModel.editingSession) { session in
             EditSessionSheet(session: session)
                 .environmentObject(viewModel)
@@ -196,7 +189,7 @@ struct ContentView: View {
             }
             Divider()
             Button {
-                viewModel.showSettings = true
+                SettingsWindowController.shared.open(viewModel: viewModel)
             } label: {
                 Label("Settings…", systemImage: "gearshape")
             }
