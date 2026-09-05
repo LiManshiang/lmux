@@ -47,6 +47,12 @@ public protocol AgentSessionService {
     /// the session record (edit sheet, sidebar, lazy restore) reflects the
     /// binding even when detection was the only path that learned the ID.
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws
+
+    /// Last working directory recorded in the agent's conversation (where it
+    /// most recently reported working). Unlike the process cwd — which for a
+    /// pty-spawned agent is its launch directory and never changes — this
+    /// tracks the agent's real working directory across `cd`s.
+    func agentCwd(agent: AgentType, projectDir: String, sessionID: String) async -> String?
 }
 
 /// Encapsulates everything that is agent-specific. Main flow (connect,

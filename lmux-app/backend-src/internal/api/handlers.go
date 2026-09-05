@@ -333,6 +333,24 @@ func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
 }
 
+// AgentRecentCwd returns the last working directory recorded in the agent's
+// conversation — where the agent most recently reported working (it can cd
+// between turns, independent of the process's own cwd).
+func (h *Handler) AgentRecentCwd(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent      string `json:"agent"`
+		ProjectDir string `json:"project_dir"`
+		SessionID  string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.Agent == "" || body.ProjectDir == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/project_dir/session_id")
+		return
+	}
+	cwd := codebuddy.RecentSessionCwd(body.Agent, body.ProjectDir, body.SessionID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cwd": cwd})
+}
+
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
 // for a project directory by scanning JSONL files.
 func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {

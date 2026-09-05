@@ -220,6 +220,28 @@ class APIClient: AgentSessionService {
         return (resp.tokens, resp.contextWindow, resp.model)
     }
 
+    func agentCwd(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
+        struct Body: Codable {
+            let agent: String
+            let projectDir: String
+            let sessionID: String
+            enum CodingKeys: String, CodingKey {
+                case agent
+                case projectDir = "project_dir"
+                case sessionID = "session_id"
+            }
+        }
+        struct Response: Codable {
+            let cwd: String?
+        }
+        guard let data = try? await post("/api/agent/cwd", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
+              let resp = try? decode(Response.self, from: data),
+              let cwd = resp.cwd, !cwd.isEmpty else {
+            return nil
+        }
+        return cwd
+    }
+
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
         struct Body: Codable {
             let cbcSessionID: String

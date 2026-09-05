@@ -289,39 +289,60 @@ class TerminalManager: ObservableObject {
 
     /// Poll the shell process CPU/memory usage (and its live working
     /// directory) every few seconds so the sidebar can surface runaway agents
-    /// and the header can follow `cd` away from the configured projectDir.
+    /// and the header can follow the session's real working directory.
     private func startPerfMonitoring() {
         perfTimer?.invalidate()
         perfTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
             let pid = self.processPID
+
+            // Process cwd (bash sessions): only meaningful when no agent
+            // conversation is bound — a pty-spawned agent's process never
+            // cd's. Polled off the main actor (ps spawn).
             Task.detached {
                 let (cpu, mem, cwd) = Self.queryProcessStats(pid: pid)
                 await MainActor.run {
                     self.cpuPercent = cpu
                     self.memoryMB = mem
-                    guard let cwd else { return }
-                    if self.baselineCwd == nil {
-                        // First observation anchors the baseline (process
-                        // launch context). It is usually NOT the projectDir
-                        // (pty login dir), so it is not shown.
-                        self.baselineCwd = cwd
-                        if self.currentWorkingDirectory != nil {
-                            self.currentWorkingDirectory = nil
-                        }
-                        return
-                    }
-                    // Publish only deviations from the baseline — a real user
-                    // `cd`. Returning to the baseline clears the override so
-                    // the header shows projectDir again.
-                    let deviated = cwd != self.baselineCwd
-                    if deviated, cwd != self.currentWorkingDirectory {
-                        self.currentWorkingDirectory = cwd
-                    } else if !deviated, self.currentWorkingDirectory != nil {
-                        self.currentWorkingDirectory = nil
-                    }
+                    guard self.detectedCBCSessionID == nil else { return }
+                    self.applyProcCwd(cwd)
                 }
             }
+
+            // Agent sessions: the conversation JSONL records a cwd on every
+            // message, so it reflects where the agent actually works (it cd's
+            // between turns). Refresh the header from that.
+            guard let agent = self.detectedAgentType,
+                  let cbc = self.detectedCBCSessionID,
+                  let service = self.agentSessionService else { return }
+            let projectDir = self.detachProjectDir ?? NSHomeDirectory()
+            Task { @MainActor in
+                let wd = await service.agentCwd(agent: agent, projectDir: projectDir, sessionID: cbc)
+                if self.currentWorkingDirectory != wd {
+                    self.currentWorkingDirectory = wd
+                }
+            }
+        }
+    }
+
+    /// Apply a process-cwd observation using the baseline rule: the pty
+    /// login/launch directory anchors the baseline and is NOT shown (the
+    /// header falls back to projectDir); only a real user `cd` away from the
+    /// baseline is published. Called only when no agent conversation is bound.
+    private func applyProcCwd(_ cwd: String?) {
+        guard let cwd else { return }
+        if baselineCwd == nil {
+            baselineCwd = cwd
+            if currentWorkingDirectory != nil {
+                currentWorkingDirectory = nil
+            }
+            return
+        }
+        let deviated = cwd != baselineCwd
+        if deviated, cwd != currentWorkingDirectory {
+            currentWorkingDirectory = cwd
+        } else if !deviated, currentWorkingDirectory != nil {
+            currentWorkingDirectory = nil
         }
     }
 
