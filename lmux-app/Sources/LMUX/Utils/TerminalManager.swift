@@ -43,6 +43,10 @@ class TerminalManager: ObservableObject {
     private(set) var processStartTime: Date?
     private(set) var processPID: Int32 = 0
     @Published private(set) var cpuPercent: Double?
+    /// The shell/agent process's live working directory, polled with the CPU
+    /// stats so the header can show where the session actually works (it can
+    /// `cd` away from the configured projectDir). nil when unknown/not running.
+    @Published private(set) var currentWorkingDirectory: String?
     @Published private(set) var memoryMB: Double?
     private var perfTimer: Timer?
     private var lastActivityTime: Date = Date()
@@ -241,15 +245,16 @@ class TerminalManager: ObservableObject {
         }
     }
 
-    /// Poll the shell process CPU/memory usage every few seconds so the
-    /// sidebar can surface runaway agents.
+    /// Poll the shell process CPU/memory usage (and its live working
+    /// directory) every few seconds so the sidebar can surface runaway agents
+    /// and the header can follow `cd` away from the configured projectDir.
     private func startPerfMonitoring() {
         perfTimer?.invalidate()
         perfTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self, self.processRunning, self.processPID > 0 else { return }
             let pid = self.processPID
             Task.detached {
-                let (cpu, mem) = Self.queryPerf(pid: pid)
+                let (cpu, mem, cwd) = Self.queryProcessStats(pid: pid)
                 await MainActor.run {
                     // Only publish when a value actually changes, so the
                     // sidebar doesn't re-render on every tick (visible as
@@ -260,9 +265,35 @@ class TerminalManager: ObservableObject {
                     if mem != self.memoryMB {
                         self.memoryMB = mem
                     }
+                    if let cwd, cwd != self.currentWorkingDirectory {
+                        self.currentWorkingDirectory = cwd
+                    }
                 }
             }
         }
+    }
+
+    nonisolated private static func queryProcessStats(pid: Int32) -> (Double?, Double?, String?) {
+        let (cpu, mem) = queryPerf(pid: pid)
+        let cwd = queryCwd(pid: pid)
+        return (cpu, mem, cwd)
+    }
+
+    /// Resolve a process's current working directory via proc_pidinfo
+    /// (PROC_PIDVNODEPATHINFO). Avoids spawning lsof on every poll.
+    nonisolated private static func queryCwd(pid: Int32) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = MemoryLayout<proc_vnodepathinfo>.size
+        let rc = withUnsafeMutablePointer(to: &info) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: Int8.self, capacity: size) { raw in
+                proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, raw, Int32(size))
+            }
+        }
+        guard rc > 0 else { return nil }
+        let path = withUnsafePointer(to: info.pvi_cdir.vip_path) { raw in
+            raw.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+        }
+        return path.isEmpty ? nil : path
     }
 
     nonisolated private static func queryPerf(pid: Int32) -> (Double?, Double?) {
@@ -293,6 +324,7 @@ class TerminalManager: ObservableObject {
         perfTimer = nil
         cpuPercent = nil
         memoryMB = nil
+        currentWorkingDirectory = nil
         stopAgentDetection()
         connectErrorMessage = nil
         // Do NOT remove the restore binding here: disconnect() is also called

@@ -1,6 +1,23 @@
 import SwiftUI
 import LMUXCore
 
+/// Header subtitle: the session process's live working directory (updates as
+/// the agent/shell `cd`s), falling back to the configured project dir. Owns
+/// the @ObservedObject so it re-renders on poll updates.
+private struct SessionCwdLabel: View {
+    @ObservedObject var manager: TerminalManager
+    let projectDir: String
+
+    var body: some View {
+        Text(manager.currentWorkingDirectory ?? projectDir)
+            .font(.system(size: 10))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help("Working directory of this session's process")
+    }
+}
+
 struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
@@ -16,9 +33,10 @@ struct SessionDetailView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(session.name)
                             .font(.system(size: 13, weight: .semibold))
-                        Text(session.projectDir)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
+                        // Live working directory when the process is running
+                        // (it can `cd` away from the configured projectDir);
+                        // falls back to the configured project dir.
+                        SessionCwdLabel(manager: mgr, projectDir: session.projectDir)
                     }
                     Spacer()
 
