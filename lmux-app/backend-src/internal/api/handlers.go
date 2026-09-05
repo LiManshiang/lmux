@@ -351,6 +351,19 @@ func (h *Handler) AgentRecentCwd(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"cwd": cwd})
 }
 
+// ListAgentConversations returns every conversation JSONL for an agent
+// (filesystem-level, independent of lmux session records), optionally
+// filtered to one project directory. Used by the Agent browser.
+func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	convs, err := codebuddy.ListConversations(q.Get("agent"), q.Get("project_dir"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"conversations": convs})
+}
+
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
 // for a project directory by scanning JSONL files.
 func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {

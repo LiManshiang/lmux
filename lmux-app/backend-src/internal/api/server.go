@@ -129,6 +129,13 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	mux.HandleFunc("/api/agent/conversations", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.ListAgentConversations(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	mux.HandleFunc("/api/codebuddy/session/", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			h.CodebuddySessionStatus(w, r)
