@@ -302,8 +302,15 @@ class TerminalManager: ObservableObject {
             Task.detached {
                 let (cpu, mem, cwd) = Self.queryProcessStats(pid: pid)
                 await MainActor.run {
-                    self.cpuPercent = cpu
-                    self.memoryMB = mem
+                    // Only publish when a value actually changes, so the
+                    // sidebar doesn't re-render on every tick (visible as
+                    // flicker on slower machines).
+                    if cpu != self.cpuPercent {
+                        self.cpuPercent = cpu
+                    }
+                    if mem != self.memoryMB {
+                        self.memoryMB = mem
+                    }
                     guard self.detectedCBCSessionID == nil else { return }
                     self.applyProcCwd(cwd)
                 }
