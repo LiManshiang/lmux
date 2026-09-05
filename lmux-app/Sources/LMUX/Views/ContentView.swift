@@ -2,7 +2,9 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var viewModel: ContentViewModel
-    @State private var sidebarWidth: CGFloat = 240
+    // Shared column width: the Sessions sidebar and the Agent list pane use the
+    // same AppStorage key so switching pages keeps the same geometry.
+    @AppStorage("columnWidth") private var sidebarWidth = 300.0
     @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
 
@@ -99,9 +101,9 @@ struct ContentView: View {
     /// Classic sessions workspace: sidebar list + resizer + terminal detail.
     private var sessionsArea: some View {
         HStack(spacing: 0) {
-            // Sidebar (top → bottom): tab switch, session list, New Session
-            // button, search, app identity + overflow menu. No top strip, so
-            // the terminal area is taller.
+            // Sidebar (top → bottom): tab switch, search, session list,
+            // New Session button, app identity + overflow menu. No top strip,
+            // so the terminal area is taller.
             VStack(spacing: 0) {
                 // Sessions/Agent switch pinned to the top-left, matching the
                 // Agent page so switching pages doesn't jump the control.
@@ -115,11 +117,14 @@ struct ContentView: View {
 
                 Divider()
 
+                // Search sits at the top of the session column.
+                SessionSearchField()
+
                 SessionListView()
 
                 Divider()
 
-                // New session as a full-width button above the search box.
+                // New session as a full-width button above the footer row.
                 Button(action: {
                     Task { await viewModel.quickCreateSession() }
                 }) {
@@ -139,8 +144,6 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
 
-                SessionSearchField()
-
                 Divider()
 
                 HStack(spacing: 8) {
@@ -151,7 +154,7 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
             }
-            .frame(width: sidebarWidth)
+            .frame(width: CGFloat(sidebarWidth))
             .background(.bar)
 
             // Resizer

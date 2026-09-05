@@ -9,8 +9,8 @@ import LMUXCore
 struct AgentBrowserView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
+    @AppStorage("columnWidth") private var listWidth = 300.0
     @State private var searchText = ""
-    @State private var listWidth: CGFloat = 340
     @State private var selectedID: String?
 
     private var filterID: String { "\(viewModel.agentFilterName)|\(viewModel.agentFilterProjectDir)" }
@@ -48,7 +48,7 @@ struct AgentBrowserView: View {
     var body: some View {
         HStack(spacing: 0) {
             leftPane
-                .frame(width: listWidth)
+                .frame(width: CGFloat(listWidth))
             Rectangle()
                 .fill(Color.secondary.opacity(0.3))
                 .frame(width: 1)
