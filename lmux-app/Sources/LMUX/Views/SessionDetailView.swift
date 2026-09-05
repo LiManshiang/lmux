@@ -47,7 +47,11 @@ struct SessionDetailView: View {
                             if showSplitPane {
                                 let splitMgr = viewModel.splitTerminalManager(for: sid)
                                 if splitMgr.backend == nil {
-                                    splitMgr.connectBash(sessionID: sid, projectDir: session.projectDir, agentType: session.agentType)
+                                    // Start the split bash in the session's live
+                                    // working directory (the agent may have cd'd
+                                    // somewhere), falling back to projectDir.
+                                    let cwd = mgr.currentWorkingDirectory ?? session.projectDir
+                                    splitMgr.connectBash(sessionID: sid, projectDir: cwd, agentType: session.agentType)
                                 }
                             }
                         }) {
