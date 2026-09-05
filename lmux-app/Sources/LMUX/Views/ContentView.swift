@@ -7,95 +7,15 @@ struct ContentView: View {
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Sidebar
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Sessions")
-                        .font(.headline)
-                    Spacer()
-                    HStack(spacing: 4) {
-#if canImport(GhosttyTerminal)
-                        if selectedRenderer == TerminalRendererSetting.ghostty {
-                            Text("Ghostty")
-                                .font(.system(size: 8, weight: .bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.2))
-                                .foregroundColor(.orange)
-                                .cornerRadius(4)
-                        } else {
-                            Text("SwiftTerm")
-                                .font(.system(size: 8))
-                                .foregroundColor(.secondary)
-                        }
-#else
-                        Text("SwiftTerm")
-                            .font(.system(size: 8))
-                            .foregroundColor(.secondary)
-#endif
-                        Text(AppVersion.current)
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-                Divider()
-
-                Picker("Browse", selection: $sidebarTab) {
-                    Text("Sessions").tag("sessions")
-                    Text("Agent").tag("agent")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
-
-                if sidebarTab == "sessions" {
-                    SessionListView()
-                } else {
-                    AgentConversationsView()
-                }
-
-                Divider()
-
-                HStack {
-                    Button(action: {
-                        if sidebarTab == "sessions" {
-                            Task { await viewModel.refreshSessions() }
-                        } else {
-                            Task { await viewModel.loadAgentConversations() }
-                        }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(!viewModel.backendRunning || viewModel.isLoading || viewModel.agentConversationsLoading)
-
-                    Spacer()
-
-                    Button(action: {
-                        Task { await viewModel.quickCreateSession() }
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                    .disabled(!viewModel.backendRunning || sidebarTab == "agent")
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+        VStack(spacing: 0) {
+            topTabBar
+            Divider()
+            if sidebarTab == "agent" {
+                AgentBrowserView()
+                    .environmentObject(viewModel)
+            } else {
+                sessionsArea
             }
-            .frame(width: sidebarWidth)
-            .background(.bar)
-
-            // Resizer
-            Rectangle()
-                .fill(Color.secondary.opacity(0.3))
-                .frame(width: 1)
-
-            // Detail area
-            detailView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .overlay(alignment: .top) {
             if let msg = viewModel.toastMessage {
@@ -134,6 +54,94 @@ struct ContentView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+    }
+
+    /// Narrow top bar hosting the Sessions / Agent switch, sized so the
+    /// segmented control is not stretched across the whole window.
+    private var topTabBar: some View {
+        HStack(spacing: 10) {
+            Text("lmux")
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            Picker("Browse", selection: $sidebarTab) {
+                Text("Sessions").tag("sessions")
+                Text("Agent").tag("agent")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 240)
+            .fixedSize()
+            Spacer()
+            HStack(spacing: 4) {
+#if canImport(GhosttyTerminal)
+                if selectedRenderer == TerminalRendererSetting.ghostty {
+                    Text("Ghostty")
+                        .font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.2))
+                        .foregroundColor(.orange)
+                        .cornerRadius(4)
+                } else {
+                    Text("SwiftTerm")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+#else
+                Text("SwiftTerm")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+#endif
+                Text(AppVersion.current)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+    }
+
+    /// Classic sessions workspace: sidebar list + resizer + terminal detail.
+    private var sessionsArea: some View {
+        HStack(spacing: 0) {
+            // Sidebar
+            VStack(spacing: 0) {
+                SessionListView()
+
+                Divider()
+
+                HStack {
+                    Button(action: {
+                        Task { await viewModel.refreshSessions() }
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(!viewModel.backendRunning || viewModel.isLoading)
+
+                    Spacer()
+
+                    Button(action: {
+                        Task { await viewModel.quickCreateSession() }
+                    }) {
+                        Image(systemName: "plus")
+                    }
+                    .disabled(!viewModel.backendRunning)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+            .frame(width: sidebarWidth)
+            .background(.bar)
+
+            // Resizer
+            Rectangle()
+                .fill(Color.secondary.opacity(0.3))
+                .frame(width: 1)
+
+            // Detail area
+            detailView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

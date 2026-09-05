@@ -39,6 +39,12 @@ class ContentViewModel: ObservableObject {
     /// Selected filter: a single project directory, or "" for all.
     @Published var agentFilterProjectDir = ""
     @Published var agentConversationsError: String?
+    /// Monotonic guard against out-of-order agent list reloads.
+    private var agentLoadRequestID = 0
+    /// Conversation shown in the Agent browser's preview pane.
+    @Published var agentPreviewConversation: AgentConversation?
+    @Published var agentPreview: AgentConversationPreview?
+    @Published var agentPreviewLoading = false
     private var toastTask: Task<Void, Never>?
 
     let api = APIClient()
@@ -1195,9 +1201,13 @@ class ContentViewModel: ObservableObject {
     }
 
     /// Reload the Agent browser list for the current filter. Keeps the existing
-    /// list when a refresh fails so the UI doesn't flash empty.
+    /// list when a refresh fails so the UI doesn't flash empty. Guarded by a
+    /// monotonically increasing request id so fast filter changes never let an
+    /// older (slower) request overwrite a newer one.
     func loadAgentConversations() async {
         guard backendRunning else { return }
+        agentLoadRequestID += 1
+        let requestID = agentLoadRequestID
         agentConversationsLoading = true
         agentConversationsError = nil
         defer { agentConversationsLoading = false }
@@ -1206,9 +1216,26 @@ class ContentViewModel: ObservableObject {
         let dir = agentFilterProjectDir.isEmpty ? nil : agentFilterProjectDir
         do {
             let result = try await api.agentConversations(agent: agent, projectDir: dir)
+            guard requestID == agentLoadRequestID else { return }
             agentConversations = result
         } catch {
+            guard requestID == agentLoadRequestID else { return }
             agentConversationsError = error.localizedDescription
+        }
+    }
+
+    /// Load the preview (title/summary metadata already in the list row plus
+    /// the recent readable messages) for a selected agent conversation.
+    func loadAgentPreview(_ conv: AgentConversation) async {
+        agentPreviewLoading = true
+        agentPreview = nil
+        agentPreviewConversation = conv
+        defer { agentPreviewLoading = false }
+        guard let cwd = conv.cwd, !cwd.isEmpty else { return }
+        do {
+            agentPreview = try await api.agentConversationPreview(agent: conv.agent, projectDir: cwd, sessionID: conv.id)
+        } catch {
+            agentPreview = AgentConversationPreview(rows: [])
         }
     }
 

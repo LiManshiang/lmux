@@ -266,6 +266,22 @@ class APIClient: AgentSessionService {
         return try decode(Response.self, from: data).conversations
     }
 
+    /// Recent readable messages of one conversation for the Agent browser.
+    func agentConversationPreview(agent: String, projectDir: String, sessionID: String) async throws -> AgentConversationPreview {
+        struct Body: Codable {
+            let agent: String
+            let projectDir: String
+            let sessionID: String
+            enum CodingKeys: String, CodingKey {
+                case agent
+                case projectDir = "project_dir"
+                case sessionID = "session_id"
+            }
+        }
+        let data = try await post("/api/agent/conversation-preview", body: Body(agent: agent, projectDir: projectDir, sessionID: sessionID))
+        return try decode(AgentConversationPreview.self, from: data)
+    }
+
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
         struct Body: Codable {
             let cbcSessionID: String

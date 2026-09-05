@@ -1,13 +1,16 @@
 import SwiftUI
 import LMUXCore
 
-/// Browser for raw agent conversations (filesystem-level JSONL). Unlike the
-/// Sessions list — which only shows conversations lmux created/imported —
-/// this shows every conversation an agent has, filterable by agent and
-/// project directory, so work from any machine can be found and resumed.
-struct AgentConversationsView: View {
+/// Full-page browser for raw agent conversations (filesystem-level JSONL).
+/// Left: filterable list of every conversation of an agent / under a
+/// directory. Right: a preview pane that shows the conversation's title,
+/// full summary and the most recent readable messages — so you can confirm
+/// which conversation to resume before acting on it.
+struct AgentBrowserView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var searchText = ""
+    @State private var listWidth: CGFloat = 340
+    @State private var selectedID: String?
 
     private var filterID: String { "\(viewModel.agentFilterName)|\(viewModel.agentFilterProjectDir)" }
 
@@ -24,17 +27,30 @@ struct AgentConversationsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            filters
-            Divider()
-            listArea
+        HStack(spacing: 0) {
+            leftPane
+                .frame(width: listWidth)
+            Rectangle()
+                .fill(Color.secondary.opacity(0.3))
+                .frame(width: 1)
+            previewPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task(id: filterID) {
             await viewModel.loadAgentConversations()
         }
     }
 
-    // MARK: - Filters
+    // MARK: - Left list
+
+    private var leftPane: some View {
+        VStack(spacing: 0) {
+            filters
+            Divider()
+            listArea
+        }
+        .background(.bar)
+    }
 
     private var filters: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -49,6 +65,7 @@ struct AgentConversationsView: View {
             HStack(spacing: 6) {
                 TextField("All directories (or type a path)", text: $viewModel.agentFilterProjectDir)
                     .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
                 Button {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true
@@ -75,8 +92,6 @@ struct AgentConversationsView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
     }
-
-    // MARK: - List
 
     @ViewBuilder
     private var listArea: some View {
@@ -111,7 +126,7 @@ struct AgentConversationsView: View {
                 Text("No conversations found")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
-                Text("Conversations are the raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects. Sync them across machines from Settings → Sync → Agent Conversations Sync.")
+                Text("This directory has no conversations on this machine. Conversations live under ~/.codebuddy/projects and ~/.claude/projects; sync them across machines from Settings → Sync → Agent Conversations Sync.")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -120,28 +135,148 @@ struct AgentConversationsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered) { conv in
-                        AgentConversationRow(conv: conv)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) {
-                                resume(conv)
-                            }
-                            .contextMenu {
-                                Button("Resume in lmux…") { resume(conv) }
-                                Button("Open in Terminal") { openExternally(conv) }
-                                Divider()
-                                Button("Copy Session ID") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(conv.id, forType: .string)
-                                }
-                            }
-                        if conv.id != filtered.last?.id {
-                            Divider().padding(.leading, 8)
+                        AgentConversationRow(
+                            conv: conv,
+                            isSelected: conv.id == selectedID
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedID = conv.id
+                            Task { await viewModel.loadAgentPreview(conv) }
                         }
+                        .contextMenu {
+                            Button("Resume in lmux…") { resume(conv) }
+                            Button("Open in Terminal") { openExternally(conv) }
+                            Divider()
+                            Button("Copy Session ID") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(conv.id, forType: .string)
+                            }
+                        }
+                        Divider().padding(.leading, 8)
                     }
                 }
                 .padding(.vertical, 4)
+            }
+        }
+    }
+
+    // MARK: - Right preview
+
+    @ViewBuilder
+    private var previewPane: some View {
+        if let conv = viewModel.agentPreviewConversation {
+            VStack(alignment: .leading, spacing: 0) {
+                previewHeader(conv)
+                Divider()
+                previewBody(conv)
+            }
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 30))
+                    .foregroundColor(.secondary)
+                Text("Select a conversation to preview")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                Text("Single-click a conversation to read its recent messages before resuming it.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func previewHeader(_ conv: AgentConversation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                AgentBadgePill(agentName: conv.agent, small: false)
+                Spacer()
+                Text(AgentBrowserView.timeAgo(conv.mtime))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            Text(conv.aiTitle ?? "Conversation \(conv.id.prefix(8))")
+                .font(.system(size: 16, weight: .semibold))
+                .lineLimit(2)
+            if let cwd = conv.cwd, !cwd.isEmpty {
+                Text(cwd)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let summary = conv.summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(nil)
+                    .padding(.top, 2)
+            }
+            HStack(spacing: 8) {
+                Button {
+                    resume(conv)
+                } label: {
+                    Label("Resume in lmux", systemImage: "play.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+
+                Button {
+                    openExternally(conv)
+                } label: {
+                    Label("Open in Terminal", systemImage: "terminal")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(.top, 4)
+        }
+        .padding(12)
+    }
+
+    @ViewBuilder
+    private func previewBody(_ conv: AgentConversation) -> some View {
+        if viewModel.agentPreviewLoading {
+            VStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Reading conversation…")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let rows = viewModel.agentPreview?.rows, rows.isEmpty {
+            VStack(spacing: 6) {
+                Text("No readable messages in the recent tail")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let rows = viewModel.agentPreview?.rows {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(row.role == "user" ? "You" : "Agent")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(row.role == "user" ? .secondary : .accentColor)
+                                .textCase(.uppercase)
+                            Text(row.text)
+                                .font(.system(size: 11))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(row.role == "user"
+                                    ? Color.secondary.opacity(0.08)
+                                    : Color.accentColor.opacity(0.06))
+                        .cornerRadius(6)
+                    }
+                }
+                .padding(12)
             }
         }
     }
@@ -162,9 +297,10 @@ struct AgentConversationsView: View {
     }
 }
 
-/// One conversation row: title, summary, agent badge, directory, age.
+/// One conversation row with a selected highlight for single-click preview.
 private struct AgentConversationRow: View {
     let conv: AgentConversation
+    let isSelected: Bool
 
     private var title: String {
         if let t = conv.aiTitle, !t.isEmpty { return t }
@@ -182,7 +318,7 @@ private struct AgentConversationRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                 Spacer()
-                Text(AgentConversationsView.timeAgo(conv.mtime))
+                Text(AgentBrowserView.timeAgo(conv.mtime))
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
             }
@@ -190,7 +326,7 @@ private struct AgentConversationRow: View {
                 Text(s)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
             HStack(spacing: 6) {
                 AgentBadgePill(agentName: conv.agent, small: true)
@@ -199,6 +335,7 @@ private struct AgentConversationRow: View {
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
                 Text("\(conv.size / 1024) KB")
                     .font(.system(size: 9))
@@ -206,12 +343,13 @@ private struct AgentConversationRow: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
+        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+        .cornerRadius(4)
     }
 }
 
-/// Shared row markers for agent filters/rows. Small badge reused by both
-/// session rows and the agent browser.
+/// Shared small agent marker.
 struct AgentBadgePill: View {
     let agentName: String
     var small = false
@@ -227,7 +365,7 @@ struct AgentBadgePill: View {
     }
 }
 
-extension AgentConversationsView {
+extension AgentBrowserView {
     static func timeAgo(_ unix: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(unix))
         let seconds = Int(Date().timeIntervalSince(date))

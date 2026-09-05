@@ -23,3 +23,12 @@ struct AgentConversation: Codable, Identifiable, Hashable {
         case mtime
     }
 }
+
+/// A readable user/assistant message shown in the Agent browser preview.
+struct AgentConversationPreview: Codable {
+    struct Row: Codable {
+        let role: String
+        let text: String
+    }
+    let rows: [Row]
+}
