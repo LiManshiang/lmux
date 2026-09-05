@@ -20,10 +20,10 @@ struct AboutSettingsView: View {
                 .padding(.horizontal, 40)
 
             VStack(spacing: 6) {
-                LabeledContent("Agent") {
+                CompatLabeledContent(title: "Agent") {
                     Text("CodeBuddy / Claude")
                 }
-                LabeledContent("Sync Device ID") {
+                CompatLabeledContent(title: "Sync Device ID") {
                     Text(SessionSync.deviceID)
                         .font(.system(size: 10, design: .monospaced))
                         .textSelection(.enabled)

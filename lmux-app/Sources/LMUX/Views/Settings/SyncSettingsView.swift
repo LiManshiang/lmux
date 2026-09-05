@@ -84,7 +84,7 @@ struct SyncSettingsView: View {
                 .buttonStyle(.plain)
             }
         }
-        .formStyle(.grouped)
+        .groupedForm()
         .onChange(of: syncEnabled) { _ in persistSyncSettings() }
         .onChange(of: syncDir) { _ in persistSyncSettings() }
         .onChange(of: mappings) { _ in persistSyncSettings() }

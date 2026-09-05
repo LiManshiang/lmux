@@ -49,7 +49,7 @@ struct TerminalSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .groupedForm()
     }
 
     @ViewBuilder
