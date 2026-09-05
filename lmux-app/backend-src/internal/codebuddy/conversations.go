@@ -87,6 +87,22 @@ func ListConversations(agent, projectDir string) ([]ConversationSummary, error) 
 		out = append(out, items...)
 	}
 
+	// A conversation can exist under several files (e.g. a restored copy next
+	// to the original). Keep the newest per agent+id so the browser never
+	// shows duplicate rows (which also made a SwiftUI List highlight several
+	// rows sharing one tag).
+	byKey := make(map[string]ConversationSummary, len(out))
+	for _, c := range out {
+		key := c.Agent + "|" + c.SessionID
+		if prev, ok := byKey[key]; !ok || c.MTime > prev.MTime {
+			byKey[key] = c
+		}
+	}
+	out = make([]ConversationSummary, 0, len(byKey))
+	for _, c := range byKey {
+		out = append(out, c)
+	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].MTime > out[j].MTime })
 
 	conversationsMu.Lock()
