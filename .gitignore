@@ -6,7 +6,9 @@
 *.db-shm
 
 # build artifacts and local state
-backend/lmux
-backend-src/bin/
+# backend binaries are build products (make backend / make app), not tracked
+lmux-app/backend/lmux
+lmux-app/backend-src/bin/
+.build-st/
 .swiftpm/
 STAGE_SUMMARY.md
