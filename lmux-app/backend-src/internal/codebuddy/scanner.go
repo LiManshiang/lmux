@@ -255,10 +255,13 @@ func encodeCodebuddyProjectDir(projectDir string) string {
 }
 
 // RecentSessionCwd returns the last recorded working directory for a
-// conversation: the JSONL records a "cwd" field on every message, so this is
-// where the agent most recently reported working (it can cd between turns,
-// independent of the process's own cwd). Reads only the file tail rather
-// than the whole history. Returns "" when unavailable.
+// conversation. Two signals, newest first:
+//  1. an explicit `cd <dir>` prefix on the most recent Bash tool call — where
+//     the agent actually ran work (it cd's between turns, independent of the
+//     process's own cwd, which for a pty-spawned agent never moves);
+//  2. the per-line "cwd" field recorded on every JSONL row (the process cwd,
+//     usually the session launch directory).
+// Reads only the file tail rather than the whole history. "" when none.
 func RecentSessionCwd(agent, projectDir, sessionID string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -296,22 +299,75 @@ func RecentSessionCwd(agent, projectDir, sessionID string) string {
 	buf = buf[:n]
 
 	last := ""
+	lastToolCD := ""
 	start := 0
 	for i := 0; i <= len(buf); i++ {
 		if i == len(buf) || buf[i] == '\n' {
 			line := bytes.TrimSpace(buf[start:i])
 			if len(line) > 0 {
-				var entry struct {
-					CWD string `json:"cwd"`
-				}
-				if json.Unmarshal(line, &entry) == nil && entry.CWD != "" {
-					last = entry.CWD
+				var row map[string]interface{}
+				if json.Unmarshal(line, &row) == nil {
+					if cwd, ok := row["cwd"].(string); ok && cwd != "" {
+						last = cwd
+					}
+					// codebuddy records each Bash tool call with an explicit
+					// `cd` prefix when it runs a command elsewhere — that is
+					// the directory the agent actually works in.
+					if row["type"] == "function_call" && row["name"] == "Bash" {
+						if cmd := extractBashCommand(row["arguments"]); cmd != "" {
+							if dir := extractLeadingCd(cmd); dir != "" {
+								lastToolCD = dir
+							}
+						}
+					}
 				}
 			}
 			start = i + 1
 		}
 	}
+	if lastToolCD != "" {
+		return lastToolCD
+	}
 	return last
+}
+
+// extractBashCommand pulls the command string out of a codebuddy
+// function_call row: arguments is either an object or a JSON-encoded string.
+func extractBashCommand(args interface{}) string {
+	switch v := args.(type) {
+	case map[string]interface{}:
+		if s, ok := v["command"].(string); ok {
+			return s
+		}
+	case string:
+		var obj struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal([]byte(v), &obj) == nil {
+			return obj.Command
+		}
+		return v
+	}
+	return ""
+}
+
+var cdPrefixRe = regexp.MustCompile(`^\s*cd\s+(.+?)(\s*(&&|;|$))`)
+
+// extractLeadingCd returns the directory a command explicitly cd'd into, e.g.
+// "cd /Volumes/x/proj && git status" -> "/Volumes/x/proj". Handles quoted
+// paths. Empty when the command has no leading cd.
+func extractLeadingCd(cmd string) string {
+	m := cdPrefixRe.FindStringSubmatch(cmd)
+	if m == nil {
+		return ""
+	}
+	dir := strings.TrimSpace(m[1])
+	dir = strings.Trim(dir, `"'`)
+	// Skip relative / home-only cds that are not informative.
+	if dir == "" || strings.HasPrefix(dir, ".") || (!strings.HasPrefix(dir, "/") && !strings.HasPrefix(dir, "~")) {
+		return ""
+	}
+	return dir
 }
 
 // FindRecentSessionForProjectAfter returns the most recently created codebuddy
