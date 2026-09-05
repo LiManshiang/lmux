@@ -1,4 +1,4 @@
-.PHONY: build run clean app icon backend
+.PHONY: build run clean app icon backend test
 
 BINARY = .build/debug/lmux
 APP_NAME = lmux.app
@@ -17,6 +17,12 @@ backend:
 # Build Swift frontend
 build:
 	swift build --skip-update
+
+# Run the unit test suite. Always build/test in native arm64: in a Rosetta
+# shell the host arch is x86_64, which writes a second .build triple and then
+# fails to load the arm64 test bundle ("incompatible architecture").
+test:
+	arch -arm64 swift test --skip-update
 
 # Build everything. The backend build is best-effort: if the Go toolchain is
 # unavailable, an existing backend binary is reused.
