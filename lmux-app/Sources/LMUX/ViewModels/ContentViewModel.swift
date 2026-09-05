@@ -34,6 +34,9 @@ class ContentViewModel: ObservableObject {
     /// Filesystem-level agent conversations for the current Agent filter.
     @Published var agentConversations: [AgentConversation] = []
     @Published var agentConversationsLoading = false
+    /// Count of conversations hidden because they are already bound to an
+    /// lmux session (resuming them here would duplicate the session).
+    @Published var agentHiddenBound = 0
     /// Selected filter: agent name ("", "codebuddy", "claude").
     @Published var agentFilterName = ""
     /// Selected filter: a single project directory, or "" for all.
@@ -1217,7 +1220,8 @@ class ContentViewModel: ObservableObject {
         do {
             let result = try await api.agentConversations(agent: agent, projectDir: dir)
             guard requestID == agentLoadRequestID else { return }
-            agentConversations = result
+            agentConversations = result.conversations
+            agentHiddenBound = result.hidden
         } catch {
             guard requestID == agentLoadRequestID else { return }
             agentConversationsError = error.localizedDescription

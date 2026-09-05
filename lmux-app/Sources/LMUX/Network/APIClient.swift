@@ -244,9 +244,12 @@ class APIClient: AgentSessionService {
 
     /// File-level list of every agent conversation, optionally filtered to one
     /// agent and/or one project directory. agent "" and projectDir "" mean all.
-    func agentConversations(agent: String?, projectDir: String?) async throws -> [AgentConversation] {
+    /// Conversations already bound to an lmux session are excluded by the
+    /// backend; `hidden` reports how many were removed.
+    func agentConversations(agent: String?, projectDir: String?) async throws -> (conversations: [AgentConversation], hidden: Int) {
         struct Response: Codable {
             let conversations: [AgentConversation]
+            let hidden: Int?
         }
         var path = "/api/agent/conversations"
         var queries: [String] = []
@@ -263,7 +266,8 @@ class APIClient: AgentSessionService {
             path += "?" + queries.joined(separator: "&")
         }
         let data = try await get(path)
-        return try decode(Response.self, from: data).conversations
+        let resp = try decode(Response.self, from: data)
+        return (resp.conversations, resp.hidden ?? 0)
     }
 
     /// Recent readable messages of one conversation for the Agent browser.

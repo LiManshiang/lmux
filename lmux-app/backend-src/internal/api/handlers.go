@@ -354,6 +354,10 @@ func (h *Handler) AgentRecentCwd(w http.ResponseWriter, r *http.Request) {
 // ListAgentConversations returns every conversation JSONL for an agent
 // (filesystem-level, independent of lmux session records), optionally
 // filtered to one project directory. Used by the Agent browser.
+//
+// Conversations already bound to an lmux session are excluded (resuming those
+// from the Agent list would duplicate the lmux session); `hidden` reports how
+// many were removed.
 func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	convs, err := codebuddy.ListConversations(q.Get("agent"), q.Get("project_dir"))
@@ -361,7 +365,29 @@ func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"conversations": convs})
+
+	bound := make(map[string]bool)
+	if summaries, err := h.mgr.Summaries(); err == nil {
+		for _, s := range summaries {
+			if s.CBCSessionID != "" {
+				bound[s.CBCSessionID] = true
+			}
+		}
+	}
+
+	hidden := 0
+	visible := convs[:0]
+	for _, c := range convs {
+		if bound[c.SessionID] {
+			hidden++
+			continue
+		}
+		visible = append(visible, c)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"conversations": visible,
+		"hidden":        hidden,
+	})
 }
 
 // AgentConversationPreview returns the recent readable user/assistant

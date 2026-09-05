@@ -117,6 +117,11 @@ struct AgentBrowserView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
+            if viewModel.agentHiddenBound > 0 {
+                Text("\(viewModel.agentHiddenBound) bound conversation(s) already in Sessions are hidden")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -163,18 +168,10 @@ struct AgentBrowserView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filtered) { conv in
-                        AgentConversationRow(
-                            conv: conv,
-                            isSelected: conv.id == selectedID
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedID = conv.id
-                            Task { await viewModel.loadAgentPreview(conv) }
-                        }
+            List(selection: $selectedID) {
+                ForEach(filtered) { conv in
+                    AgentConversationRow(conv: conv)
+                        .tag(conv.id)
                         .contextMenu {
                             Button("Resume in lmux…") { resume(conv) }
                             Button("Open in Terminal") { openExternally(conv) }
@@ -184,10 +181,18 @@ struct AgentBrowserView: View {
                                 NSPasteboard.general.setString(conv.id, forType: .string)
                             }
                         }
-                        Divider().padding(.leading, 8)
-                    }
                 }
-                .padding(.vertical, 4)
+            }
+            .listStyle(.inset)
+            .onChange(of: selectedID) { newID in
+                // The List owns single-click selection (no double-click gesture
+                // on rows — it fights the List's click handling and delays
+                // every click). Clicking the already-selected row reloads it.
+                guard let newID,
+                      let conv = filtered.first(where: { $0.id == newID }) else { return }
+                if newID != viewModel.agentPreviewConversation?.id {
+                    Task { await viewModel.loadAgentPreview(conv) }
+                }
             }
         }
     }
@@ -326,10 +331,10 @@ struct AgentBrowserView: View {
     }
 }
 
-/// One conversation row with a selected highlight for single-click preview.
+/// One conversation row; selection highlighting is managed by the enclosing
+/// List.
 private struct AgentConversationRow: View {
     let conv: AgentConversation
-    let isSelected: Bool
 
     private var title: String {
         if let t = conv.aiTitle, !t.isEmpty { return t }
@@ -371,14 +376,7 @@ private struct AgentConversationRow: View {
                     .foregroundColor(.secondary)
             }
         }
-        // Fill the whole list row so clicks anywhere in the row (including the
-        // empty area right of the text) hit this conversation.
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
-        .cornerRadius(4)
-        .contentShape(Rectangle())
+        .padding(.vertical, 5)
     }
 }
 
