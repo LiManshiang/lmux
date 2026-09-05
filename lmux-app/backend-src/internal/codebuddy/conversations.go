@@ -286,7 +286,9 @@ func PreviewConversation(agent, sessionID string) []MessageRow {
 	if err != nil {
 		return nil
 	}
-	const tailSize = 128 << 10
+	// 512KB covers a full recent turn (user + tool rounds + assistant reply);
+	// 128KB often misses the last user message entirely.
+	const tailSize = 512 << 10
 	off := st.Size() - tailSize
 	if off < 0 {
 		off = 0
@@ -387,9 +389,9 @@ func observePreviewLine(agent string, line []byte, appendRow func(role, text str
 	}
 	var text string
 	for _, b := range row.Content {
-		// codebuddy text blocks are "text" in older files and "output_text"
-		// in newer ones; both carry the readable message in `text`.
-		if (b.Type == "text" || b.Type == "output_text") && b.Text != "" {
+		// codebuddy text blocks: "text" (older), "output_text" (assistant) and
+		// "input_text" (user) in newer files — all carry readable text.
+		if (b.Type == "text" || b.Type == "output_text" || b.Type == "input_text") && b.Text != "" {
 			text += b.Text + "\n"
 		}
 	}

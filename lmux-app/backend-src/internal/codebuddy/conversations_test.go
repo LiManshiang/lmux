@@ -105,6 +105,7 @@ func TestPreviewCodebuddyOutputTextBlocks(t *testing.T) {
 		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer new"}]}`,
 		`{"type":"function_call","name":"Bash"}`,
 		`{"type":"function_call_result","output":{"type":"text","text":"tool noise"}}`,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"follow up"}]}`,
 		"",
 	}, "\n"))
 	data, _ := os.ReadFile(path)
@@ -114,14 +115,17 @@ func TestPreviewCodebuddyOutputTextBlocks(t *testing.T) {
 			rows = append(rows, MessageRow{Role: role, Text: text})
 		})
 	}
-	if len(rows) != 2 {
-		t.Fatalf("rows = %+v, want 2", rows)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v, want 3", rows)
 	}
 	if rows[0].Role != "user" || strings.TrimSpace(rows[0].Text) != "hello old" {
 		t.Fatalf("row0 = %+v", rows[0])
 	}
 	if rows[1].Role != "assistant" || strings.TrimSpace(rows[1].Text) != "answer new" {
 		t.Fatalf("row1 = %+v", rows[1])
+	}
+	if rows[2].Role != "user" || strings.TrimSpace(rows[2].Text) != "follow up" {
+		t.Fatalf("row2 = %+v", rows[2])
 	}
 }
 

@@ -371,10 +371,14 @@ private struct AgentConversationRow: View {
                     .foregroundColor(.secondary)
             }
         }
+        // Fill the whole list row so clicks anywhere in the row (including the
+        // empty area right of the text) hit this conversation.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
         .cornerRadius(4)
+        .contentShape(Rectangle())
     }
 }
 
