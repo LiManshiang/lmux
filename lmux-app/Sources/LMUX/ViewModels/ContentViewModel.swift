@@ -1495,10 +1495,16 @@ class ContentViewModel: ObservableObject {
             await refreshSessions()
         }
 
-        // Agent JSONL mirror (pull + push of raw conversations).
-        let mirror = SessionSync.runAgentMirror { [weak self] step in
-            self?.syncPhase = .mirroring(detail: step)
+        // Agent JSONL mirror (pull + push of raw conversations). File I/O can
+        // be heavy (large JSONL copies), so run it off the main actor and only
+        // hop back to update the wait overlay's phase text.
+        let phaseUpdater: @Sendable (String) -> Void = { [weak self] step in
+            DispatchQueue.main.async { self?.syncPhase = .mirroring(detail: step) }
         }
+        let counts: SessionSync.AgentMirrorCounts = await Task.detached(priority: .userInitiated) {
+            SessionSync.runAgentMirror(onStep: phaseUpdater)
+        }.value
+        let mirror = counts
         result.agentExported = mirror.exported
         result.agentImported = mirror.imported
         result.agentConflicts = mirror.conflicts
