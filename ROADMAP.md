@@ -151,3 +151,43 @@ make test                    # 前端单元测试（arch -arm64）
 ./bump-version.sh            # 版本 +1（Version.swift + Info.plist）
 # 安装：替换 /Applications/lmux.app（旧版备份 lmux.app.bak）或 lmux-st.app
 ```
+
+---
+
+## 会话日志（2026-09-06）
+
+### Accomplished
+
+1. **Agent 浏览器（M1/M2 已交付并部署）**：Sessions/Agent 分段切换；全页双栏（左筛选列表 / 右预览）；扫描限定一层排除 `subagents/`；按 `agent+id` 去重（还原副本多拷贝只留最新）；预览按 `file_rel` 定位（agent 漫游 cd 后 cwd≠存储目录）；解析新版 codebuddy `output_text`/`input_text` 块，tail 512KB 覆盖整轮；列表隐藏已绑定 lmux 会话（`hidden` 计数 + UI 提示）。
+2. **Agent JSONL 镜像同步（M2）**：`<syncDir>/agents/<agent>` 双向同步原始 JSONL；size 指纹防回环；append 增量；>50MB 跳过；restoreAgentFileIfMissing 用于 resume。
+3. **大量 UI 布局迭代**（重启生效）：删除窗口顶部工具条（terminal 更高）；Sessions/Agent 切换两页统一钉在左上（左对齐，切页不跳）；列宽统一 275（共享 `AppStorage("columnWidth")`）；搜索框回 Session 列顶；New Session 全宽长按钮；底部 (⋯) 菜单（Sync Now / Settings… / About lmux）；设置统一 `SettingsWindowController` 可复用 NSWindow（原 SwiftUI Settings scene 移除，Cmd+, 也走它）；Sync Now 模态等待窗。
+4. **阶段 1 同步可靠性（本次会话末交付）**：镜像决策下沉 `LMUXCore/AgentMirrorPolicy`（+11 单测）；`AgentMirrorIO.appendTail` 下沉（+2 字节级单测）；同步进度阶段化（等待窗实时阶段 `Exporting i/N`/`Agent conversations · …`）；双边冲突面板 `MirrorConflictPanelView`（逐文件 Keep Local / Use Mirror，替换后指纹正确处理防再推旧内容）。
+5. **Makefile 修复**：`BINARY_ST` 改用 `.build-st/debug` symlink 路径（swiftpm 产物目录 arm64/x86 变化导致 cp 失败）。
+6. **单测强化**：Swift 54→67 全绿；Go api+codebuddy 全绿（去重/过滤/claude 预览/按 id 定位提纯函数+测试）。
+
+### Next Steps（明天继续）
+
+1. **推送**：远端停在 `9026d42`。本地 8 个提交未推（Agent 浏览器系列全部 + 阶段1 等），网络曾连续超时。网络恢复后 `git push origin master`（勿重复提交，`git log origin/master..HEAD` 为基准）。
+2. **阶段 2 并行工作台**（计划已批）：`SessionDetailView` 参数化（脱离 selectedSession）→ 新增 `SessionWindowController`（复用 per-session TerminalManager，backend 已按会话隔离）→ Session 行右键/菜单 "Open in New Window"。
+3. **阶段 3 Agent 浏览器体验**：收藏/标签、resume 加载态、预览直接发消息评估。
+4. 已知回环注意：TaskList #76-79 已完成（阶段1）；阶段 2 任务尚未创建。
+
+### Blockers/Questions
+
+- 推送 GitHub 网络不稳定（443 超时），重试即可。
+- `libghostty-spm`/`swift-argument-parser` gitlink 漂移未提交（历史遗留，勿动）。
+- mirror I/O 绑定 home+defaults，真实双目录冒烟需在 UI 手动 Sync Now 验证（policy 已单测覆盖决策/防回环）。
+
+### Session Log · 2026-09-06（续）
+
+- 推送：`9026d42..ff8e4f2`（8 个提交：Agent 浏览器系列 + 阶段1 同步可靠性 + 单测 + Makefile/UI 修复）。
+- **阶段 2 并行工作台（fad8638）**：`SessionDetailView` `pinnedSession` 独立窗模式；`SessionWindowController`（按会话 NSWindow 复用，主窗占用/已弹窗防双 attach，关窗自动 `detach()` 后台保活）；Session 行右键 "Open in New Window"；主窗点选已弹窗会话 toast 提示。
+- **阶段 3 Agent 浏览器体验（5a9b95d）**：星标收藏（`agent_browser_stars` 持久化、行尾/预览星标、Favorites section 置顶、★ 只看收藏筛选）；resume 加载态（`TerminalManager.isConnecting` 至首输出/2.5s；终端 overlay "Starting X — resuming conversation…"）；预览 user 消息 Copy 按钮。直发评估：CLI 均支持 `-p`，需临时进程+实时回读，成本高 → 降级为复制复用。
+- 测试 67 全绿；三方向计划（同步/并行/Agent 体验）全部落地，已部署 master+st。
+- 待推：阶段 2+3 两 commit 已在本会话末随本日志推送。
+
+### Blockers / 后续候选
+
+- 阶段 2 真实多窗口并发 attach（Ghostty surface 迁移）需用户在 UI 实测；若 pop-out 后进程卡死/窗口无输出，考虑限制多窗仅 SwiftTerm 或后端 per-window 方案。
+- 预览直发消息（`-p` 单发 + 实时回读）若用户提出再做。
+- 未做：工程基建方向（Swift 测试 target 全量覆盖、CI）。
