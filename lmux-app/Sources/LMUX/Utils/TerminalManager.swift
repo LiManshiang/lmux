@@ -20,6 +20,10 @@ class TerminalManager: ObservableObject {
     @Published var isConnected: Bool = false
     @Published var processRunning: Bool = false
     @Published var isIdle: Bool = true
+    /// True between "launch started" and the first terminal output / a short
+    /// grace timeout — used to show a "starting / resuming" hint.
+    @Published private(set) var isConnecting: Bool = false
+    private var connectingWorkItem: DispatchWorkItem?
 
     /// Called on main actor when the agent process exits.
     var onProcessExit: (() -> Void)?
@@ -125,6 +129,7 @@ class TerminalManager: ObservableObject {
             return
         }
         disconnect()
+        beginConnecting()
 
         currentSessionID = sessionID
         detachProjectDir = projectDir
@@ -197,6 +202,7 @@ class TerminalManager: ObservableObject {
                 // Only fire exit callback for the current process generation,
                 // not stale callbacks from previously-terminated processes.
                 guard let self, self.processGeneration == gen else { return }
+                self.endConnecting()
                 self.isConnected = false
                 self.processRunning = false
                 self.onProcessExit?()
@@ -244,6 +250,7 @@ class TerminalManager: ObservableObject {
     private func wireCallbacks(backend: TerminalBackend) {
         backend.onFirstOutput = { [weak self] in
             DispatchQueue.main.async {
+                self?.endConnecting()
                 self?.onFirstOutput?()
             }
         }
@@ -264,6 +271,7 @@ class TerminalManager: ObservableObject {
                     self.idleTimer?.invalidate()
                     self.idleTimer = nil
                 }
+                self.endConnecting()
                 self.connectErrorMessage = message
                 self.onConnectError?(message)
             }
@@ -418,7 +426,26 @@ class TerminalManager: ObservableObject {
         return queryCwdDirect(pid: child)
     }
 
+    /// Mark "launching" until the first output (or a short grace timeout).
+    private func beginConnecting() {
+        isConnecting = true
+        connectingWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.isConnecting = false
+        }
+        connectingWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+    }
+
+    /// Clear the connecting hint (first output, error, exit, disconnect).
+    private func endConnecting() {
+        connectingWorkItem?.cancel()
+        connectingWorkItem = nil
+        isConnecting = false
+    }
+
     func disconnect() {
+        endConnecting()
         idleTimer?.invalidate()
         idleTimer = nil
         perfTimer?.invalidate()
@@ -548,6 +575,7 @@ class TerminalManager: ObservableObject {
     /// Connect a bash/zsh terminal in the given directory (for new sessions).
     func connectBash(sessionID: String, projectDir: String, agentType: AgentType) {
         disconnect()
+        beginConnecting()
 
         currentSessionID = sessionID
         detachProjectDir = projectDir

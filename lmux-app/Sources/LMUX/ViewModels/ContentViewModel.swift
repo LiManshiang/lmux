@@ -37,6 +37,8 @@ class ContentViewModel: ObservableObject {
     /// Count of conversations hidden because they are already bound to an
     /// lmux session (resuming them here would duplicate the session).
     @Published var agentHiddenBound = 0
+    /// Browser favourites: starred conversation ids (persisted locally).
+    @Published var agentStars: Set<String> = []
     /// Selected filter: agent name ("", "codebuddy", "claude").
     @Published var agentFilterName = ""
     /// Selected filter: a single project directory, or "" for all.
@@ -61,6 +63,7 @@ class ContentViewModel: ObservableObject {
         ) { [weak self] _ in
             self?.terminateAllProcesses()
         }
+        agentStars = loadAgentStars()
     }
 
     /// Terminate every running terminal/agent process and clear restore state.
@@ -1207,6 +1210,24 @@ class ContentViewModel: ObservableObject {
     func agentWorkingDir(for session: SessionSummary) async -> String? {
         guard let cbc = session.cbcSessionID, !cbc.isEmpty else { return nil }
         return await api.agentCwd(agent: session.agentType, projectDir: session.projectDir, sessionID: cbc)
+    }
+
+    // MARK: - Agent browser favourites
+
+    private static let agentStarsKey = "agent_browser_stars"
+
+    private func loadAgentStars() -> Set<String> {
+        let saved = UserDefaults.standard.stringArray(forKey: Self.agentStarsKey) ?? []
+        return Set(saved)
+    }
+
+    func toggleAgentStar(_ conversationID: String) {
+        if agentStars.contains(conversationID) {
+            agentStars.remove(conversationID)
+        } else {
+            agentStars.insert(conversationID)
+        }
+        UserDefaults.standard.set(Array(agentStars), forKey: Self.agentStarsKey)
     }
 
     /// Reload the Agent browser list for the current filter. Keeps the existing

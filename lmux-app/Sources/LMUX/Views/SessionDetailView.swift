@@ -108,6 +108,28 @@ struct SessionDetailView: View {
                             }
                         }
                     }
+                    .overlay {
+                        // "Starting / resuming…" hint while the agent boots
+                        // (resume parses the full conversation history).
+                        if mgr.isConnecting && !mgr.processRunning && mgr.connectErrorMessage == nil {
+                            VStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(connectingLabel(session))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(NSColor.windowBackgroundColor).opacity(0.92))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.secondary.opacity(0.25))
+                            )
+                        }
+                    }
                     .overlay(alignment: .bottom) {
                         if showSplitPane {
                             VStack(spacing: 0) {
@@ -205,6 +227,13 @@ struct SessionDetailView: View {
         }
 
         viewModel.connectedSessionId = id
+    }
+
+    private func connectingLabel(_ session: SessionSummary) -> String {
+        guard let cbc = session.cbcSessionID, !cbc.isEmpty else {
+            return "Starting terminal…"
+        }
+        return "Starting \(session.agentType.displayName) — resuming conversation…"
     }
 
     /// Confirm before stopping a session's running agent process.

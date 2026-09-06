@@ -12,6 +12,7 @@ struct AgentBrowserView: View {
     @AppStorage("columnWidth") private var listWidth = 275.0
     @State private var searchText = ""
     @State private var selectedID: String?
+    @State private var showFavoritesOnly = false
 
     private var filterID: String { "\(viewModel.agentFilterName)|\(viewModel.agentFilterProjectDir)" }
 
@@ -34,7 +35,10 @@ struct AgentBrowserView: View {
     }
 
     private var filtered: [AgentConversation] {
-        let items = viewModel.agentConversations
+        var items = viewModel.agentConversations
+        if showFavoritesOnly {
+            items = items.filter { viewModel.agentStars.contains($0.id) }
+        }
         guard !searchText.isEmpty else { return items }
         let q = searchText.lowercased()
         return items.filter {
@@ -130,6 +134,15 @@ struct AgentBrowserView: View {
                 TextField("Search title, summary, path…", text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
+                Button {
+                    showFavoritesOnly.toggle()
+                } label: {
+                    Image(systemName: showFavoritesOnly ? "star.fill" : "star")
+                        .font(.system(size: 11))
+                        .foregroundColor(showFavoritesOnly ? .yellow : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Show favorites only")
                 Text("\(filtered.count)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
@@ -185,19 +198,21 @@ struct AgentBrowserView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            let favorites = filtered.filter { viewModel.agentStars.contains($0.id) }
+            let others = filtered.filter { !viewModel.agentStars.contains($0.id) }
             List(selection: $selectedID) {
-                ForEach(filtered) { conv in
-                    AgentConversationRow(conv: conv)
-                        .tag(conv.id)
-                        .contextMenu {
-                            Button("Resume in lmux…") { resume(conv) }
-                            Button("Open in Terminal") { openExternally(conv) }
-                            Divider()
-                            Button("Copy Session ID") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(conv.id, forType: .string)
-                            }
+                if showFavoritesOnly {
+                    ForEach(favorites) { conversationRow($0) }
+                } else {
+                    if !favorites.isEmpty {
+                        Section {
+                            ForEach(favorites) { conversationRow($0) }
+                        } header: {
+                            Text("Favorites")
+                                .font(.system(size: 10, weight: .semibold))
                         }
+                    }
+                    ForEach(others) { conversationRow($0) }
                 }
             }
             .listStyle(.inset)
@@ -210,6 +225,24 @@ struct AgentBrowserView: View {
                 if newID != viewModel.agentPreviewConversation?.id {
                     Task { await viewModel.loadAgentPreview(conv) }
                 }
+            }
+        }
+    }
+
+    private func conversationRow(_ conv: AgentConversation) -> some View {
+        AgentConversationRow(
+            conv: conv,
+            isStarred: viewModel.agentStars.contains(conv.id),
+            onToggleStar: { viewModel.toggleAgentStar(conv.id) }
+        )
+        .tag(conv.id)
+        .contextMenu {
+            Button("Resume in lmux…") { resume(conv) }
+            Button("Open in Terminal") { openExternally(conv) }
+            Divider()
+            Button("Copy Session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(conv.id, forType: .string)
             }
         }
     }
@@ -243,6 +276,14 @@ struct AgentBrowserView: View {
     private func previewHeader(_ conv: AgentConversation) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
+                Button {
+                    viewModel.toggleAgentStar(conv.id)
+                } label: {
+                    Image(systemName: viewModel.agentStars.contains(conv.id) ? "star.fill" : "star")
+                        .foregroundColor(viewModel.agentStars.contains(conv.id) ? .yellow : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Favorite")
                 AgentBadgePill(agentName: conv.agent, small: false)
                 Spacer()
                 Text(AgentBrowserView.timeAgo(conv.mtime))
@@ -309,22 +350,38 @@ struct AgentBrowserView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(row.role == "user" ? "You" : "Agent")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(row.role == "user" ? .secondary : .accentColor)
-                                .textCase(.uppercase)
-                            Text(row.text)
-                                .font(.system(size: 11))
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .top, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(row.role == "user" ? "You" : "Agent")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(row.role == "user" ? .secondary : .accentColor)
+                                    .textCase(.uppercase)
+                                Text(row.text)
+                                    .font(.system(size: 11))
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(row.role == "user"
+                                        ? Color.secondary.opacity(0.08)
+                                        : Color.accentColor.opacity(0.06))
+                            .cornerRadius(6)
+
+                            if row.role == "user" {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(row.text, forType: .string)
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Copy this prompt (reuse it after Resume)")
+                                .padding(.top, 6)
+                            }
                         }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(row.role == "user"
-                                    ? Color.secondary.opacity(0.08)
-                                    : Color.accentColor.opacity(0.06))
-                        .cornerRadius(6)
                     }
                 }
                 .padding(12)
@@ -352,6 +409,8 @@ struct AgentBrowserView: View {
 /// List.
 private struct AgentConversationRow: View {
     let conv: AgentConversation
+    let isStarred: Bool
+    let onToggleStar: () -> Void
 
     private var title: String {
         if let t = conv.aiTitle, !t.isEmpty { return t }
@@ -369,6 +428,13 @@ private struct AgentConversationRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                 Spacer()
+                Button(action: onToggleStar) {
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .font(.system(size: 10))
+                        .foregroundColor(isStarred ? .yellow : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(isStarred ? "Remove from favorites" : "Add to favorites")
                 Text(AgentBrowserView.timeAgo(conv.mtime))
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
