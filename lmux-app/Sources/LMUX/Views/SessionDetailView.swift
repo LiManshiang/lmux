@@ -23,9 +23,21 @@ struct SessionDetailView: View {
     @State private var showSplitPane = false
     @State private var terminalHeight: CGFloat = 200
 
+    /// When set, this view is hosted in its own window for one specific
+    /// session (parallel workspace). It ignores the main window's selection.
+    private let pinnedSession: SessionSummary?
+
+    init() {
+        self.pinnedSession = nil
+    }
+
+    init(pinnedSession: SessionSummary) {
+        self.pinnedSession = pinnedSession
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if let session = viewModel.selectedSession {
+            if let session = pinnedSession ?? viewModel.selectedSession {
                 let sid = session.id
                 let mgr = viewModel.terminalManager(for: sid)
 
@@ -121,11 +133,14 @@ struct SessionDetailView: View {
         }
         .onAppear {
             showSplitPane = false
-            if let id = viewModel.selectedSession?.id {
+            if let id = pinnedSession?.id ?? viewModel.selectedSession?.id {
                 connectToSession(id: id)
             }
         }
         .onChange(of: viewModel.selectedSession?.id) { newID in
+            // A standalone (pinned) window owns its session; the main window's
+            // selection must not hijack it.
+            guard pinnedSession == nil else { return }
             showSplitPane = false
             guard let id = newID else { return }
             connectToSession(id: id)

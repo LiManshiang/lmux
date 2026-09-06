@@ -1068,6 +1068,12 @@ class ContentViewModel: ObservableObject {
     }
 
     func selectSession(_ session: SessionSummary) {
+        // A session already running in its own pop-out window has its terminal
+        // attached there; showing it in the main window again would double-attach.
+        if session.id != selectedSession?.id, SessionWindowController.shared.isOpen(sessionID: session.id) {
+            showToast("Session '\(session.name)' is open in its own window")
+            return
+        }
         // Detach previous session
         if let prev = selectedSession, prev.id != session.id {
             terminalManagers[prev.id]?.detach()

@@ -25,6 +25,11 @@ struct SessionListView: View {
                 Button("Attach in Terminal") {
                     Task { await viewModel.attachToSession(session) }
                 }
+                Button("Open in New Window") {
+                    SessionWindowController.shared.open(session: session, viewModel: viewModel)
+                }
+                .disabled(viewModel.selectedSession?.id == session.id)
+                .help("Run this session in its own terminal window")
                 Divider()
                 Button(session.pinned ? "Unpin (取消置顶)" : "Pin to Top (置顶)") {
                     Task { await viewModel.togglePin(session: session) }
