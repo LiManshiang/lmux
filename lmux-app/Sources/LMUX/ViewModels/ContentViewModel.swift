@@ -1417,6 +1417,9 @@ class ContentViewModel: ObservableObject {
     }
 
     @Published private(set) var syncPhase: SyncPhase = .idle
+    /// Controls the in-window wait overlay. The quit path (Sync & Quit) shows
+    /// its own progress panel and passes false so only one wait UI appears.
+    @Published var syncWaitVisible = false
     /// Two-way agent-mirror conflicts surfaced after a Sync Now pass.
     @Published var mirrorConflicts: [SessionSync.AgentMirrorConflict] = []
     @Published var showMirrorConflicts = false
@@ -1436,15 +1439,17 @@ class ContentViewModel: ObservableObject {
     }
 
     @discardableResult
-    func syncNow() async -> SyncNowResult {
+    func syncNow(showsWaitOverlay: Bool = true) async -> SyncNowResult {
         guard SessionSync.isEnabled, SessionSync.syncDir != nil else {
             showToast("Sync not configured — enable it in Settings")
             return SyncNowResult()
         }
         syncInProgress = true
+        if showsWaitOverlay { syncWaitVisible = true }
         defer {
             syncInProgress = false
             syncPhase = .idle
+            syncWaitVisible = false
         }
 
         var result = SyncNowResult()

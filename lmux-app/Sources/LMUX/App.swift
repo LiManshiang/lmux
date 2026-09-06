@@ -111,7 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the sync so the app quits even if a sync request hangs.
         showSyncPanel()
         let syncTask = Task { @MainActor in
-            _ = await viewModel.syncNow()
+            // showsWaitOverlay: false — the quit progress panel is the only
+            // wait UI here (otherwise the main window overlay would double it).
+            _ = await viewModel.syncNow(showsWaitOverlay: false)
             replyToTerminate(sender, shouldTerminate: true)
         }
         Task {

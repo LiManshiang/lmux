@@ -33,7 +33,8 @@ struct ContentView: View {
         .overlay {
             // Modal "syncing" wait indicator: sync exports every pinned
             // session plus the agent JSONL mirror, which can take a while.
-            if viewModel.syncInProgress {
+            // (Quit-time sync shows its own panel and keeps this hidden.)
+            if viewModel.syncWaitVisible {
                 SyncWaitingView(phase: viewModel.syncPhase)
             }
         }
