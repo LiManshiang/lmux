@@ -319,9 +319,11 @@ func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 	}
 	valid := false
 	if agent == "codebuddy" {
-		if info, err := codebuddy.GetSessionByID(id); err == nil {
-			valid = info.HasAssistant
-		}
+		// Fast path: never trigger a full ScanAll here. Rebuilding the scan
+		// cache on a machine with large conversation JSONLs can exceed the
+		// request timeout, which the client reads as "invalid session" and
+		// silently starts a fresh conversation instead of resuming.
+		valid = codebuddy.SessionHasAssistant(id)
 	}
 	if agent == "claude" {
 		// A claude conversation is valid when its JSONL exists under

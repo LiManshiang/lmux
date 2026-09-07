@@ -175,6 +175,75 @@ func GetSessionByID(sessionID string) (*SessionInfo, error) {
 	return nil, fmt.Errorf("session %s not found", sessionID)
 }
 
+// SessionHasAssistant reports whether a conversation with the given ID has at
+// least one assistant reply — i.e. it is a real conversation, not an empty or
+// brand-new one.
+//
+// Unlike GetSessionByID this never triggers a full ScanAll: a cold cache on a
+// machine with multi-100MB conversation JSONLs can take 30s+ to rebuild,
+// which blows the request timeout and makes callers (session validity checks
+// before a resume) silently fall back to a fresh conversation. Instead the
+// matching JSONL is located by filename and scanned only until the first
+// assistant message is found.
+func SessionHasAssistant(sessionID string) bool {
+	// Hot cache path (no I/O).
+	cacheMu.RLock()
+	if cacheValid {
+		if info, ok := sessionByID[sessionID]; ok {
+			cacheMu.RUnlock()
+			return info.HasAssistant
+		}
+		// Not in the cache — fall through to a direct file check rather than
+		// rescanning everything.
+	}
+	cacheMu.RUnlock()
+
+	root := DefaultSessionsDir()
+	if root == "" {
+		return false
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		p := filepath.Join(root, entry.Name(), sessionID+".jsonl")
+		if _, err := os.Stat(p); err == nil {
+			return fileHasAssistant(p)
+		}
+	}
+	return false
+}
+
+// fileHasAssistant scans a JSONL until the first assistant message; it stops
+// as soon as one is found instead of reading the whole (possibly huge) file.
+func fileHasAssistant(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var entry struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		if entry.Type == "message" && entry.Role == "assistant" {
+			return true
+		}
+	}
+	return false
+}
+
 func parseJSONL(path string) (SessionInfo, error) {
 	f, err := os.Open(path)
 	if err != nil {
