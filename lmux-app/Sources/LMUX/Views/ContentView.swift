@@ -300,12 +300,23 @@ struct SyncWaitingView: View {
 
     private var title: String {
         switch phase {
-        case .idle, .importing:
+        case .idle:
             return "Syncing sessions…"
+        case .importing:
+            return "Importing session…"
         case .exporting(let current, let total):
             return "Exporting session \(current) of \(total)"
         case .mirroring(let detail):
             return "Agent conversations · \(detail)"
+        }
+    }
+
+    private var subtitle: String {
+        switch phase {
+        case .importing:
+            return "Large conversation bundles can take a while to transfer"
+        default:
+            return "Syncing pinned sessions and agent conversations"
         }
     }
 
@@ -315,7 +326,7 @@ struct SyncWaitingView: View {
                 .controlSize(.regular)
             Text(title)
                 .font(.system(size: 12, weight: .medium))
-            Text("Syncing pinned sessions and agent conversations")
+            Text(subtitle)
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }

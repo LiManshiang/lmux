@@ -115,7 +115,9 @@ class ContentViewModel: ObservableObject {
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
-            let ok = await importSessions(from: url)
+            let ok = await withTransferWait {
+                await importSessions(from: url)
+            }
             showToast(ok ? "Import complete" : "Import failed")
         }
     }
@@ -187,12 +189,28 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Show the shared wait overlay while a heavy transfer (100MB+ session
+    /// import/export, tar.gz restore) runs. The overlay also gates the 15s
+    /// session poller: with one connection per host, a poll queued behind the
+    /// transfer would time out and read as "Backend connection lost".
+    private func withTransferWait<T>(_ operation: () async throws -> T) async rethrows -> T {
+        syncPhase = .importing
+        syncWaitVisible = true
+        defer {
+            syncWaitVisible = false
+            syncPhase = .idle
+        }
+        return try await operation()
+    }
+
     /// Imports a bundle into the given project directory, asking the user how
     /// to resolve a conflict when the conversation already exists.
     private func importSession(_ bundle: SessionExportBundle, into projectDir: String) async {
         do {
-            _ = try await api.importSession(bundle, projectDir: projectDir, conflictMode: nil)
-            showToast("Imported \(bundle.name)")
+            try await withTransferWait {
+                _ = try await api.importSession(bundle, projectDir: projectDir, conflictMode: nil)
+                showToast("Imported \(bundle.name)")
+            }
         } catch APIError.conflict {
             let alert = NSAlert()
             alert.messageText = "Session Already Exists"
@@ -217,8 +235,10 @@ class ContentViewModel: ObservableObject {
 
     private func doImport(_ bundle: SessionExportBundle, into projectDir: String, mode: String) async {
         do {
-            let session = try await api.importSession(bundle, projectDir: projectDir, conflictMode: mode)
-            showToast("Imported \(session.name)")
+            try await withTransferWait {
+                let session = try await api.importSession(bundle, projectDir: projectDir, conflictMode: mode)
+                showToast("Imported \(session.name)")
+            }
         } catch {
             showToast("Import failed: \(error.localizedDescription)")
         }
@@ -1685,7 +1705,11 @@ class ContentViewModel: ObservableObject {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.refreshSessions()
+                // A heavy transfer (import/sync) holds the single connection
+                // to the backend; a poll queued behind it would time out and
+                // surface as a false "Backend connection lost".
+                guard let self, !self.syncWaitVisible else { return }
+                await self.refreshSessions()
             }
         }
     }

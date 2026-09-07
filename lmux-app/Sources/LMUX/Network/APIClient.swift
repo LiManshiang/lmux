@@ -378,7 +378,11 @@ class APIClient: AgentSessionService {
         var req = try buildRequest(path, timeout: timeout)
         req.httpMethod = "POST"
         if let body = body {
-            req.httpBody = try Self.encoder.encode(body)
+            // Session imports encode 100MB+ of JSON; keep that work off the
+            // calling (main) thread so the UI doesn't freeze mid-transfer.
+            req.httpBody = try await Task.detached(priority: .userInitiated) {
+                try Self.encoder.encode(body)
+            }.value
         }
         return try await perform(req)
     }
