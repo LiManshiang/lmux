@@ -94,6 +94,7 @@ struct SyncSettingsView: View {
                 .buttonStyle(.plain)
             }
         }
+        .formScrollable()
         .groupedForm()
         .onChange(of: syncEnabled) { _ in persistSyncSettings() }
         .onChange(of: syncDir) { _ in persistSyncSettings() }

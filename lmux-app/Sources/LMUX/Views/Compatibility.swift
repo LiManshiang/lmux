@@ -14,6 +14,19 @@ extension View {
             return AnyView(self)
         }
     }
+
+    /// On macOS 12 a plain `Form` renders as a fixed-height settings list and
+    /// does NOT scroll — content taller than the window is clipped with no
+    /// way to reach it (longer pages like Sync lose their bottom sections).
+    /// macOS 13+ `.grouped` scrolls natively, so only macOS 12 needs the
+    /// wrapping ScrollView.
+    func formScrollable() -> some View {
+        if #available(macOS 13.0, *) {
+            return AnyView(self)
+        } else {
+            return AnyView(ScrollView { self })
+        }
+    }
 }
 
 /// macOS 13+ `LabeledContent`; on macOS 12 render as a label + trailing row.

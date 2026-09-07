@@ -23,6 +23,7 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.secondary)
             }
         }
+        .formScrollable()
         .groupedForm()
     }
 }
