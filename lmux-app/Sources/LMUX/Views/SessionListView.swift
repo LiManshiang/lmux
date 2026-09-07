@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import LMUXCore
 
 struct SessionListView: View {
@@ -25,11 +26,19 @@ struct SessionListView: View {
                 Button("Attach in Terminal") {
                     Task { await viewModel.attachToSession(session) }
                 }
-                Button("Open in New Window") {
-                    SessionWindowController.shared.open(session: session, viewModel: viewModel)
+                Menu("Open In") {
+                    Button("New Window") {
+                        SessionWindowController.shared.open(session: session, viewModel: viewModel)
+                    }
+                    .disabled(viewModel.selectedSession?.id == session.id)
+                    .help("Run this session in its own terminal window")
+                    Button("Finder") {
+                        let dir = session.projectDir
+                        guard FileManager.default.fileExists(atPath: dir, isDirectory: nil) else { return }
+                        NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
+                    }
+                    .help("Reveal the project directory in Finder")
                 }
-                .disabled(viewModel.selectedSession?.id == session.id)
-                .help("Run this session in its own terminal window")
                 Divider()
                 Button(session.pinned ? "Unpin (取消置顶)" : "Pin to Top (置顶)") {
                     Task { await viewModel.togglePin(session: session) }
