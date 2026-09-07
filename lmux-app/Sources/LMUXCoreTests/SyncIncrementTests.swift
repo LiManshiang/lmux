@@ -98,4 +98,54 @@ final class SyncIncrementTests: XCTestCase {
             .append
         )
     }
+
+    // MARK: - mirrorRepairDecision (corrupt mirror integrity guard)
+
+    func testMirrorRepairProceedWhenContentMatchesOffset() {
+        // Healthy copy: content length equals the trusted offset → normal flow.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 67_852_855,
+                effectiveOffset: 67_852_855, incomingBytes: 57_284, newOffset: 67_910_139),
+            .proceed
+        )
+        // No local file → nothing to corrupt, normal flow.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: false, localContentBytes: 0,
+                effectiveOffset: 0, incomingBytes: 68_298_139, newOffset: 68_298_139),
+            .proceed
+        )
+    }
+
+    func testMirrorRepairReplaceFullWhenFullExportArrives() {
+        // The field-reported corruption: local content doubled
+        // (136_150_994 = 67_852_855 + full 68_298_139) while its offset still
+        // claims 68_298_139. A full export (incoming == newOffset) replaces
+        // the copy wholesale instead of appending onto the duplicate.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 136_150_994,
+                effectiveOffset: 68_298_139, incomingBytes: 68_298_139, newOffset: 68_298_139),
+            .replaceFull
+        )
+    }
+
+    func testMirrorRepairNeedsFullExportWhenOnlyIncrementArrives() {
+        // Corrupt copy + increment-sized bundle → must re-export from zero
+        // first; appending would duplicate the overlapped bytes again.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 136_150_994,
+                effectiveOffset: 68_298_139, incomingBytes: 57_284, newOffset: 68_298_139),
+            .needsFullExport
+        )
+        // Degenerate: empty source with a corrupt copy → full re-export.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 100,
+                effectiveOffset: 50, incomingBytes: 0, newOffset: 0),
+            .needsFullExport
+        )
+    }
 }

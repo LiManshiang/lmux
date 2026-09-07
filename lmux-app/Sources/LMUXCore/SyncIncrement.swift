@@ -70,4 +70,41 @@ public enum SyncIncrement {
         guard let fileOffset, fileOffset > localOffset else { return localOffset }
         return fileOffset
     }
+
+    // MARK: - Mirror integrity
+
+    /// What to do when the local mirror's actual content size disagrees with
+    /// the offset it claims (e.g. a historical bug appended a full export on
+    /// top of an intact copy, doubling the conversation).
+    public enum MirrorRepairDecision: Equatable {
+        /// Content length matches the offset — run the normal decide flow.
+        case proceed
+        /// Corrupt copy, but the incoming bundle is a full export — replace
+        /// the local content wholesale (self-heal).
+        case replaceFull
+        /// Corrupt copy and the incoming bundle is only an increment — the
+        /// caller must re-export from zero first.
+        case needsFullExport
+    }
+
+    /// Appending is only safe when the local copy's real byte length equals
+    /// the offset the merge logic believes it has. A copy whose content
+    /// outgrew its recorded offset would duplicate everything already in it.
+    ///
+    /// - Parameters:
+    ///   - hasLocalFile: whether a mirror copy exists.
+    ///   - localContentBytes: actual UTF-8 byte length of the local copy.
+    ///   - effectiveOffset: the (possibly healed) offset the merge trusts.
+    ///   - incomingBytes: UTF-8 byte length of the bundle being merged.
+    ///   - newOffset: total source size the backend reports.
+    public static func mirrorRepairDecision(
+        hasLocalFile: Bool,
+        localContentBytes: Int64,
+        effectiveOffset: Int64,
+        incomingBytes: Int64,
+        newOffset: Int64
+    ) -> MirrorRepairDecision {
+        guard hasLocalFile, localContentBytes != effectiveOffset else { return .proceed }
+        return (newOffset > 0 && incomingBytes == newOffset) ? .replaceFull : .needsFullExport
+    }
 }
