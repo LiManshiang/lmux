@@ -296,7 +296,7 @@ class APIClient: AgentSessionService {
         if since > 0 {
             url += "?since=\(since)"
         }
-        let data = try await get(url)
+        let data = try await get(url, timeout: Self.heavyTransferTimeout)
         return try decode(SessionExportBundle.self, from: data)
     }
 
@@ -329,7 +329,7 @@ class APIClient: AgentSessionService {
             content: bundle.content,
             conflictMode: conflictMode
         )
-        let data = try await post("/api/sessions/import", body: body)
+        let data = try await post("/api/sessions/import", body: body, timeout: Self.heavyTransferTimeout)
         struct Response: Codable {
             let session: Session
         }
@@ -350,24 +350,32 @@ class APIClient: AgentSessionService {
 
     // MARK: - HTTP Methods
 
-    private func buildRequest(_ path: String) throws -> URLRequest {
+    /// Import/export transfer whole conversations (100MB+ of JSON); the 10s
+    /// default request timeout is tuned for polling endpoints and kills the
+    /// bundle transfer long before the backend answers.
+    private static let heavyTransferTimeout: TimeInterval = 300
+
+    private func buildRequest(_ path: String, timeout: TimeInterval? = nil) throws -> URLRequest {
         guard let url = URL(string: "\(baseURL)\(path)") else {
             throw APIError.invalidURL
         }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let timeout {
+            req.timeoutInterval = timeout
+        }
         return req
     }
 
-    private func get(_ path: String) async throws -> Data {
-        var req = try buildRequest(path)
+    private func get(_ path: String, timeout: TimeInterval? = nil) async throws -> Data {
+        var req = try buildRequest(path, timeout: timeout)
         req.httpMethod = "GET"
         return try await perform(req)
     }
 
-    private func post<T: Encodable>(_ path: String, body: T?) async throws -> Data {
-        var req = try buildRequest(path)
+    private func post<T: Encodable>(_ path: String, body: T?, timeout: TimeInterval? = nil) async throws -> Data {
+        var req = try buildRequest(path, timeout: timeout)
         req.httpMethod = "POST"
         if let body = body {
             req.httpBody = try Self.encoder.encode(body)
