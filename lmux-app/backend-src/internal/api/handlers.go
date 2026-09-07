@@ -723,6 +723,13 @@ func (h *Handler) ImportSession(w http.ResponseWriter, r *http.Request) {
 		targetPath = sessionFileFor(body.AgentType, absDir, sessionID)
 	}
 
+	// The CLI matches a resumable conversation by the cwd recorded inside
+	// its content against the process working directory. A bundle imported
+	// from another machine carries the source machine's paths (often a home
+	// dir that doesn't exist here), which makes resume start a fresh empty
+	// conversation instead — localize every recorded cwd to the target dir.
+	writeContent = codebuddy.RewriteSessionCwd(writeContent, absDir)
+
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		writeError(w, http.StatusInternalServerError, "create session directory: "+err.Error())
 		return
