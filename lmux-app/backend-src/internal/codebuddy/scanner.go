@@ -660,6 +660,19 @@ func RewriteSessionID(content, newID string) string {
 	return sessionIDFieldRE.ReplaceAllString(content, `"sessionId":"`+newID+`"`)
 }
 
+// cwdFieldRE matches the cwd field value inside a JSONL line.
+var cwdFieldRE = regexp.MustCompile(`"cwd"\s*:\s*"([^"]*)"`)
+
+// RewriteSessionCwd rewrites every cwd field value in a conversation JSONL
+// payload to newCwd. Used when importing a conversation from another machine:
+// the CLI locates a resumable conversation by matching the cwd recorded in
+// its first history entry against the current working directory, so a session
+// imported under a local project dir must carry that dir as its cwd — or
+// resume silently falls back to a brand-new empty conversation.
+func RewriteSessionCwd(content, newCwd string) string {
+	return cwdFieldRE.ReplaceAllString(content, `"cwd":"`+newCwd+`"`)
+}
+
 // estimateContentChars returns the character count of a claude message
 // content field, which may be a plain string or an array of blocks.
 func estimateContentChars(raw json.RawMessage) int64 {

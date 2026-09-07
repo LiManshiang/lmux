@@ -406,6 +406,36 @@ func TestImportSession(t *testing.T) {
 	}
 }
 
+func TestImportSessionRewritesCwd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	// A bundle from another machine carries the source machine's cwd; the
+	// CLI matches resumable conversations by that recorded cwd, so the
+	// import must localize it to the target project dir.
+	importBody := `{"name":"imp","agent_type":"codebuddy","project_dir":"/tmp/proj","cbc_session_id":"conv2","content":"{\"sessionId\":\"conv2\",\"type\":\"user\",\"cwd\":\"/Users/someone-else\"}\n{\"sessionId\":\"conv2\",\"type\":\"message\",\"role\":\"assistant\",\"cwd\":\"/Volumes/Elsewhere\"}\n"}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/import", strings.NewReader(importBody))
+	w := httptest.NewRecorder()
+	h.ImportSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("ImportSession status = %d: %s", w.Code, w.Body.String())
+	}
+
+	got, err := os.ReadFile(filepath.Join(home, ".codebuddy", "projects", "tmp-proj", "conv2.jsonl"))
+	if err != nil {
+		t.Fatalf("imported file not written: %v", err)
+	}
+	if strings.Contains(string(got), "/Users/someone-else") || strings.Contains(string(got), "/Volumes/Elsewhere") {
+		t.Errorf("imported content still carries foreign cwd: %s", got)
+	}
+	if !strings.Contains(string(got), `"cwd":"/tmp/proj"`) {
+		t.Errorf("imported content missing localized cwd: %s", got)
+	}
+}
+
 func TestUpdateSession(t *testing.T) {
 	ensureProjDir(t)
 	h := newTestHandler(t)
