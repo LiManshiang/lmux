@@ -129,6 +129,24 @@ enum SessionSync {
         exportedOffsets[cbcID] ?? 0
     }
 
+    /// The `since` offset to request for the next incremental export.
+    ///
+    /// The persisted tracking can be lost or lag behind (defaults migration,
+    /// resets) while the mirror `.lmuxsession` on disk is further along. The
+    /// merge decision in `applyIncrementalExport` heals from the file's
+    /// recorded offset — the request must use the same basis, or the server
+    /// returns bytes the mirror already contains and appending them
+    /// duplicates the whole conversation. So: max(tracked, file offset).
+    static func exportSinceOffset(for cbcID: String) -> Int64 {
+        let tracked = exportedOffset(for: cbcID)
+        guard let url = fileURL(for: cbcID),
+              let bundle = SessionExportBundle.fromJSON(url),
+              let fileOffset = bundle.offset, fileOffset > tracked else {
+            return tracked
+        }
+        return fileOffset
+    }
+
     /// Clear the tracked offset for a conversation so the next export is a
     /// full resync. Used after the local sync copy was found missing and the
     /// caller will re-export the whole conversation.
@@ -549,20 +567,42 @@ enum SessionSync {
             localOffset: localOffset,
             fileOffset: existing?.offset)
 
-        // Pure decision logic (unit-tested in LMUXCore).
-        switch SyncIncrement.decide(
+        // Integrity guard (SyncIncrement.mirrorRepairDecision): a local copy
+        // whose content outgrew its recorded offset must never be appended
+        // to — that is how a full re-export got stacked onto an intact copy
+        // and duplicated the whole conversation. With a full export in hand
+        // the corrupt copy is replaced wholesale (self-heal); otherwise the
+        // caller re-exports from zero and the next pass replaces it.
+        let localBytes = existing.map { Int64($0.content.utf8.count) } ?? 0
+        let incomingBytes = Int64(bundle.content.utf8.count)
+        let repair = SyncIncrement.mirrorRepairDecision(
             hasLocalFile: foundURL != nil,
-            localOffset: effectiveOffset,
-            newOffset: newOffset,
-            localFileOffsetMatches: existing?.offset == effectiveOffset
-        ) {
-        case .unchanged:
-            return .unchanged
-        case .needsFullExport:
-            // Local copy missing (deleted) or offsets inconsistent — resync.
+            localContentBytes: localBytes,
+            effectiveOffset: effectiveOffset,
+            incomingBytes: incomingBytes,
+            newOffset: newOffset)
+        if repair == .needsFullExport {
             return .needsFullExport
-        case .append, .freshExport:
-            break // handled below
+        }
+        let replaceCorruptCopy = (repair == .replaceFull)
+
+        // Pure decision logic (unit-tested in LMUXCore). Skipped when the
+        // corrupt copy is being replaced — writing is unconditional then.
+        if !replaceCorruptCopy {
+            switch SyncIncrement.decide(
+                hasLocalFile: foundURL != nil,
+                localOffset: effectiveOffset,
+                newOffset: newOffset,
+                localFileOffsetMatches: existing?.offset == effectiveOffset
+            ) {
+            case .unchanged:
+                return .unchanged
+            case .needsFullExport:
+                // Local copy missing (deleted) or offsets inconsistent — resync.
+                return .needsFullExport
+            case .append, .freshExport:
+                break // handled below
+            }
         }
 
         let freshName = syncFileName(name: bundle.name, cbcID: cbcID)
@@ -587,18 +627,18 @@ enum SessionSync {
         merged.deviceId = deviceID
         merged.offset = newOffset
 
-        // A full export (no `since` offset, content is the whole JSONL) must
-        // overwrite the mirror copy — appending it to the existing prefix
-        // would duplicate the entire conversation. Only true increments
-        // (content shorter than offset) get concatenated.
-        let contentBytes = Int64(bundle.content.utf8.count)
-        let isFull = SyncIncrement.isFullExport(contentBytes: contentBytes, offset: newOffset)
-        if !isFull, let existing, existing.offset == effectiveOffset {
+        // Never append when the mirror copy is being replaced (corrupt) or
+        // the incoming bundle is itself a full export (no `since` offset,
+        // content is the whole JSONL) — either would stack the full
+        // conversation onto the existing prefix and duplicate everything.
+        let isFull = SyncIncrement.isFullExport(contentBytes: incomingBytes, offset: newOffset)
+        if !isFull, !replaceCorruptCopy, let existing, existing.offset == effectiveOffset {
             // Append the increment to the existing local copy.
             merged.content = existing.content + bundle.content
             merged.name = existing.name // keep the original display name
         } else {
-            // Fresh/full export: content already holds the whole conversation.
+            // Fresh export (or corrupt-copy / full-export replacement): the
+            // bundle already holds the whole conversation.
             merged.content = bundle.content
         }
 

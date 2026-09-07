@@ -1329,7 +1329,7 @@ class ContentViewModel: ObservableObject {
         for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
             guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
             do {
-                let since = SessionSync.exportedOffset(for: cbcID)
+                let since = SessionSync.exportSinceOffset(for: cbcID)
                 let bundle = try await api.exportSession(sessionID: session.id, since: since)
                 let result = SessionSync.applyIncrementalExport(bundle)
                 if result == .needsFullExport {
@@ -1459,7 +1459,7 @@ class ContentViewModel: ObservableObject {
             guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
             syncPhase = .exporting(current: idx + 1, total: pinned.count)
             do {
-                let since = SessionSync.exportedOffset(for: cbcID)
+                let since = SessionSync.exportSinceOffset(for: cbcID)
                 let bundle = try await api.exportSession(sessionID: session.id, since: since)
                 let export = SessionSync.applyIncrementalExport(bundle)
                 if export == .needsFullExport {
