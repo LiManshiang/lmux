@@ -75,4 +75,27 @@ final class SyncIncrementTests: XCTestCase {
             .needsFullExport
         )
     }
+
+    // MARK: - effectiveOffset (lost tracked offset recovery)
+
+    func testEffectiveOffsetKeepsValidTracking() {
+        // File behind our tracked offset → tracking wins.
+        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 150, fileOffset: 100), 150)
+        // File offset equal → unchanged.
+        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 150, fileOffset: 150), 150)
+        // No file → tracking stays.
+        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 150, fileOffset: nil), 150)
+    }
+
+    func testEffectiveOffsetRecoversLostTrackingFromFile() {
+        // Tracking was reset to 0 (defaults migration) but the mirror file is
+        // intact at 67852855 → converge on the file so append resumes.
+        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 0, fileOffset: 67_852_855), 67_852_855)
+        // Converged offset lets decide() take the append path (self-heals).
+        let recovered = SyncIncrement.effectiveOffset(localOffset: 0, fileOffset: 67_852_855)
+        XCTAssertEqual(
+            SyncIncrement.decide(hasLocalFile: true, localOffset: recovered, newOffset: 67_910_211, localFileOffsetMatches: true),
+            .append
+        )
+    }
 }

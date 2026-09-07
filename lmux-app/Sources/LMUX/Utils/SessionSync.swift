@@ -541,12 +541,20 @@ enum SessionSync {
         let foundURL = fileURL(for: cbcID)
         let existing = foundURL.flatMap { SessionExportBundle.fromJSON($0) }
 
+        // Recover a lost tracked offset (defaults migration / reset) from the
+        // mirror file: when the file is intact and ahead of our tracking,
+        // resume appending from the file's offset instead of demanding a full
+        // re-export that can never be satisfied.
+        let effectiveOffset = SyncIncrement.effectiveOffset(
+            localOffset: localOffset,
+            fileOffset: existing?.offset)
+
         // Pure decision logic (unit-tested in LMUXCore).
         switch SyncIncrement.decide(
             hasLocalFile: foundURL != nil,
-            localOffset: localOffset,
+            localOffset: effectiveOffset,
             newOffset: newOffset,
-            localFileOffsetMatches: existing?.offset == localOffset
+            localFileOffsetMatches: existing?.offset == effectiveOffset
         ) {
         case .unchanged:
             return .unchanged
@@ -579,7 +587,7 @@ enum SessionSync {
         merged.deviceId = deviceID
         merged.offset = newOffset
 
-        if let existing, existing.offset == localOffset {
+        if let existing, existing.offset == effectiveOffset {
             // Append the increment to the existing local copy.
             merged.content = existing.content + bundle.content
             merged.name = existing.name // keep the original display name

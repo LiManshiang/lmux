@@ -55,4 +55,19 @@ public enum SyncIncrement {
         // Local copy is ahead/behind our tracked offset — resync from zero.
         return .needsFullExport
     }
+
+    /// Recover a lost tracked offset from the local mirror file itself.
+    ///
+    /// The persisted per-conversation offset can be missing or reset (e.g.
+    /// the sync state moved to a shared UserDefaults suite and the migration
+    /// only copied part of it), while the mirror `.lmuxsession` on disk is
+    /// intact and actually further along than our (zero) tracking. In that
+    /// case `decide` would return `.needsFullExport` forever — every sync
+    /// pass demands a full re-export, the full export is refused again for
+    /// the same reason, and nothing is ever written. Converging on the
+    /// file's offset lets the normal append path resume and self-heal.
+    public static func effectiveOffset(localOffset: Int64, fileOffset: Int64?) -> Int64 {
+        guard let fileOffset, fileOffset > localOffset else { return localOffset }
+        return fileOffset
+    }
 }
