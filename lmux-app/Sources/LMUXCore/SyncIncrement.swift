@@ -70,4 +70,16 @@ public enum SyncIncrement {
         guard let fileOffset, fileOffset > localOffset else { return localOffset }
         return fileOffset
     }
+
+    /// Whether an export bundle already carries the entire conversation.
+    ///
+    /// A bundle fetched WITHOUT a `since` offset is a full export: its
+    /// `content` is the whole JSONL, so its UTF-8 byte length equals its
+    /// `offset`. An incremental bundle is only the appended tail and is far
+    /// shorter. Appending a full export to the mirror prefix would duplicate
+    /// the whole conversation (mirror byte size ≈ prefix + full export), so
+    /// the writer must overwrite instead of append when this is true.
+    public static func isFullExport(contentBytes: Int64, offset: Int64) -> Bool {
+        offset > 0 && contentBytes >= offset
+    }
 }

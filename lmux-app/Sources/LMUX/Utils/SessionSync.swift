@@ -587,12 +587,18 @@ enum SessionSync {
         merged.deviceId = deviceID
         merged.offset = newOffset
 
-        if let existing, existing.offset == effectiveOffset {
+        // A full export (no `since` offset, content is the whole JSONL) must
+        // overwrite the mirror copy — appending it to the existing prefix
+        // would duplicate the entire conversation. Only true increments
+        // (content shorter than offset) get concatenated.
+        let contentBytes = Int64(bundle.content.utf8.count)
+        let isFull = SyncIncrement.isFullExport(contentBytes: contentBytes, offset: newOffset)
+        if !isFull, let existing, existing.offset == effectiveOffset {
             // Append the increment to the existing local copy.
             merged.content = existing.content + bundle.content
             merged.name = existing.name // keep the original display name
         } else {
-            // Fresh export: content already holds the full conversation.
+            // Fresh/full export: content already holds the whole conversation.
             merged.content = bundle.content
         }
 

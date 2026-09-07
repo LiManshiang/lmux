@@ -98,4 +98,17 @@ final class SyncIncrementTests: XCTestCase {
             .append
         )
     }
+
+    // MARK: - isFullExport (full-export bundles must not be appended)
+
+    func testIsFullExport() {
+        // Full export: content bytes == offset (whole JSONL).
+        XCTAssertTrue(SyncIncrement.isFullExport(contentBytes: 67_910_211, offset: 67_910_211))
+        // A full export from a slightly-grown JSONL is >= its offset.
+        XCTAssertTrue(SyncIncrement.isFullExport(contentBytes: 68_298_139, offset: 68_298_139))
+        // Incremental bundle: only the appended tail → far shorter than offset.
+        XCTAssertFalse(SyncIncrement.isFullExport(contentBytes: 457_284, offset: 68_298_139))
+        // Degenerate zero-offset bundle is not a full export.
+        XCTAssertFalse(SyncIncrement.isFullExport(contentBytes: 0, offset: 0))
+    }
 }
