@@ -22,6 +22,11 @@ struct PreferencesView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 480, height: 420)
+        // Fill the host window so Form items use the full width. Fixed
+        // 480x420 left large empty margins on macOS 12 (Form items
+        // right-stack inside that frame, clipping the Browse button against
+        // the window edge). Window content size is still set to 600x470 in
+        // SettingsWindowController.
+        .frame(minWidth: 480, idealWidth: 600, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
     }
 }
