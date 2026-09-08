@@ -350,3 +350,104 @@ func TestLatestSessionFileIgnoresPreLaunchActivity(t *testing.T) {
 		t.Errorf("latestSessionFile = %q, want %q (nothing active after launch)", got, "")
 	}
 }
+
+// --- SessionHasAssistant / fileHasAssistant (session-valid fast path) ---
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func TestFileHasAssistant(t *testing.T) {
+	dir := t.TempDir()
+
+	// Assistant in the first few lines → true.
+	withAssistant := filepath.Join(dir, "with.jsonl")
+	writeFile(t, withAssistant,
+		`{"type":"message","role":"user","cwd":"/x"}`+"\n"+
+			`{"type":"message","role":"assistant","cwd":"/x"}`+"\n")
+	if !fileHasAssistant(withAssistant) {
+		t.Error("file with assistant message: got false, want true")
+	}
+
+	// No assistant at all → false (user-only / metrics-only files).
+	userOnly := filepath.Join(dir, "user.jsonl")
+	writeFile(t, userOnly,
+		`{"type":"message","role":"user"}`+"\n"+
+			`{"type":"turn-metrics"}`+"\n")
+	if fileHasAssistant(userOnly) {
+		t.Error("user-only file: got true, want false")
+	}
+
+	// Empty file → false.
+	empty := filepath.Join(dir, "empty.jsonl")
+	writeFile(t, empty, "")
+	if fileHasAssistant(empty) {
+		t.Error("empty file: got true, want false")
+	}
+
+	// Missing file → false (no panic).
+	if fileHasAssistant(filepath.Join(dir, "missing.jsonl")) {
+		t.Error("missing file: got true, want false")
+	}
+
+	// Assistant deep in the file (after large noise lines) → true.
+	deep := filepath.Join(dir, "deep.jsonl")
+	var b strings.Builder
+	b.WriteString(`{"type":"message","role":"user"}` + "\n")
+	for i := 0; i < 500; i++ {
+		b.WriteString(`{"type":"progress","padding":"` + strings.Repeat("x", 2000) + `"}` + "\n")
+	}
+	b.WriteString(`{"type":"message","role":"assistant"}` + "\n")
+	writeFile(t, deep, b.String())
+	if !fileHasAssistant(deep) {
+		t.Error("assistant after 500 noise lines: got false, want true")
+	}
+}
+
+func TestSessionHasAssistantLocatesFileWithoutScan(t *testing.T) {
+	// SessionHasAssistant must find a conversation JSONL by filename under
+	// ~/.codebuddy/projects/<dir>/<id>.jsonl WITHOUT triggering a full
+	// ScanAll — a cold-cache rescan on machines with 100MB+ conversations
+	// used to exceed the request timeout and made resumes fall back to a
+	// fresh (empty) conversation.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	InvalidateCache()
+
+	id := "11111111-2222-3333-4444-555555555555"
+	projDir := filepath.Join(home, ".codebuddy", "projects", "Volumes-Dev-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(projDir, id+".jsonl"),
+		`{"type":"message","role":"user","sessionId":"`+id+`"}`+"\n"+
+			`{"type":"message","role":"assistant","sessionId":"`+id+`"}`+"\n")
+
+	if !SessionHasAssistant(id) {
+		t.Error("SessionHasAssistant(existing conversation) = false, want true")
+	}
+
+	// A user-only conversation (no assistant) is not resumable.
+	emptyID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	writeFile(t, filepath.Join(projDir, emptyID+".jsonl"),
+		`{"type":"message","role":"user","sessionId":"`+emptyID+`"}`+"\n")
+	if SessionHasAssistant(emptyID) {
+		t.Error("SessionHasAssistant(user-only conversation) = true, want false")
+	}
+
+	// Unknown id → false, no panic.
+	if SessionHasAssistant("99999999-8888-7777-6666-555555555555") {
+		t.Error("SessionHasAssistant(unknown id) = true, want false")
+	}
+
+	// Malformed JSONL line inside the file must not break the scan.
+	brokenID := "bbbbbbbb-cccc-dddd-eeee-ffff00001111"
+	writeFile(t, filepath.Join(projDir, brokenID+".jsonl"),
+		"not-json\n"+`{"type":"message","role":"assistant"}`+"\n")
+	if !SessionHasAssistant(brokenID) {
+		t.Error("SessionHasAssistant(file with broken first line) = false, want true")
+	}
+}

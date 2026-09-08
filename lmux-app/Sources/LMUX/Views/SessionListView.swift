@@ -34,18 +34,18 @@ struct SessionListView: View {
                     .help("Run this session in its own terminal window")
                     Button("Finder") {
                         Task {
-                            // The session's real working directory: where the
-                            // agent last recorded cwd (matches what the Edit
-                            // sheet prefills). Falls back to projectDir for
-                            // sessions with no recorded cwd yet.
-                            var dir = session.projectDir
-                            if let cbc = session.cbcSessionID, !cbc.isEmpty,
-                               let cwd = await viewModel.api.agentCwd(
-                                   agent: session.agentType,
-                                   projectDir: session.projectDir,
-                                   sessionID: cbc), !cwd.isEmpty {
-                                dir = cwd
+                            let cwd: String?
+                            if let cbc = session.cbcSessionID, !cbc.isEmpty {
+                                cwd = await viewModel.api.agentCwd(
+                                    agent: session.agentType,
+                                    projectDir: session.projectDir,
+                                    sessionID: cbc)
+                            } else {
+                                cwd = nil
                             }
+                            let dir = FinderDirectory.resolve(
+                                projectDir: session.projectDir,
+                                agentCwd: cwd)
                             guard FileManager.default.fileExists(atPath: dir, isDirectory: nil) else { return }
                             NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
                         }
