@@ -1,0 +1,49 @@
+# Build lmux.app and attach it to a GitHub Release.
+#
+# Manual trigger (Actions → Release → Run workflow) while the packaging
+# pipeline stabilizes; switch the `on:` block to `push: tags: ["v*"]` once
+# green.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      # Package.swift expects local packages at repo-root siblings:
+      #   ../SwiftTerm       (upstream 4acb12f + 5.7 backport patch)
+      #   ../libghostty-spm  (upstream Lakr233/libghostty-spm @ 31884f5)
+      - name: Fetch local package dependencies
+        run: |
+          git clone https://github.com/Lakr233/libghostty-spm.git ../libghostty-spm
+          git -C ../libghostty-spm checkout 31884f5
+          git clone https://github.com/migueldeicaza/SwiftTerm.git ../SwiftTerm
+          git -C ../SwiftTerm checkout 4acb12f
+          git -C .. apply lmux-app/tools/patches/swiftterm-5.7-backport.patch
+
+      - name: Build lmux.app
+        run: cd lmux-app && make app
+
+      - name: Package zip
+        run: |
+          cd lmux-app/.build
+          NAME="lmux-${GITHUB_REF_NAME##*/}"
+          ditto -c -k --keepParent lmux.app "../../${NAME}.zip"
+          echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP }}
+          generate_release_notes: true
