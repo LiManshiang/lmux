@@ -12,10 +12,12 @@ macOS 终端会话管理器，可在分屏的嵌入式终端中运行 **CodeBudd
 - **分屏终端** —— 可在主终端下方打开第二个终端面板。
 - **键盘快捷键** —— `⌘F` 搜索、`⌘↑/⌘↓` 切换会话、`⌘K` 停止、`⌘N` 新建。
 - **导出 / 导入** —— 通过 `Session → Export Sessions…` / `Import Sessions…` 将全部会话与智能体对话数据迁移到另一台 Mac。
+- **跨设备会话同步** —— 置顶会话以 `.lmuxsession` bundle 增量同步到任意在多台 Mac 间共享的目录（iCloud Drive、Syncthing 等），智能体原始 JSONL 一并镜像。导入时自动把记录的路径本地化到本项目目录；全量导出不会被重复追加；双边都有修改时弹出"保留本地 / 使用远端"冲突面板，而不是静默覆盖。
+- **Open In 菜单** —— 右键会话可在新窗口打开，或用 Finder 直达会话工作目录。
 
 ## 环境要求
 
-- macOS 13+（Ghostty GPU 渲染后端；也可选 SwiftTerm 后端）
+- macOS 13+（Ghostty GPU 渲染后端），或 macOS 12+ 使用 SwiftTerm 后端（Intel x86_64 构建：`make app-x86`）
 - Xcode 命令行工具（`xcode-select --install`）
 - Go 1.26+（后端）
 
@@ -57,8 +59,9 @@ app 会自动启动内置后端，无需额外配置守护进程。
 
 ```sh
 cd lmux-app
-make test                   # 前端 LMUXCore 单元测试（54 用例，arm64）
-cd backend-src && go test ./...   # 后端单元测试（会话 CRUD、find-session、上下文统计）
+make test                   # 前端 LMUXCore 单元测试（77 用例，arm64）
+cd backend-src && go test ./...   # 后端单元测试（会话 CRUD、find-session、session-valid
+                                  # 快速路径、导入/导出）
 ```
 
 ## 架构

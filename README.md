@@ -25,10 +25,19 @@ side-by-side embedded terminals.
   `⌘N` new.
 - **Export / Import** — migrate all sessions and agent conversation data to
   another Mac via `Session → Export Sessions…` / `Import Sessions…`.
+- **Cross-device session sync** — pinned sessions sync incrementally as
+  `.lmuxsession` bundles through any folder that syncs between your Macs
+  (iCloud Drive, Syncthing, …); raw agent JSONL is mirrored alongside. Imports
+  localize recorded paths to the local project directory, full exports are
+  never appended twice, and two-sided edits surface a keep-local / use-remote
+  conflict dialog instead of silently overwriting.
+- **Open In menu** — right-click a session to open it in a new window or jump
+  to its working directory in Finder.
 
 ## Requirements
 
-- macOS 13+ (Ghostty GPU rendering backend; SwiftTerm backend available)
+- macOS 13+ (Ghostty GPU rendering backend), or macOS 12+ with the SwiftTerm
+  backend (Intel x86_64 builds via `make app-x86`)
 - Xcode command line tools (`xcode-select --install`)
 - Go 1.26+ (backend)
 
@@ -78,8 +87,9 @@ The app launches its embedded backend automatically; no daemon setup needed.
 
 ```sh
 cd lmux-app
-make test                   # frontend LMUXCore unit tests (54 cases, arm64)
-cd backend-src && go test ./...   # backend unit tests (session CRUD, find-session, context)
+make test                   # frontend LMUXCore unit tests (77 cases, arm64)
+cd backend-src && go test ./...   # backend unit tests (session CRUD, find-session,
+                                  # session-valid fast path, import/export)
 ```
 
 ## Architecture
