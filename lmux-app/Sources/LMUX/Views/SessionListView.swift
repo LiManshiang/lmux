@@ -33,11 +33,15 @@ struct SessionListView: View {
                     .disabled(viewModel.selectedSession?.id == session.id)
                     .help("Run this session in its own terminal window")
                     Button("Finder") {
+                        // The session's project directory (what Edit Session
+                        // shows). NOT the agent's last-recorded cwd - that
+                        // drifts wherever the agent last cd'd (e.g. an iCloud
+                        // sync dir), which is never what the user wants here.
                         let dir = session.projectDir
                         guard FileManager.default.fileExists(atPath: dir, isDirectory: nil) else { return }
                         NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
                     }
-                    .help("Reveal the project directory in Finder")
+                    .help("Open the session's project directory in Finder")
                 }
                 Divider()
                 Button(session.pinned ? "Unpin (取消置顶)" : "Pin to Top (置顶)") {
