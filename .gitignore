@@ -12,3 +12,8 @@ lmux-app/backend-src/bin/
 .build-st/
 .swiftpm/
 STAGE_SUMMARY.md
+
+# Local Swift package checkouts (fetched per the build instructions)
+/SwiftTerm/
+/libghostty-spm/
+/swift-argument-parser/
