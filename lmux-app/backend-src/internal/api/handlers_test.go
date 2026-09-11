@@ -625,3 +625,117 @@ func TestSessionUsageStats(t *testing.T) {
 		t.Errorf("model = %q", resp.Stats[0].Model)
 	}
 }
+
+// --- LocalizeSessionCwd ---
+
+func TestLocalizeSessionCwd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	sess, err := h.mgr.Create(session.CreateRequest{
+		ProjectDir:   "/tmp/proj",
+		Name:         "localize-me",
+		CBCSessionID: "conv9",
+		AgentType:    "codebuddy",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Conversation history from another machine: its recorded cwd no longer
+	// exists here, which is exactly what makes the CLI start an empty session.
+	dir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "conv9.jsonl")
+	body := `{"sessionId":"conv9","type":"message","role":"user","cwd":"/Users/someone-else"}` + "\n" +
+		`{"sessionId":"conv9","type":"message","role":"assistant","cwd":"/Users/someone-else","content":"hi"}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	h.LocalizeSessionCwd(w, httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/localize-cwd", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"updated":true`) {
+		t.Errorf("expected updated=true, got %s", w.Body.String())
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "/Users/someone-else") {
+		t.Errorf("foreign cwd still present: %s", got)
+	}
+	if !strings.Contains(string(got), `"cwd":"/tmp/proj"`) {
+		t.Errorf("cwd not rewritten to project dir: %s", got)
+	}
+	// Non-cwd fields must survive untouched.
+	if !strings.Contains(string(got), `"content":"hi"`) || !strings.Contains(string(got), `"sessionId":"conv9"`) {
+		t.Errorf("unrelated fields changed: %s", got)
+	}
+
+	// Idempotent: a second call reports no change.
+	w2 := httptest.NewRecorder()
+	h.LocalizeSessionCwd(w2, httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/localize-cwd", nil))
+	if strings.Contains(w2.Body.String(), `"updated":true`) {
+		t.Errorf("second call should be a no-op, got %s", w2.Body.String())
+	}
+}
+
+func TestLocalizeSessionCwdSkipsRunningAndUnbound(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	// No conversation bound -> nothing to do, but not an error.
+	plain, err := h.mgr.Create(session.CreateRequest{ProjectDir: "/tmp/proj", Name: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.LocalizeSessionCwd(w, httptest.NewRequest(http.MethodPost, "/api/sessions/"+plain.ID+"/localize-cwd", nil))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"updated":true`) {
+		t.Errorf("unbound session: code=%d body=%s", w.Code, w.Body.String())
+	}
+
+	// Running sessions must not be touched (the agent is appending to the file).
+	running, err := h.mgr.Create(session.CreateRequest{
+		ProjectDir: "/tmp/proj", Name: "running", CBCSessionID: "conv10", AgentType: "codebuddy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.mgr.UpdateStatus(running.ID, session.StatusRunning, 1234); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "conv10.jsonl")
+	original := `{"sessionId":"conv10","type":"message","role":"user","cwd":"/Users/someone-else"}` + "\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w2 := httptest.NewRecorder()
+	h.LocalizeSessionCwd(w2, httptest.NewRequest(http.MethodPost, "/api/sessions/"+running.ID+"/localize-cwd", nil))
+	if strings.Contains(w2.Body.String(), `"updated":true`) {
+		t.Errorf("running session must be skipped, got %s", w2.Body.String())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != original {
+		t.Errorf("running session's file was modified: %s", after)
+	}
+}
