@@ -85,6 +85,25 @@ open .build/lmux.app
 
 <img src="docs/screenshots/agent-activity.png" width="760" alt="嵌入式终端里的智能体活动">
 
+### 会话库
+
+<img src="docs/screenshots/conversations.png" width="880" alt="会话库：搜索、过滤、预览">
+
+**Agent** 标签页列出本机全部会话 —— 可按标题、摘要或路径搜索，按智能体过滤，显示每个会话的体积并可星标置顶。单击即可预览最新的对话内容，再决定是否恢复。
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/settings.png" width="400" alt="设置 —— 渲染引擎与主题">
+<p>选择渲染引擎（SwiftTerm，或用 Ghostty 获得 GPU 加速的 Metal 渲染）与内置主题。</p>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/session-menu.png" width="380" alt="会话右键菜单">
+<p>会话菜单：在终端中接管、独立窗口打开、置顶、导出/导入、编辑工作目录、重命名、删除。</p>
+</td>
+</tr>
+</table>
+
 ## 常见问题
 
 **CodeBuddy Code 是什么？**
