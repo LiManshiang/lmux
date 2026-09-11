@@ -95,6 +95,30 @@ open .build/lmux.app
 
 <img src="docs/screenshots/agent-activity.png" width="760" alt="Agent activity in an embedded terminal">
 
+### Conversation library
+
+<img src="docs/screenshots/conversations.png" width="880" alt="Conversation library — search, filters, preview">
+
+The **Agent** tab lists every conversation on this Mac — searchable by title,
+summary or path, filterable to a single agent, showing each conversation's size
+with a star to pin it. A single click previews its latest messages before you
+decide to resume.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/settings.png" width="400" alt="Settings — renderer and theme">
+<p>Pick the renderer (SwiftTerm, or Ghostty for GPU-accelerated Metal rendering)
+and one of the built-in themes.</p>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/session-menu.png" width="380" alt="Per-session context menu">
+<p>The per-session menu: attach in a terminal, open a window, pin to top,
+export / import, edit the working directory, rename, delete.</p>
+</td>
+</tr>
+</table>
+
 ## FAQ
 
 **What is CodeBuddy Code?**
