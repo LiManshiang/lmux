@@ -577,26 +577,20 @@ func (h *Handler) LocalizeSessionCwd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := sessionFileFor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
-	data, err := os.ReadFile(path)
+	changed, err := codebuddy.LocalizeSessionCwdFile(path, sess.ProjectDir)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"updated": false, "reason": "conversation file not found"})
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"updated": false, "reason": "conversation file not found"})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "localize conversation: "+err.Error())
 		return
 	}
-
-	content := string(data)
-	rewritten := codebuddy.RewriteSessionCwd(content, sess.ProjectDir)
-	if rewritten == content {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"updated": false})
-		return
+	if changed {
+		codebuddy.InvalidateCache()
 	}
-	if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, "write conversation: "+err.Error())
-		return
-	}
-
-	codebuddy.InvalidateCache()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"updated": true})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"updated": changed})
 }
 
 // PinSession toggles the pinned (starred) flag that keeps a session at the
