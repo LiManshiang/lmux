@@ -21,15 +21,16 @@ jobs:
         with:
           go-version: "1.26"
 
-      # Package.swift expects local packages at repo-root siblings:
-      #   ../SwiftTerm       (upstream 4acb12f + 5.7 backport patch)
-      #   ../libghostty-spm  (upstream main)
+      # lmux-app/Package.swift resolves its local packages as `../SwiftTerm`
+      # and `../libghostty-spm` — i.e. siblings of lmux-app, which is the
+      # repository root. Clone them there (not outside the checkout).
       - name: Fetch local package dependencies
         run: |
-          git clone --depth 1 https://github.com/Lakr233/libghostty-spm.git ../libghostty-spm
-          git clone https://github.com/migueldeicaza/SwiftTerm.git ../SwiftTerm
-          git -C ../SwiftTerm checkout 4acb12f
-          git -C .. apply lmux-app/tools/patches/swiftterm-5.7-backport.patch
+          rm -rf SwiftTerm libghostty-spm
+          git clone --depth 1 https://github.com/Lakr233/libghostty-spm.git libghostty-spm
+          git clone https://github.com/migueldeicaza/SwiftTerm.git SwiftTerm
+          git -C SwiftTerm checkout 4acb12f
+          git -C SwiftTerm apply "$GITHUB_WORKSPACE/lmux-app/tools/patches/swiftterm-5.7-backport.patch"
 
       - name: Build lmux.app
         run: cd lmux-app && make app
