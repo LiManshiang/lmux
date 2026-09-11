@@ -285,6 +285,15 @@ class APIClient: AgentSessionService {
         _ = try await post("/api/sessions/\(sessionID)/cbc-session", body: Body(cbcSessionID: cbcSessionID))
     }
 
+    /// Rewrites the cwd recorded inside a conversation to the session's project
+    /// directory. The CodeBuddy CLI resolves a resumable conversation by that
+    /// recorded cwd, so history originally recorded on another Mac or under
+    /// another username makes resume start an empty conversation instead.
+    /// Best-effort: failures are ignored (the resume simply behaves as before).
+    func localizeSessionCwd(sessionID: String) async {
+        _ = try? await post("/api/sessions/\(sessionID)/localize-cwd", body: Optional<String>.none)
+    }
+
     // MARK: - Session export / import
 
     /// Fetches a self-contained export bundle for a session's conversation.
