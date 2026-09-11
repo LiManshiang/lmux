@@ -1,5 +1,10 @@
 # lmux
 
+[![Release](https://img.shields.io/github/v/release/LiManshiang/lmux?sort=semver)](https://github.com/LiManshiang/lmux/releases)
+[![Build](https://github.com/LiManshiang/lmux/actions/workflows/release.yml/badge.svg)](https://github.com/LiManshiang/lmux/actions/workflows/release.yml)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%C2%B7%20Intel%20via%20SwiftTerm-blue)](#install)
+[![License](https://img.shields.io/github/license/LiManshiang/lmux)](LICENSE)
+
 > The missing GUI for **CodeBuddy Code** & **Claude Code** — a native macOS
 > workbench for running AI coding agents side by side.
 
