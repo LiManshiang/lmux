@@ -23,11 +23,10 @@ jobs:
 
       # Package.swift expects local packages at repo-root siblings:
       #   ../SwiftTerm       (upstream 4acb12f + 5.7 backport patch)
-      #   ../libghostty-spm  (upstream Lakr233/libghostty-spm @ 31884f5)
+      #   ../libghostty-spm  (upstream main)
       - name: Fetch local package dependencies
         run: |
-          git clone https://github.com/Lakr233/libghostty-spm.git ../libghostty-spm
-          git -C ../libghostty-spm checkout 31884f5
+          git clone --depth 1 https://github.com/Lakr233/libghostty-spm.git ../libghostty-spm
           git clone https://github.com/migueldeicaza/SwiftTerm.git ../SwiftTerm
           git -C ../SwiftTerm checkout 4acb12f
           git -C .. apply lmux-app/tools/patches/swiftterm-5.7-backport.patch
@@ -38,7 +37,8 @@ jobs:
       - name: Package zip
         run: |
           cd lmux-app/.build
-          NAME="lmux-${GITHUB_REF_NAME##*/}"
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" lmux.app/Contents/Info.plist)
+          NAME="lmux-${VERSION}-macos"
           ditto -c -k --keepParent lmux.app "../../${NAME}.zip"
           echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
 
