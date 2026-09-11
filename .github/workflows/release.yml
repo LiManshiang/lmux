@@ -74,10 +74,11 @@ jobs:
       - name: Build lmux.app (Intel / x86_64)
         run: |
           cd lmux-app && make app-x86
-          file lmux-app/.build/lmux-st.app/Contents/MacOS/lmux | grep -q x86_64 \
+          file "$GITHUB_WORKSPACE/lmux-app/.build/lmux-st.app/Contents/MacOS/lmux" | grep -q x86_64 \
             || { echo "ERROR: Intel build is not x86_64"; exit 1; }
-          file lmux-app/.build/lmux-st.app/Contents/MacOS/lmux-backend | grep -q x86_64 \
+          file "$GITHUB_WORKSPACE/lmux-app/.build/lmux-st.app/Contents/MacOS/lmux-backend" | grep -q x86_64 \
             || { echo "ERROR: Intel backend is not x86_64"; exit 1; }
+          echo "Intel bundle verified: $(lipo -archs "$GITHUB_WORKSPACE/lmux-app/.build/lmux-st.app/Contents/MacOS/lmux")"
 
       - name: Package zip
         run: |
