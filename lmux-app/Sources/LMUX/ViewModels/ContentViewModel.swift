@@ -482,6 +482,8 @@ class ContentViewModel: ObservableObject {
     }
     private var backendProcess: Process?
     private var pollTimer: Timer?
+    /// Guards against overlapping backend restarts after a disconnect.
+    private var backendRecovering = false
     /// DispatchIO reading the backend's stdout/stderr pipe. Kept as a property so
     /// retryBackend() can close it before terminating the process (prevents
     /// EV_VANISHED crashes from a closed pipe fd).
@@ -1079,9 +1081,22 @@ class ContentViewModel: ObservableObject {
             if backendRunning {
                 // check if backend died
                 if await !api.healthCheck() {
-                    backendRunning = false
-                    statusMessage = "Backend disconnected"
-                    errorMessage = "Backend connection lost. Try restarting."
+                    // One timed-out poll (a heavy import, a busy machine, another
+                    // instance competing for resources) used to leave the app
+                    // permanently on "Backend connection lost" — every meter
+                    // (context, credit) reads 0 until the user relaunches. Retry
+                    // briefly, then bring the backend back up ourselves.
+                    var alive = await api.healthCheck()
+                    if !alive {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        alive = await api.healthCheck()
+                    }
+                    if alive {
+                        statusMessage = "Refresh failed"
+                        errorMessage = "Failed to refresh sessions: \(error.localizedDescription)"
+                    } else {
+                        await recoverBackend()
+                    }
                 } else {
                     statusMessage = "Refresh failed"
                     errorMessage = "Failed to refresh sessions: \(error.localizedDescription)"
@@ -1720,6 +1735,33 @@ class ContentViewModel: ObservableObject {
     func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
+    }
+
+    /// Bring the backend back up after it went away — killed by another
+    /// instance's port cleanup, wedged, or starved — and re-load its
+    /// token/address so the client stops using stale credentials. Without this
+    /// the app stayed dead (all meters 0%) until the user relaunched it.
+    private func recoverBackend() async {
+        guard !backendRecovering else { return }
+        backendRecovering = true
+        defer { backendRecovering = false }
+
+        statusMessage = "Reconnecting to backend…"
+        startBackend()
+        // startBackend() runs its work in a Task; give it time to settle.
+        for _ in 0..<40 {
+            if !backendStarting { break }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        if backendRunning {
+            errorMessage = nil
+            showToast("Reconnected to backend")
+        } else {
+            backendRunning = false
+            statusMessage = "Backend disconnected"
+            errorMessage = "Backend connection lost. Try restarting."
+        }
     }
 
     // MARK: - Persistence
