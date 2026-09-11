@@ -26,10 +26,11 @@ Claude Code，在侧边栏查看每个对话的**上下文窗口与积分消耗*
 
 ## 安装
 
-**Homebrew**（tap 发布后）：
+**Homebrew**：
 
 ```sh
 brew tap LiManshiang/lmux
+brew trust limanshiang/lmux   # Homebrew 要求显式信任第三方 tap
 brew install --cask lmux
 ```
 
