@@ -70,6 +70,9 @@ jobs:
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" lmux.app/Contents/Info.plist)
           NAME="lmux-${VERSION}-macos"
           ditto -c -k --keepParent lmux.app "../../${NAME}.zip"
+          # Stable filename that the Homebrew cask points at via
+          # releases/latest/download — so the cask never needs a version bump.
+          ditto -c -k --keepParent lmux.app "../../lmux-macos.zip"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
 
@@ -80,5 +83,7 @@ jobs:
         with:
           tag_name: v${{ env.VERSION }}
           name: lmux ${{ env.VERSION }}
-          files: ${{ env.ZIP }}
+          files: |
+            ${{ env.ZIP }}
+            lmux-macos.zip
           generate_release_notes: true
