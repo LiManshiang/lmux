@@ -1,11 +1,13 @@
 # Build lmux.app and attach it to a GitHub Release.
 #
-# Manual trigger (Actions → Release → Run workflow) while the packaging
-# pipeline stabilizes; switch the `on:` block to `push: tags: ["v*"]` once
-# green.
+# Triggers:
+#   - push a tag like v1.0.227  → builds and publishes that release
+#   - Actions → Release → Run workflow (manual, tags by bundle version)
 name: Release
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -81,12 +83,12 @@ jobs:
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
 
-      # workflow_dispatch runs have no tag; derive one from the bundle version
-      # so the zip still lands in a proper GitHub Release.
+      # On a tag push use that tag; for manual runs derive one from the bundle
+      # version so the zip still lands in a proper GitHub Release.
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.VERSION }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', env.VERSION) }}
           name: lmux ${{ env.VERSION }}
           files: |
             ${{ env.ZIP }}
