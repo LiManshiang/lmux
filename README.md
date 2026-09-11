@@ -29,10 +29,11 @@ left off** — even on a different Mac.
 
 ## Install
 
-**Homebrew** (once the tap is published):
+**Homebrew**:
 
 ```sh
 brew tap LiManshiang/lmux
+brew trust limanshiang/lmux   # Homebrew requires trusting third-party taps
 brew install --cask lmux
 ```
 
