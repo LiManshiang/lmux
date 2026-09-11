@@ -543,6 +543,62 @@ func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// LocalizeSessionCwd rewrites every cwd recorded inside a session's
+// conversation JSONL to the session's current project directory.
+//
+// The CodeBuddy CLI resolves a resumable conversation by matching the cwd
+// stored inside its content against the process working directory, not by the
+// file's location. A conversation whose early history was recorded under a
+// path that no longer exists here (another Mac, a different username) fails to
+// resume and silently starts a fresh, empty conversation. Calling this before
+// a resume repairs that history in place.
+func (h *Handler) LocalizeSessionCwd(w http.ResponseWriter, r *http.Request) {
+	id := extractID(r.URL.Path, "/api/sessions/")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+
+	sess, err := h.mgr.Get(id)
+	if err != nil || sess == nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if sess.CBCSessionID == "" || sess.ProjectDir == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"updated": false, "reason": "no conversation bound"})
+		return
+	}
+	// Never rewrite a conversation the agent is currently appending to.
+	if sess.Status == session.StatusRunning {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"updated": false, "reason": "session running"})
+		return
+	}
+
+	path := sessionFileFor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"updated": false, "reason": "conversation file not found"})
+		return
+	}
+
+	content := string(data)
+	rewritten := codebuddy.RewriteSessionCwd(content, sess.ProjectDir)
+	if rewritten == content {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"updated": false})
+		return
+	}
+	if err := os.WriteFile(path, []byte(rewritten), 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, "write conversation: "+err.Error())
+		return
+	}
+
+	codebuddy.InvalidateCache()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"updated": true})
+}
+
 // PinSession toggles the pinned (starred) flag that keeps a session at the
 // top of the sidebar.
 func (h *Handler) PinSession(w http.ResponseWriter, r *http.Request) {
