@@ -39,9 +39,13 @@ brew trust limanshiang/lmux   # Homebrew 要求显式信任第三方 tap
 brew install --cask lmux
 ```
 
+**Apple Silicon**（macOS 13+）使用 Ghostty GPU 渲染；**Intel 机型**（macOS 12+）
+使用同一应用的 SwiftTerm 渲染版本 —— Homebrew 会自动选择对应架构。
+
 **手动下载**：从最新的 [Release](https://github.com/LiManshiang/lmux/releases)
-下载 `lmux.zip`，解压后把 `lmux.app` 拖入 `/Applications`。构建为 ad-hoc 签名
-——首次打开请右键应用并选择**打开**。
+下载 `lmux-macos.zip`（Apple Silicon）或 `lmux-macos-intel.zip`（Intel），
+解压后把 `lmux.app` 拖入 `/Applications`。构建为 ad-hoc 签名 —— 首次打开请
+右键应用并选择**打开**。
 
 **从源码构建**（macOS 13+、Xcode CLT、Go 1.26+）：
 
