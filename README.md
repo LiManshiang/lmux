@@ -5,7 +5,6 @@
 
 [中文说明 (Chinese)](README.zh-CN.md)
 
-<!-- TODO(screenshot): replace with a real capture of the main window -->
 ![lmux — two agent sessions side by side with context meters](docs/screenshots/main.png)
 
 lmux gives every agent its own embedded terminal session: launch CodeBuddy and
@@ -52,6 +51,8 @@ open .build/lmux.app
 ```
 
 ## Features
+
+![Session sidebar with per-conversation context meters](docs/screenshots/sidebar.png)
 
 - **Multi-session sidebar** — create, rename, search, pin, and switch between
   terminal sessions, each with its own working directory.

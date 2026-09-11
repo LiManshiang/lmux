@@ -5,7 +5,6 @@
 
 [English](README.md)
 
-<!-- TODO(screenshot): 换成真实主界面截图 -->
 ![lmux —— 双会话并排 + 上下文计量](docs/screenshots/main.png)
 
 lmux 给每个智能体一个独立的嵌入式终端会话：为不同任务分别启动 CodeBuddy 和
@@ -48,6 +47,8 @@ open .build/lmux.app
 ```
 
 ## 功能特性
+
+![会话侧边栏与按对话的上下文计量](docs/screenshots/sidebar.png)
 
 - **多会话侧边栏** —— 创建、重命名、搜索、置顶、切换多个终端会话，每个会话
   有独立的工作目录。
