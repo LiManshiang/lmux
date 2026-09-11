@@ -11,6 +11,7 @@ set -euo pipefail
 SECS="${1:-15}"
 OUT="${OUT:-docs/screenshots/demo.gif}"
 FPS="${FPS:-2}"
+PREP="${PREP:-3}"   # seconds of countdown before capturing
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -53,7 +54,7 @@ if [ -z "$WID" ] || [ "$WID" = "0" ]; then echo "demo window not found"; exit 1;
 
 echo "Capturing window $WID (demo instance only) for ${SECS}s at ${FPS}fps…"
 echo ">>> Switch between your two demo sessions now <<<"
-for i in 3 2 1; do printf "\rstarting in %s…" "$i"; sleep 1; done; printf "\r"
+for i in $(seq "$PREP" -1 1); do printf "\rstarting in %s…" "$i"; sleep 1; done; printf "\r"
 
 FRAMES=$(( SECS * FPS ))
 for i in $(seq 1 "$FRAMES"); do
