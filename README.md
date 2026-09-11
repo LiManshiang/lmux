@@ -42,10 +42,14 @@ brew trust limanshiang/lmux   # Homebrew requires trusting third-party taps
 brew install --cask lmux
 ```
 
-**Manual**: download `lmux.zip` from the latest
-[Release](https://github.com/LiManshiang/lmux/releases), unzip, and drag
-`lmux.app` into `/Applications`. The build is ad-hoc signed — on first launch,
-right-click the app and choose **Open**.
+**Apple Silicon** (macOS 13+) runs the Ghostty GPU renderer; **Intel Macs**
+(macOS 12+) get the same app with the SwiftTerm renderer — Homebrew picks the
+right build automatically.
+
+**Manual**: download `lmux-macos.zip` (Apple Silicon) or `lmux-macos-intel.zip`
+(Intel) from the latest [Release](https://github.com/LiManshiang/lmux/releases),
+unzip, and drag `lmux.app` into `/Applications`. The build is ad-hoc signed — on
+first launch, right-click the app and choose **Open**.
 
 **From source** (macOS 13+, Xcode CLT, Go 1.26+):
 
