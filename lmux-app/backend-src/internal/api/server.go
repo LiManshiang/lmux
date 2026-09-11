@@ -71,6 +71,10 @@ func (s *Server) Start() error {
 			h.SetCBCSessionID(w, r)
 			return
 		}
+		if id := extractIDFromPath(path, "localize-cwd"); id != "" && r.Method == http.MethodPost {
+			h.LocalizeSessionCwd(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			h.GetSession(w, r)
