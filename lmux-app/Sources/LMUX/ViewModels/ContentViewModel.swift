@@ -1669,6 +1669,9 @@ class ContentViewModel: ObservableObject {
             if let backend = backend, backend.cbcSessionID != sessionID {
                 try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: sessionID)
             }
+            // Same pre-resume repair as connectToSession: localize a
+            // conversation whose recorded cwd points somewhere else.
+            await api.localizeSessionCwd(sessionID: entry.sessionID)
             mgr.connect(
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
