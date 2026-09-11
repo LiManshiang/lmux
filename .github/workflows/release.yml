@@ -69,10 +69,15 @@ jobs:
           cd lmux-app/.build
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" lmux.app/Contents/Info.plist)
           NAME="lmux-${VERSION}-macos"
-          ditto -c -k --keepParent lmux.app "../../${NAME}.zip"
-          # Stable filename that the Homebrew cask points at via
-          # releases/latest/download — so the cask never needs a version bump.
-          ditto -c -k --keepParent lmux.app "../../lmux-macos.zip"
+          # `ditto -c -k` on the runner produced archives that `unzip` (and
+          # therefore Homebrew) rejects with bad-CRC/offset errors. Use the
+          # standard zip tool (-y keeps symlinks, -X drops extra attributes)
+          # and verify the result before it is uploaded.
+          /usr/bin/zip -r -y -X "../../${NAME}.zip" lmux.app > /dev/null
+          /usr/bin/zip -r -y -X ../../lmux-macos.zip lmux.app > /dev/null
+          unzip -t "../../${NAME}.zip" > /dev/null
+          unzip -t ../../lmux-macos.zip > /dev/null
+          echo "zip verified: $(ls -l ../../lmux-macos.zip | awk '{print $5}') bytes"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
 
