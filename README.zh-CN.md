@@ -54,7 +54,14 @@ open .build/lmux.app
 
 ## 功能特性
 
-![会话侧边栏与按对话的上下文计量](docs/screenshots/sidebar.png)
+<table>
+<tr>
+<td width="340" valign="top">
+
+<img src="docs/screenshots/sidebar.png" width="320" alt="会话侧边栏与按对话的上下文计量">
+
+</td>
+<td valign="top">
 
 - **多会话侧边栏** —— 创建、重命名、搜索、置顶、切换多个终端会话，每个会话
   有独立的工作目录。
@@ -71,6 +78,12 @@ open .build/lmux.app
 - **分屏终端** —— 在主终端下方打开第二个终端面板。
 - **键盘快捷键** —— `⌘F` 搜索、`⌘↑/⌘↓` 切换会话、`⌘K` 停止、`⌘N` 新建。
 - **导出 / 导入** —— 通过 tar.gz 包完整迁移（会话 + 智能体对话数据）。
+
+</td>
+</tr>
+</table>
+
+<img src="docs/screenshots/agent-activity.png" width="760" alt="嵌入式终端里的智能体活动">
 
 ## 常见问题
 
