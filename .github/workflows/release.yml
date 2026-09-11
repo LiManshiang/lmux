@@ -67,6 +67,18 @@ jobs:
           grep -rl "swift-argument-parser" lmux-app --include="*.json" --include="*.plist" 2>/dev/null | head -3 || true
           cd lmux-app && make app
 
+      # Intel (x86_64) build, cross-compiled on the same runner. Ghostty has no
+      # x86_64 slice, so this variant swaps in the SwiftTerm renderer
+      # (Package.st.swift) and targets macOS 12 — same code line, different
+      # renderer. The backend is rebuilt for amd64 with cgo.
+      - name: Build lmux.app (Intel / x86_64)
+        run: |
+          cd lmux-app && make app-x86
+          file lmux-app/.build/lmux-st.app/Contents/MacOS/lmux | grep -q x86_64 \
+            || { echo "ERROR: Intel build is not x86_64"; exit 1; }
+          file lmux-app/.build/lmux-st.app/Contents/MacOS/lmux-backend | grep -q x86_64 \
+            || { echo "ERROR: Intel backend is not x86_64"; exit 1; }
+
       - name: Package zip
         run: |
           cd lmux-app/.build
@@ -80,9 +92,20 @@ jobs:
           /usr/bin/zip -r -y -X ../../lmux-macos.zip lmux.app > /dev/null
           unzip -t "../../${NAME}.zip" > /dev/null
           unzip -t ../../lmux-macos.zip > /dev/null
-          echo "zip verified: $(ls -l ../../lmux-macos.zip | awk '{print $5}') bytes"
+
+          # Intel build: shipped as lmux.app so the cask's `app "lmux.app"`
+          # stanza works for both architectures.
+          rm -rf intel && mkdir intel && cp -R lmux-st.app intel/lmux.app
+          (cd intel && /usr/bin/zip -r -y -X "$GITHUB_WORKSPACE/${NAME}-intel.zip" lmux.app > /dev/null)
+          (cd intel && /usr/bin/zip -r -y -X "$GITHUB_WORKSPACE/lmux-macos-intel.zip" lmux.app > /dev/null)
+          unzip -t "$GITHUB_WORKSPACE/${NAME}-intel.zip" > /dev/null
+          unzip -t "$GITHUB_WORKSPACE/lmux-macos-intel.zip" > /dev/null
+
+          echo "arm64 zip: $(ls -l "$GITHUB_WORKSPACE/lmux-macos.zip" | awk '{print $5}') bytes"
+          echo "intel zip: $(ls -l "$GITHUB_WORKSPACE/lmux-macos-intel.zip" | awk '{print $5}') bytes"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
+          echo "INTEL_ZIP=${NAME}-intel.zip" >> "$GITHUB_ENV"
 
       # On a tag push use that tag; for manual runs derive one from the bundle
       # version so the zip still lands in a proper GitHub Release.
@@ -93,5 +116,7 @@ jobs:
           name: lmux ${{ env.VERSION }}
           files: |
             ${{ env.ZIP }}
+            ${{ env.INTEL_ZIP }}
             lmux-macos.zip
+            lmux-macos-intel.zip
           generate_release_notes: true
