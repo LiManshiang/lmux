@@ -202,6 +202,11 @@ struct SessionDetailView: View {
                 )
                 switch decision {
                 case .resume(let sessionID):
+                    // Repair conversations whose recorded cwd no longer matches
+                    // this session's project dir (history from another Mac /
+                    // username) — the CLI matches by that cwd, so without this
+                    // the resume would come up empty.
+                    await viewModel.api.localizeSessionCwd(sessionID: id)
                     mgr.connect(
                         sessionID: id,
                         projectDir: dir,
