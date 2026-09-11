@@ -10,7 +10,7 @@
 
 [English](README.md)
 
-![lmux —— 双会话并排 + 上下文计量](docs/screenshots/main.png)
+![lmux —— 在两个智能体会话间切换，上下文计量实时更新](docs/screenshots/demo.gif)
 
 lmux 给每个智能体一个独立的嵌入式终端会话：为不同任务分别启动 CodeBuddy 和
 Claude Code，在侧边栏查看每个对话的**上下文窗口与积分消耗**，并把对话**精确
