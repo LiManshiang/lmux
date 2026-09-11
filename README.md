@@ -10,7 +10,7 @@
 
 [中文说明 (Chinese)](README.zh-CN.md)
 
-![lmux — two agent sessions side by side with context meters](docs/screenshots/main.png)
+![lmux — switching between two agent sessions with live context meters](docs/screenshots/demo.gif)
 
 lmux gives every agent its own embedded terminal session: launch CodeBuddy and
 Claude Code on different tasks, watch each conversation's **context-window and
