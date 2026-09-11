@@ -30,13 +30,12 @@ jobs:
           sudo xcode-select -s "$XC"
           swift --version
 
-      # lmux-app/Package.swift resolves its local packages as `../SwiftTerm`
-      # and `../libghostty-spm` — i.e. siblings of lmux-app, which is the
-      # repository root. Clone them there (not outside the checkout).
+      # libghostty-spm pins to the last release compatible with lmux's
+      # TerminalSurface API (upstream main removed close/sendText/readViewportText).
       - name: Fetch local package dependencies
         run: |
           rm -rf SwiftTerm libghostty-spm
-          git clone --depth 1 https://github.com/Lakr233/libghostty-spm.git libghostty-spm
+          git clone --depth 1 --branch upstream.1.3.1 https://github.com/Lakr233/libghostty-spm.git libghostty-spm
           git clone https://github.com/migueldeicaza/SwiftTerm.git SwiftTerm
           git -C SwiftTerm checkout 4acb12f
           git -C SwiftTerm apply "$GITHUB_WORKSPACE/lmux-app/tools/patches/swiftterm-5.7-backport.patch"
