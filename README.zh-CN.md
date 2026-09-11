@@ -1,5 +1,10 @@
 # lmux
 
+[![Release](https://img.shields.io/github/v/release/LiManshiang/lmux?sort=semver)](https://github.com/LiManshiang/lmux/releases)
+[![Build](https://github.com/LiManshiang/lmux/actions/workflows/release.yml/badge.svg)](https://github.com/LiManshiang/lmux/actions/workflows/release.yml)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%C2%B7%20Intel%20via%20SwiftTerm-blue)](#install)
+[![License](https://img.shields.io/github/license/LiManshiang/lmux)](LICENSE)
+
 > **CodeBuddy Code** 与 **Claude Code** 的缺失 GUI —— 一个原生 macOS 工作台，
 > 让 AI 编码智能体并排运行。
 
