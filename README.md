@@ -58,7 +58,14 @@ open .build/lmux.app
 
 ## Features
 
-![Session sidebar with per-conversation context meters](docs/screenshots/sidebar.png)
+<table>
+<tr>
+<td width="340" valign="top">
+
+<img src="docs/screenshots/sidebar.png" width="320" alt="Session sidebar with per-conversation context meters">
+
+</td>
+<td valign="top">
 
 - **Multi-session sidebar** — create, rename, search, pin, and switch between
   terminal sessions, each with its own working directory.
@@ -81,6 +88,12 @@ open .build/lmux.app
   `⌘N` new.
 - **Export / Import** — full migration (sessions + agent conversation data) to
   another Mac via tar.gz archives.
+
+</td>
+</tr>
+</table>
+
+<img src="docs/screenshots/agent-activity.png" width="760" alt="Agent activity in an embedded terminal">
 
 ## FAQ
 
