@@ -47,8 +47,11 @@ jobs:
       - name: Provide libghostty vendored dependencies
         run: |
           git clone --depth 1 https://github.com/Lakr233/MSDisplayLink.git libghostty-spm/vendor/MSDisplayLink
+          # Prebuilt GhosttyKit matching the pinned libghostty revision (C API
+          # must line up with its Swift wrapper). Uploaded as a release asset
+          # because the 127MB binary target can't live in git.
           curl -fsSL -o "$RUNNER_TEMP/ghosttykit.zip" \
-            https://github.com/Lakr233/libghostty-spm/releases/download/upstream.82938b633ba6/GhosttyKit.xcframework.zip
+            https://github.com/LiManshiang/libghostty-spm/releases/download/ghosttykit-pinned/GhosttyKit.xcframework.zip
           unzip -q "$RUNNER_TEMP/ghosttykit.zip" -d libghostty-spm/vendor/
           ls libghostty-spm/vendor/
 
