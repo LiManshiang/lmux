@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the workflow you're missing, not just the feature
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+    validations:
+      required: false
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent does this relate to?
+      options:
+        - CodeBuddy Code
+        - Claude Code
+        - Agent-agnostic
+    validations:
+      required: false
