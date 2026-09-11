@@ -451,3 +451,84 @@ func TestSessionHasAssistantLocatesFileWithoutScan(t *testing.T) {
 		t.Error("SessionHasAssistant(file with broken first line) = false, want true")
 	}
 }
+
+// --- streaming cwd localization ---
+
+func TestLocalizeSessionCwdFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "conv.jsonl")
+	// Second line deliberately has no trailing newline.
+	body := `{"type":"user","cwd":"/Users/someone-else","content":"hi"}` + "\n" +
+		`{"type":"message","cwd":"/Users/someone-else","content":"bye"}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := LocalizeSessionCwdFile(path, "/tmp/proj")
+	if err != nil {
+		t.Fatalf("LocalizeSessionCwdFile: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"user","cwd":"/tmp/proj","content":"hi"}` + "\n" +
+		`{"type":"message","cwd":"/tmp/proj","content":"bye"}`
+	if string(got) != want {
+		t.Errorf("content mismatch:\n got %q\nwant %q", got, want)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("temp file left behind: %v", entries)
+	}
+
+	// Second pass: already localized -> no write at all.
+	before, _ := os.Stat(path)
+	changed, err = LocalizeSessionCwdFile(path, "/tmp/proj")
+	if err != nil || changed {
+		t.Errorf("expected no-op, got changed=%v err=%v", changed, err)
+	}
+	after, _ := os.Stat(path)
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Error("file was rewritten even though nothing needed localizing")
+	}
+}
+
+func TestLocalizeSessionCwdFileMatchesInMemoryRewrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.jsonl")
+	var b strings.Builder
+	for i := 0; i < 20000; i++ { // ~5MB, exercises the streaming path
+		b.WriteString(`{"type":"message","cwd":"/Users/someone-else","content":"line"}` + "\n")
+	}
+	b.WriteString(`{"type":"message","cwd":"/tmp/proj","content":"tail"}` + "\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := LocalizeSessionCwdFile(path, "/tmp/proj")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := RewriteSessionCwd(b.String(), "/tmp/proj"); string(got) != want {
+		t.Error("streaming rewrite differs from the in-memory rewrite")
+	}
+	if strings.Contains(string(got), "/Users/someone-else") {
+		t.Error("foreign cwd survived")
+	}
+	if !strings.Contains(string(got), `"content":"tail"`) {
+		t.Error("tail line was damaged")
+	}
+}
+
+func TestLocalizeSessionCwdFileMissingFile(t *testing.T) {
+	if _, err := LocalizeSessionCwdFile(filepath.Join(t.TempDir(), "nope.jsonl"), "/tmp/proj"); !os.IsNotExist(err) {
+		t.Errorf("expected not-exist error, got %v", err)
+	}
+}
