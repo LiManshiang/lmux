@@ -742,6 +742,126 @@ func RewriteSessionCwd(content, newCwd string) string {
 	return cwdFieldRE.ReplaceAllString(content, `"cwd":"`+newCwd+`"`)
 }
 
+// LocalizeSessionCwdFile rewrites the cwd fields inside a conversation file to
+// newCwd without holding the whole file in memory.
+//
+// Conversation JSONL files reach tens of megabytes; reading one into a string
+// and rewriting it (as RewriteSessionCwd does for in-memory payloads) costs
+// hundreds of megabytes of transient memory inside a single HTTP request. This
+// instead streams:
+//
+//   - a scan pass checks whether any cwd differs and returns early when none do
+//     (the common case: the file is only read, never rewritten)
+//   - a rewrite pass streams through a sibling temp file and atomically renames
+//     it over the original, so an interrupted request can never truncate a
+//     session
+//
+// Returns changed=true when the file was rewritten.
+func LocalizeSessionCwdFile(path, newCwd string) (bool, error) {
+	dirty, err := cwdNeedsLocalizing(path, newCwd)
+	if err != nil || !dirty {
+		return false, err
+	}
+	if err := rewriteCwdStreaming(path, newCwd); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// cwdNeedsLocalizing reports whether any cwd field in the file differs from
+// newCwd. Constant memory, line by line.
+func cwdNeedsLocalizing(path, newCwd string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	rd := bufio.NewReaderSize(f, 1<<20)
+	for {
+		line, err := rd.ReadString('\n')
+		if line != "" {
+			for _, m := range cwdFieldRE.FindAllStringSubmatch(line, -1) {
+				if m[1] != newCwd {
+					return true, nil
+				}
+			}
+		}
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+}
+
+// rewriteCwdStreaming writes a copy of path with every cwd field set to newCwd,
+// then atomically replaces the original. The temp file keeps the original's
+// permissions. Uses ReplaceAllStringFunc so a cwd containing '$' is not treated
+// as a regexp expansion.
+func rewriteCwdStreaming(path, newCwd string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".localize-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			os.Remove(tmpName)
+		}
+	}()
+
+	in, err := os.Open(path)
+	if err != nil {
+		tmp.Close()
+		return err
+	}
+	defer in.Close()
+
+	replacement := `"cwd":"` + newCwd + `"`
+	rd := bufio.NewReaderSize(in, 1<<20)
+	w := bufio.NewWriterSize(tmp, 1<<20)
+	for {
+		line, rerr := rd.ReadString('\n')
+		if line != "" {
+			out := cwdFieldRE.ReplaceAllStringFunc(line, func(string) string { return replacement })
+			if _, werr := w.WriteString(out); werr != nil {
+				tmp.Close()
+				return werr
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			tmp.Close()
+			return rerr
+		}
+	}
+	if err := w.Flush(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, info.Mode().Perm()); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	keep = true
+	return nil
+}
+
 // estimateContentChars returns the character count of a claude message
 // content field, which may be a plain string or an array of blocks.
 func estimateContentChars(raw json.RawMessage) int64 {
