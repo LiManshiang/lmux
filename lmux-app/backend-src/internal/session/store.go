@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"lmux/cbsm/internal/config"
 )
 
 // Store provides persistent storage for session metadata.
@@ -43,10 +45,10 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// DefaultDBPath returns the default database path.
+// DefaultDBPath returns the default database path. It honours LMUX_DATA_DIR
+// (via config.DataDir) so a demo/CI instance keeps its own session list.
 func DefaultDBPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".lmux", "sessions.db")
+	return filepath.Join(config.DataDir(), "sessions.db")
 }
 
 func migrate(db *sql.DB) error {

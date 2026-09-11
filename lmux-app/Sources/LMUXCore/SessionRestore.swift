@@ -46,6 +46,13 @@ public enum SessionRestore {
     // MARK: - Caching & I/O
 
     private static let restoreURL: URL = {
+        // LMUX_DATA_DIR keeps a side-by-side instance (demo/screenshot run,
+        // integration test) from reading or clobbering the real restore list.
+        if let dir = ProcessInfo.processInfo.environment["LMUX_DATA_DIR"], !dir.isEmpty {
+            let url = URL(fileURLWithPath: dir, isDirectory: true)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            return url.appendingPathComponent("restore.json")
+        }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("lmux", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
