@@ -41,6 +41,17 @@ jobs:
           git -C SwiftTerm checkout 4acb12f
           git -C SwiftTerm apply "$GITHUB_WORKSPACE/lmux-app/tools/patches/swiftterm-5.7-backport.patch"
 
+      # The pinned libghostty-spm revision declares two vendored dependencies
+      # (vendor/MSDisplayLink and vendor/GhosttyKit.xcframework) that aren't
+      # part of its source tree — provide them here.
+      - name: Provide libghostty vendored dependencies
+        run: |
+          git clone --depth 1 https://github.com/Lakr233/MSDisplayLink.git libghostty-spm/vendor/MSDisplayLink
+          curl -fsSL -o "$RUNNER_TEMP/ghosttykit.zip" \
+            https://github.com/Lakr233/libghostty-spm/releases/download/upstream.82938b633ba6/GhosttyKit.xcframework.zip
+          unzip -q "$RUNNER_TEMP/ghosttykit.zip" -d libghostty-spm/vendor/
+          ls libghostty-spm/vendor/
+
       - name: Build lmux.app
         run: |
           # Start from a clean SwiftPM state: committed Xcode user data used to
