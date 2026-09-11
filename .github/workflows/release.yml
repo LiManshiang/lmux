@@ -42,7 +42,13 @@ jobs:
           git -C SwiftTerm apply "$GITHUB_WORKSPACE/lmux-app/tools/patches/swiftterm-5.7-backport.patch"
 
       - name: Build lmux.app
-        run: cd lmux-app && make app
+        run: |
+          # Start from a clean SwiftPM state: committed Xcode user data used to
+          # leak this machine's absolute paths into dependency resolution.
+          rm -rf lmux-app/.swiftpm lmux-app/.build
+          echo "--- residual local-path references (should be none) ---"
+          grep -rl "swift-argument-parser" lmux-app --include="*.json" --include="*.plist" 2>/dev/null | head -3 || true
+          cd lmux-app && make app
 
       - name: Package zip
         run: |
