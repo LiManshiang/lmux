@@ -336,6 +336,20 @@ private struct AgentBadgeContent: View {
 private struct SessionStatusView: View {
     @ObservedObject var manager: TerminalManager
 
+    /// Placeholders cover the seconds before the first sample lands, so the row
+    /// keeps its width from the moment the process starts.
+    private var cpuLabel: String {
+        guard let cpu = manager.cpuPercent else { return "CPU —" }
+        // Below one percent the rounded figure would read "0%", which looks
+        // like a failure rather than an idle agent.
+        return cpu < 1 ? "CPU <1%" : String(format: "CPU %.0f%%", cpu)
+    }
+
+    private var memoryLabel: String {
+        guard let mem = manager.memoryMB else { return "—" }
+        return "\(Int(mem))MB"
+    }
+
     var body: some View {
         if manager.processRunning {
             HStack(spacing: 4) {
@@ -347,18 +361,17 @@ private struct SessionStatusView: View {
                 Text(manager.isIdle ? "idle" : "running")
                     .font(.system(size: 10))
                     .foregroundColor(manager.isIdle ? .secondary : .green)
-                if let cpu = manager.cpuPercent, cpu > 1 {
-                    Text("CPU \(cpu, specifier: "%.0f")%")
-                        .font(.system(size: 9))
-                        .monospacedDigit()
-                        .foregroundColor(cpu > 80 ? .orange : .secondary)
-                }
-                if let mem = manager.memoryMB, mem > 1 {
-                    Text("\(Int(mem))MB")
-                        .font(.system(size: 9))
-                        .monospacedDigit()
-                        .foregroundColor(.secondary)
-                }
+                // Shown for as long as the process runs, even below 1%: hiding
+                // it made the row twitch as the label came and went, and next to
+                // the always-present memory figure it read as a broken meter.
+                Text(cpuLabel)
+                    .font(.system(size: 9))
+                    .monospacedDigit()
+                    .foregroundColor((manager.cpuPercent ?? 0) > 80 ? .orange : .secondary)
+                Text(memoryLabel)
+                    .font(.system(size: 9))
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
             }
         }
     }
