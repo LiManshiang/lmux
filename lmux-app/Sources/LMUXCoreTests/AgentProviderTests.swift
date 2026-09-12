@@ -28,8 +28,9 @@ final class MockAgentService: AgentSessionService {
         validResults[sessionID] ?? false
     }
 
-    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)? {
-        contextResults[sessionID]
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?, awaitingInput: Bool)? {
+        guard let r = contextResults[sessionID] else { return nil }
+        return (r.tokens, r.contextWindow, r.model, false)
     }
 
     /// Records setCBCSessionID calls so tests can assert backend persistence.
