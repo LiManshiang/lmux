@@ -572,6 +572,8 @@ struct SessionSearchField: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 10)
@@ -579,6 +581,14 @@ struct SessionSearchField: View {
         .background(Color(NSColor.controlBackgroundColor))
         .onChange(of: viewModel.searchFocusToken) { _ in
             searchFocused = true
+        }
+        // Esc clears the query; pressing it again leaves the field.
+        .onExitCommand {
+            if !viewModel.searchText.isEmpty {
+                viewModel.searchText = ""
+            } else {
+                searchFocused = false
+            }
         }
     }
 }
