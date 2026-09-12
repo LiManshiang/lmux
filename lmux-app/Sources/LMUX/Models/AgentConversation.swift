@@ -76,4 +76,19 @@ struct ConversationSearchResult: Codable {
         case timedOut = "timed_out"
         case elapsedMS = "elapsed_ms"
     }
+
+    /// Drops one conversation's hits — used after deleting it, so the other
+    /// matches stay on screen instead of the whole result being discarded.
+    func removing(conversationID: String) -> ConversationSearchResult {
+        let kept = results.filter { $0.conversation.id != conversationID }
+        guard kept.count != results.count else { return self }
+        return ConversationSearchResult(
+            results: kept,
+            scanned: scanned,
+            scannedBytes: scannedBytes,
+            truncated: truncated,
+            timedOut: timedOut,
+            elapsedMS: elapsedMS
+        )
+    }
 }
