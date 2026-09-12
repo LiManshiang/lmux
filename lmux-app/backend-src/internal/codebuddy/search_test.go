@@ -217,3 +217,86 @@ func TestSearchConversationsEmptyQuery(t *testing.T) {
 		t.Errorf("blank query should do nothing: %+v", res)
 	}
 }
+
+func TestSnippetAroundBoundaries(t *testing.T) {
+	// Match at the very start: nothing to elide before it.
+	if got := snippetAround("hello world", 0, 5, 60, 90); got != "hello world" {
+		t.Errorf("start match = %q", got)
+	}
+	// Match at the very end: nothing to elide after it.
+	if got := snippetAround("say hello", 4, 5, 60, 90); got != "say hello" {
+		t.Errorf("end match = %q", got)
+	}
+	// No context available at all.
+	if got := snippetAround("命中", 0, len("命中"), 60, 90); got != "命中" {
+		t.Errorf("no-context = %q", got)
+	}
+	// Multi-byte: the window counts runes, and must never split one.
+	prefix := strings.Repeat("中", 100)
+	suffix := strings.Repeat("文", 100)
+	s := prefix + "命中" + suffix
+	got := snippetAround(s, len(prefix), len("命中"), 60, 90)
+	if !utf8.ValidString(got) {
+		t.Fatalf("invalid UTF-8: %q", got)
+	}
+	if !strings.Contains(got, "命中") {
+		t.Fatalf("lost the match: %q", got)
+	}
+	if !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") {
+		t.Errorf("both sides should be elided: %q", got)
+	}
+	// 60 runes before + 2 for the match + 90 after + two ellipses.
+	if n := utf8.RuneCountInString(got); n != 60+2+90+2 {
+		t.Errorf("window = %d runes, want %d", n, 60+2+90+2)
+	}
+}
+
+func TestAgentProjectsRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if got, want := agentProjectsRoot("claude"), filepath.Join(home, ".claude", "projects"); got != want {
+		t.Errorf("claude root = %q, want %q", got, want)
+	}
+	// Everything else means codebuddy — including an agent name we have never
+	// seen, which is the documented behaviour.
+	for _, agent := range []string{"codebuddy", "", "some-future-agent"} {
+		if got, want := agentProjectsRoot(agent), filepath.Join(home, ".codebuddy", "projects"); got != want {
+			t.Errorf("root(%q) = %q, want %q", agent, got, want)
+		}
+	}
+}
+
+func TestGetSessionUsageFullForClaude(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := filepath.Join(home, ".claude", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn",` +
+		`"usage":{"input_tokens":777,"output_tokens":5,"cache_read_input_tokens":0}}}`
+	if err := os.WriteFile(filepath.Join(dir, "claude-conv.jsonl"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := GetSessionUsageFullFor("claude", "claude-conv")
+	if err != nil {
+		t.Fatalf("GetSessionUsageFullFor(claude): %v", err)
+	}
+	if u.Input != 777 {
+		t.Errorf("input = %d, want 777", u.Input)
+	}
+	if u.Activity.LastRecordType != "assistant" || u.Activity.LastStatus != "end_turn" {
+		t.Errorf("activity = %+v, want assistant/end_turn", u.Activity)
+	}
+	if !u.Activity.Awaiting(time.Now().Add(time.Hour)) {
+		t.Error("a settled claude turn should read as awaiting input")
+	}
+
+	// The codebuddy root must not see it.
+	if _, err := GetSessionUsageFullFor("codebuddy", "claude-conv"); err == nil {
+		t.Error("codebuddy lookup should not find a claude conversation")
+	}
+}
