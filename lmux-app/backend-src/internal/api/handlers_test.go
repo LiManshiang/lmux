@@ -857,3 +857,41 @@ func TestSearchAgentConversations(t *testing.T) {
 		t.Errorf("blank query status = %d, want 400", w2.Code)
 	}
 }
+
+func TestDeleteAgentConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	dir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "conv-del.jsonl")
+	line := `{"sessionId":"conv-del","type":"message","role":"user",` +
+		`"content":[{"type":"input_text","text":"待删除"}]}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.DeleteAgentConversation(w, httptest.NewRequest(http.MethodPost,
+			"/api/agent/conversation-delete", strings.NewReader(body)))
+		return w
+	}
+
+	if w := post(`{"agent":"codebuddy","session_id":"conv-del"}`); w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("conversation file should be gone")
+	}
+	if w := post(`{"agent":"codebuddy","session_id":"conv-del"}`); w.Code != http.StatusNotFound {
+		t.Errorf("second delete status = %d, want 404", w.Code)
+	}
+	if w := post(`{"agent":"codebuddy"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("missing session_id status = %d, want 400", w.Code)
+	}
+}
