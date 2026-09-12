@@ -83,17 +83,23 @@ struct SessionListView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
+            // pinnedViews keeps a group header on screen while its rows scroll.
+            // The conversation browser (a List) already behaved that way, so the
+            // two lists looked inconsistent.
+            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 let pinned = viewModel.visibleSessions.filter { $0.pinned }
                 let others = viewModel.visibleSessions.filter { !$0.pinned }
 
                 // Pinned (starred) sessions at the very top.
                 if !pinned.isEmpty {
-                    GroupHeader(title: "Pinned", count: pinned.count, isCollapsed: $pinnedCollapsed)
-                    if !pinnedCollapsed {
-                        ForEach(pinned) { session in
-                            sessionRow(session)
+                    Section {
+                        if !pinnedCollapsed {
+                            ForEach(pinned) { session in
+                                sessionRow(session)
+                            }
                         }
+                    } header: {
+                        GroupHeader(title: "Pinned", count: pinned.count, isCollapsed: $pinnedCollapsed)
                     }
                 }
 
@@ -107,27 +113,37 @@ struct SessionListView: View {
                 let unbound = grouping.unbound
 
                 if !unbound.isEmpty {
-                    GroupHeader(title: "Unstarted", count: unbound.count, isCollapsed: $unboundCollapsed)
-                    if !unboundCollapsed {
-                        ForEach(unbound) { session in
-                            sessionRow(session)
+                    Section {
+                        if !unboundCollapsed {
+                            ForEach(unbound) { session in
+                                sessionRow(session)
+                            }
                         }
+                    } header: {
+                        GroupHeader(title: "Unstarted", count: unbound.count, isCollapsed: $unboundCollapsed)
                     }
                 }
 
                 ForEach(grouping.agentOrder, id: \.self) { agent in
                     let rows = grouping.bound[agent] ?? []
                     if !rows.isEmpty {
-                        GroupHeader(title: agent.displayName, count: rows.count, isCollapsed: collapseBinding(for: agent))
-                        if !(collapseState[agent] ?? false) {
-                            ForEach(rows) { session in
-                                sessionRow(session)
+                        Section {
+                            if !(collapseState[agent] ?? false) {
+                                ForEach(rows) { session in
+                                    sessionRow(session)
+                                }
                             }
+                        } header: {
+                            GroupHeader(title: agent.displayName, count: rows.count, isCollapsed: collapseBinding(for: agent))
                         }
                     }
                 }
             }
             .padding(.vertical, 4)
+            // Expanding/collapsing fades the rows instead of popping them in.
+            .animation(.easeInOut(duration: 0.15), value: pinnedCollapsed)
+            .animation(.easeInOut(duration: 0.15), value: unboundCollapsed)
+            .animation(.easeInOut(duration: 0.15), value: collapseState)
         }
         .background(Color(NSColor.windowBackgroundColor))
         .overlay {
@@ -206,6 +222,8 @@ private struct GroupHeader: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        // Opaque: this header can now stay pinned over scrolling rows.
+        .background(Color(NSColor.windowBackgroundColor))
     }
 }
 
@@ -321,6 +339,8 @@ private struct SessionStatusView: View {
     var body: some View {
         if manager.processRunning {
             HStack(spacing: 4) {
+                // Plain dot: the row's leading dot already carries the
+                // breathing halo, and two pulses in one row compete.
                 Circle()
                     .fill(manager.isIdle ? Color.secondary : Color.green)
                     .frame(width: 5, height: 5)
@@ -422,30 +442,47 @@ private struct SessionRowContent: View {
         viewModel.needsSessionAttention(session.id)
     }
 
+    /// The dot is green for a live process or one that already finished a run.
+    private var isDotGreen: Bool {
+        viewModel.isSessionActive(session.id) || viewModel.hasSessionCompleted(session.id)
+    }
+
     private var statusDotColor: Color {
-        if viewModel.isSessionActive(session.id) || viewModel.hasSessionCompleted(session.id) {
-            return Color.green
-        }
-        return Color.gray
+        isDotGreen ? Color.green : Color.secondary
     }
 
     var body: some View {
         HStack(spacing: 8) {
             // Status dot with attention ring
             ZStack {
+                // Every green dot breathes: one full cycle every 4s, i.e. 15
+                // breaths/min, the middle of the normal adult resting range
+                // (12–20). It expands while fading, which reads as breathing
+                // rather than blinking. Green covers both "process alive" and
+                // "finished a run", and both deserve the same sign of life.
+                if isDotGreen {
+                    PulsingRing(dotSize: 8, color: .systemGreen)
+                        .frame(width: 20, height: 20)
+                        .allowsHitTesting(false)
+                }
+                // Waiting for input: a faster pulse (0.8s each way) so it reads
+                // as "needs you" next to the green breathe.
                 if needsAttention {
-                    Circle()
-                        .stroke(Color.orange, lineWidth: 2)
-                        .frame(width: 14, height: 14)
-                        .opacity(attentionPulse ? 0.3 : 1.0)
-                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: attentionPulse)
+                    PulsingRing(
+                        dotSize: 8,
+                        color: .systemOrange,
+                        lineWidth: 2,
+                        halfCycle: 0.8,
+                        minOpacity: 0.3
+                    )
+                    .frame(width: 20, height: 20)
+                    .allowsHitTesting(false)
                 }
                 Circle()
                     .fill(statusDotColor)
                     .frame(width: 8, height: 8)
             }
-            .frame(width: 14, height: 14)
-            .onAppear { attentionPulse = needsAttention }
+            .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 2) {
                 // Session name on the first line (with the pinned star inline
@@ -511,6 +548,9 @@ private struct SessionRowContent: View {
                                     .font(.system(size: 9))
                                 Text(manager?.formattedElapsed ?? "")
                                     .font(.system(size: 10))
+                                    // Ticks every second: equal-width digits
+                                    // stop the row from twitching at 9s→10s.
+                                    .monospacedDigit()
                             }
                             .foregroundColor(.orange)
                         }
@@ -534,7 +574,8 @@ private struct SessionRowContent: View {
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor.opacity(0.15) :
-                     needsAttention ? Color.orange.opacity(0.08) : Color.clear)
+                     needsAttention ? Color.orange.opacity(0.08) :
+                     isHovering ? Color.primary.opacity(0.05) : Color.clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6)
@@ -543,9 +584,131 @@ private struct SessionRowContent: View {
                     lineWidth: 1
                 )
         )
+        .onHover { isHovering = $0 }
+        // Selection and hover fade instead of snapping; short enough to still
+        // feel immediate.
+        .animation(.easeOut(duration: 0.12), value: isSelected)
+        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .animation(.easeOut(duration: 0.12), value: needsAttention)
     }
 
-    @State private var attentionPulse = false
+    /// Nothing used to happen when the pointer entered a session row, even
+    /// though it is the app's main navigation target.
+    @State private var isHovering = false
+}
+
+/// A ring that breathes around a status dot: a solid stroked circle, the same
+/// shape as the attention ring that marks a session waiting for input, but slow
+/// and green. One full cycle every 4 seconds — 15 breaths/min, the middle of the
+/// normal adult resting range (12–20).
+///
+/// Backed by Core Animation, not SwiftUI. A TimelineView (any refresh rate)
+/// makes SwiftUI re-evaluate the view every tick, which measured as real CPU for
+/// a handful of dots; Core Animation repeats the pulse on the GPU after a single
+/// setup call, so the app does no per-frame work.
+private struct PulsingRing: NSViewRepresentable {
+    let dotSize: CGFloat
+    var color: NSColor
+    var lineWidth: CGFloat = 1.5
+    var diameterRatio: CGFloat = 1.75
+    /// One direction of the pulse; a full cycle is twice this.
+    var halfCycle: CFTimeInterval = 2
+    var minOpacity: CGFloat = 0.25
+
+    func makeNSView(context: Context) -> PulsingRingView {
+        let view = PulsingRingView(geometry: .init(
+            dotSize: dotSize,
+            color: color,
+            lineWidth: lineWidth,
+            diameterRatio: diameterRatio,
+            halfCycle: halfCycle,
+            minOpacity: minOpacity
+        ))
+        // The pulse repeats on the GPU after this one call.
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            view.holdStill()
+        } else {
+            view.startPulsing()
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: PulsingRingView, context: Context) {}
+}
+
+/// Hosts a ring that pulses around a status dot. Two of these exist: a slow
+/// green breath for a live session, and a quicker orange pulse when a session
+/// is waiting for input.
+///
+/// Both are Core Animation. SwiftUI animations in a list row proved unreliable
+/// twice over: repeatForever often never started, and the orange ring only
+/// animated when its row happened to be created while the condition was already
+/// true (an .onAppear that sets the driving state runs once, not on change).
+///
+/// It is a real view with a `layout()` override because SwiftUI sizes its
+/// representable — the ring has to re-centre on whatever bounds it ends up with.
+final class PulsingRingView: NSView {
+    struct Geometry {
+        var dotSize: CGFloat
+        var color: NSColor
+        var lineWidth: CGFloat
+        var diameterRatio: CGFloat
+        var halfCycle: CFTimeInterval
+        var minOpacity: CGFloat
+    }
+
+    private let geometry: Geometry
+    private let ring = CAShapeLayer()
+
+    init(geometry: Geometry) {
+        self.geometry = geometry
+        super.init(frame: .zero)
+        wantsLayer = true
+        ring.fillColor = nil
+        ring.strokeColor = geometry.color.cgColor
+        ring.lineWidth = geometry.lineWidth
+        layer?.addSublayer(ring)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func layout() {
+        super.layout()
+        // Bounds first: without them a CAShapeLayer's anchor point is (0,0), so
+        // the scale animation would grow the ring out of the bottom-left.
+        ring.frame = bounds
+        let side = min(bounds.width, bounds.height)
+        guard side > 0 else { return }
+        let diameter = geometry.dotSize * geometry.diameterRatio
+        let inset = (side - diameter) / 2
+        ring.path = CGPath(
+            ellipseIn: CGRect(x: inset, y: inset, width: diameter, height: diameter),
+            transform: nil
+        )
+    }
+
+    func startPulsing() {
+        ring.opacity = 1
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1.0
+        fade.toValue = geometry.minOpacity
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 0.94
+        scale.toValue = 1.0
+        let pulse = CAAnimationGroup()
+        pulse.animations = [fade, scale]
+        pulse.duration = geometry.halfCycle
+        pulse.autoreverses = true      // halfCycle out + halfCycle back
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        ring.add(pulse, forKey: "pulsing")
+    }
+
+    /// Reduce Motion: a static mark instead of a pulse.
+    func holdStill() {
+        ring.opacity = 0.5
+    }
 }
 
 /// Session search field. Lives at the bottom of the sidebar (below the list),
@@ -572,6 +735,7 @@ struct SessionSearchField: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .iconButtonChrome()
                 .help("Clear search")
                 .accessibilityLabel("Clear search")
             }
