@@ -156,13 +156,13 @@ func (m *Manager) Update(id string, req UpdateRequest) (*Session, error) {
 	return sess, nil
 }
 
-// Get returns a session by ID.
 // ClearAgentBinding detaches sessions bound to a conversation that no longer
 // exists on disk (see Store.ClearAgentBinding).
 func (m *Manager) ClearAgentBinding(agentSessionID string) (int, error) {
 	return m.store.ClearAgentBinding(agentSessionID)
 }
 
+// Get returns a session by ID.
 func (m *Manager) Get(id string) (*Session, error) {
 	return m.store.Get(id)
 }
