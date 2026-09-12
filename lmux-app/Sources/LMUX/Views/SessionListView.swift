@@ -377,18 +377,28 @@ private struct ContextUsageView: View {
                 if cbc == nil {
                     cbc = await viewModel.findAgentSession(agent: agent, projectDir: projectDir)
                 }
+                var awaiting = false
                 if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
                     percent = usage.percent
                     model = usage.model
+                    awaiting = usage.awaitingInput
                     // Alert the user when context crosses 80%/90% so they can
                     // /compact before the conversation is too long.
                     viewModel.notifyIfContextHigh(sessionID: sessionID, percent: percent)
                 }
-                // Refresh the selected session frequently; background sessions
-                // refresh slowly to reduce backend load.
+                // Flag sessions whose agent finished its turn and is waiting.
+                // Gated on the process being alive, which only the frontend
+                // knows (the backend's session status does not track it).
                 let active = viewModel.selectedSession?.id == sessionID
+                let running = viewModel.isSessionActive(sessionID)
+                viewModel.updateAwaitingInput(sessionID: sessionID, awaiting: awaiting, running: running)
+
                 if percent != 0 || model != nil {
-                    try? await Task.sleep(nanoseconds: (active ? 60 : 180) * 1_000_000_000)
+                    // Running sessions poll faster so "waiting for input" shows
+                    // up promptly; idle ones stay cheap. Background sessions
+                    // refresh slowly to reduce backend load.
+                    let seconds = running ? 15 : (active ? 60 : 180)
+                    try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
                 } else {
                     // Backend may not be ready yet on launch; retry quickly.
                     try? await Task.sleep(nanoseconds: (active ? 5 : 30) * 1_000_000_000)
