@@ -22,6 +22,8 @@ struct AgentBrowserView: View {
     @State private var selectedHitKey: String?
     /// Conversation awaiting the delete confirmation dialog.
     @State private var pendingDelete: AgentConversation?
+    /// Which content-search hit row the pointer is over (only ever one).
+    @State private var hoveredHitKey: String?
     /// Lets ⌘F put the cursor in the browser's search field too (the sidebar
     /// field used to be the only one listening to the focus token).
     @FocusState private var contentSearchFocused: Bool
@@ -298,20 +300,11 @@ struct AgentBrowserView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let err = viewModel.agentConversationsError, viewModel.agentConversations.isEmpty {
-            VStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundColor(.orange)
-                Text(err)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry") {
-                    Task { await viewModel.loadAgentConversations() }
-                }
-                .font(.system(size: 11))
-            }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PaneMessage(
+                icon: "exclamationmark.triangle",
+                title: err,
+                retry: { Task { await viewModel.loadAgentConversations() } }
+            )
         } else if showingContentResults {
             contentResultsArea
         } else if filtered.isEmpty {
@@ -366,28 +359,17 @@ struct AgentBrowserView: View {
     @ViewBuilder
     private var contentResultsArea: some View {
         if let err = viewModel.agentSearchError {
-            VStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundColor(.orange)
-                Text(err)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry") {
-                    Task {
-                        await viewModel.searchAgentConversations(
-                            query: searchText,
-                            agent: viewModel.agentFilterName,
-                            projectDir: viewModel.agentFilterProjectDir,
-                            all: searchAllHistory,
-                            debounce: .zero
-                        )
-                    }
+            PaneMessage(icon: "exclamationmark.triangle", title: err) {
+                Task {
+                    await viewModel.searchAgentConversations(
+                        query: searchText,
+                        agent: viewModel.agentFilterName,
+                        projectDir: viewModel.agentFilterProjectDir,
+                        all: searchAllHistory,
+                        debounce: .zero
+                    )
                 }
-                .font(.system(size: 11))
             }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let result = viewModel.agentSearchResults, !result.results.isEmpty {
             VStack(spacing: 0) {
                 contentSearchMeta(result)
@@ -484,6 +466,11 @@ struct AgentBrowserView: View {
         }
     }
 
+    /// Stable identity for one hit row (a conversation appears several times).
+    private func hitKey(_ group: ConversationSearchGroup, _ hit: ConversationSearchHit) -> String {
+        "\(group.conversation.id)|\(hit.line)"
+    }
+
     private func contentHitRow(group: ConversationSearchGroup, hit: ConversationSearchHit) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
@@ -498,7 +485,12 @@ struct AgentBrowserView: View {
                 .font(.system(size: 10))
                 .lineLimit(3)
         }
-        .tag("\(group.conversation.id)|\(hit.line)")
+        .listRowBackground(hoveredHitKey == hitKey(group, hit) ? Color.primary.opacity(0.05) : nil)
+        .onHover { over in
+            let key = hitKey(group, hit)
+            hoveredHitKey = over ? key : (hoveredHitKey == key ? nil : hoveredHitKey)
+        }
+        .tag(hitKey(group, hit))
         .contextMenu {
             Button("Resume in lmux…") { resume(group.conversation) }
             Button("Copy Session ID") {
@@ -604,6 +596,7 @@ struct AgentBrowserView: View {
                         .foregroundColor(viewModel.agentStars.contains(conv.id) ? .yellow : .secondary)
                 }
                 .buttonStyle(.plain)
+                .iconButtonChrome()
                 .help("Favorite")
                 .accessibilityLabel("Favorite conversation")
                 AgentBadgePill(agentName: conv.agent, small: false)
@@ -615,6 +608,7 @@ struct AgentBrowserView: View {
                         .font(.system(size: 11))
                 }
                 .buttonStyle(.plain)
+                .iconButtonChrome()
                 .help("Delete this conversation file (asks first)")
                 .accessibilityLabel("Delete conversation")
                 Text(AgentBrowserView.timeAgo(conv.mtime))
@@ -664,6 +658,18 @@ struct AgentBrowserView: View {
 
     @ViewBuilder
     private func previewBody(_ conv: AgentConversation) -> some View {
+        previewBodyContent(conv)
+            // The id matters: without it the view keeps its identity across
+            // conversations and the transition below never runs.
+            .id(conv.id)
+            // Swapping conversations replaced the pane instantly; a short fade
+            // reads as new content without the drag of a slide.
+            .animation(.easeOut(duration: 0.15), value: viewModel.agentPreviewConversation?.id)
+            .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private func previewBodyContent(_ conv: AgentConversation) -> some View {
         if viewModel.agentPreviewLoading {
             VStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -673,23 +679,12 @@ struct AgentBrowserView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = viewModel.agentPreviewError {
-            VStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 22))
-                    .foregroundColor(.orange)
-                Text("Could not read this conversation")
-                    .font(.system(size: 12))
-                Text(error)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry") {
-                    Task { await viewModel.loadAgentPreview(conv) }
-                }
-                .font(.system(size: 11))
-            }
-            .padding(.horizontal, 24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PaneMessage(
+                icon: "exclamationmark.triangle",
+                title: "Could not read this conversation",
+                detail: error,
+                retry: { Task { await viewModel.loadAgentPreview(conv) } }
+            )
         } else if let rows = viewModel.agentPreview?.rows, rows.isEmpty {
             VStack(spacing: 6) {
                 Text("No readable messages in the recent tail")
@@ -729,6 +724,7 @@ struct AgentBrowserView: View {
                                         .foregroundColor(.secondary)
                                 }
                                 .buttonStyle(.plain)
+                                .iconButtonChrome()
                                 .help("Copy this prompt (reuse it after Resume)")
                                 .accessibilityLabel("Copy prompt")
                                 .padding(.top, 6)
@@ -766,6 +762,10 @@ private struct AgentConversationRow: View {
     let conv: AgentConversation
     let isStarred: Bool
     let onToggleStar: () -> Void
+
+    /// macOS `List` gives no hover highlight here, so the row supplies its own.
+    /// Passing nil when idle keeps the list's own selection colour intact.
+    @State private var isHovering = false
 
     private var title: String {
         if let t = conv.aiTitle, !t.isEmpty { return t }
@@ -815,6 +815,8 @@ private struct AgentConversationRow: View {
             }
         }
         .padding(.vertical, 5)
+        .listRowBackground(isHovering ? Color.primary.opacity(0.05) : nil)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -835,12 +837,6 @@ struct AgentBadgePill: View {
 }
 
 extension AgentBrowserView {
-    static func timeAgo(_ unix: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(unix))
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "now" }
-        if seconds < 3600 { return "\(seconds / 60)m" }
-        if seconds < 86400 { return "\(seconds / 3600)h" }
-        return "\(seconds / 86400)d"
-    }
+    /// Compact relative time for list rows (see RelativeTime).
+    static func timeAgo(_ unix: Int64) -> String { RelativeTime.short(unix) }
 }
