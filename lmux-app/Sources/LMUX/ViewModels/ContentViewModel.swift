@@ -50,6 +50,13 @@ class ContentViewModel: ObservableObject {
     @Published var agentPreviewConversation: AgentConversation?
     @Published var agentPreview: AgentConversationPreview?
     @Published var agentPreviewLoading = false
+    /// Content search: matches inside past conversations (rather than in their
+    /// titles), plus the scan's bookkeeping for the UI to report.
+    @Published var agentSearchResults: ConversationSearchResult?
+    @Published var agentSearchInFlight = false
+    @Published var agentSearchError: String?
+    /// Monotonic guard so a superseded search cannot overwrite a newer one.
+    private var agentSearchRequestID = 0
     private var toastTask: Task<Void, Never>?
 
     let api = APIClient()
@@ -1360,6 +1367,55 @@ class ContentViewModel: ObservableObject {
             agentPreview = try await api.agentConversationPreview(agent: conv.agent, sessionID: conv.id)
         } catch {
             agentPreview = AgentConversationPreview(rows: [])
+        }
+    }
+
+    /// Search the text of past conversations.
+    ///
+    /// Debounced here so a burst of keystrokes costs one scan: the caller
+    /// drives this from a `.task(id:)` that SwiftUI cancels as the query
+    /// changes, and the sleep below lets the cancellation win. Cancelling also
+    /// drops the HTTP request, which stops the backend scan (it watches the
+    /// request context).
+    func searchAgentConversations(
+        query: String,
+        agent: String,
+        projectDir: String,
+        all: Bool,
+        debounce: Duration = .milliseconds(300)
+    ) async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            agentSearchResults = nil
+            agentSearchError = nil
+            agentSearchInFlight = false
+            return
+        }
+
+        agentSearchRequestID += 1
+        let requestID = agentSearchRequestID
+
+        do {
+            try await Task.sleep(for: debounce)
+        } catch {
+            return // superseded before we even asked
+        }
+        guard !Task.isCancelled, requestID == agentSearchRequestID else { return }
+
+        agentSearchInFlight = true
+        defer {
+            if requestID == agentSearchRequestID { agentSearchInFlight = false }
+        }
+        do {
+            let result = try await api.agentSearch(
+                query: trimmed, agent: agent, projectDir: projectDir, all: all)
+            guard requestID == agentSearchRequestID else { return }
+            agentSearchResults = result
+            agentSearchError = nil
+        } catch {
+            guard requestID == agentSearchRequestID else { return }
+            if (error as? URLError)?.code == .cancelled { return }
+            agentSearchError = error.localizedDescription
         }
     }
 
