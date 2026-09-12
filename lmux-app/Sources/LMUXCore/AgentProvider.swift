@@ -28,6 +28,17 @@ public struct ContextUsageInfo {
     public let tokens: Int
     public let contextWindow: Int
     public let model: String?
+    /// True when the agent has finished its turn and is waiting for the user.
+    /// Defaults to false so existing constructions keep working.
+    public let awaitingInput: Bool
+
+    public init(tokens: Int, contextWindow: Int, model: String?, awaitingInput: Bool = false) {
+        self.tokens = tokens
+        self.contextWindow = contextWindow
+        self.model = model
+        self.awaitingInput = awaitingInput
+    }
+
     public var percent: Int {
         contextWindow > 0 ? Int((Double(tokens) / Double(contextWindow) * 100).rounded()) : 0
     }
@@ -41,7 +52,7 @@ public protocol AgentSessionService {
     /// new conversation instead of an older one from another session).
     func findAgentSession(agent: AgentType, projectDir: String, after: Date?) async -> String?
     func agentSessionValid(agent: AgentType, sessionID: String) async -> Bool
-    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)?
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?, awaitingInput: Bool)?
 
     /// Persist the agent conversation ID bound to a session in the backend, so
     /// the session record (edit sheet, sidebar, lazy restore) reflects the
@@ -377,7 +388,8 @@ public struct CodebuddyProvider: AgentProvider {
               info.contextWindow > 0, info.tokens > 0 else {
             return nil
         }
-        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, model: info.model)
+        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, model: info.model,
+                                    awaitingInput: info.awaitingInput)
     }
 }
 
@@ -452,7 +464,8 @@ public struct ClaudeProvider: AgentProvider {
               info.contextWindow > 0, info.tokens > 0 else {
             return nil
         }
-        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, model: info.model)
+        return ContextUsageInfo(tokens: info.tokens, contextWindow: info.contextWindow, model: info.model,
+                                    awaitingInput: info.awaitingInput)
     }
 }
 
