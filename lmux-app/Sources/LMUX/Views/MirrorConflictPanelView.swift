@@ -94,10 +94,6 @@ struct MirrorConflictPanelView: View {
         size >= 1024 ? "\(size / 1024) KB" : "\(size) B"
     }
 
-    private static func timeAgo(_ unix: Int64) -> String {
-        let seconds = Int(Date().timeIntervalSince1970) - Int(unix)
-        if seconds < 3600 { return "\(max(seconds / 60, 0))m ago" }
-        if seconds < 86400 { return "\(seconds / 3600)h ago" }
-        return "\(seconds / 86400)d ago"
-    }
+    /// Readable relative time for sentences (see RelativeTime).
+    private static func timeAgo(_ unix: Int64) -> String { RelativeTime.short(unix, sentence: true) }
 }
