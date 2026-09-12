@@ -16,8 +16,8 @@ struct UsageStatsView: View {
         var label: String {
             switch self {
             case .tokens: return "Token"
-            case .percent: return "上下文"
-            case .name: return "名称"
+            case .percent: return "Context"
+            case .name: return "Name"
             }
         }
     }
@@ -38,7 +38,7 @@ struct UsageStatsView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text("会话使用统计")
+                Text("Session Usage")
                     .font(.title2)
                     .fontWeight(.semibold)
                 Spacer()
@@ -58,7 +58,7 @@ struct UsageStatsView: View {
             }
 
             HStack(spacing: 12) {
-                Picker("排序", selection: $sortOrder) {
+                Picker("Sort", selection: $sortOrder) {
                     ForEach(SortOrder.allCases) { order in
                         Text(order.label).tag(order)
                     }
@@ -66,7 +66,7 @@ struct UsageStatsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 240)
 
-                Toggle("仅 Agent 会话", isOn: $showOnlyAgent)
+                Toggle("Agent sessions only", isOn: $showOnlyAgent)
                     .font(.system(size: 11))
                     .toggleStyle(.checkbox)
 
@@ -80,9 +80,24 @@ struct UsageStatsView: View {
 
             Divider()
 
+            if let err = viewModel.usageStatsError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.orange)
+                    Text(err)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry") {
+                        Task { await viewModel.loadUsageStats() }
+                    }
+                    .font(.system(size: 11))
+                }
+                .padding(.horizontal, 10)
+            }
             if viewModel.usageStats.isEmpty && !viewModel.usageStatsLoading {
                 Spacer()
-                Text("无数据")
+                Text("No data")
                     .foregroundColor(.secondary)
                 Spacer()
             } else {
