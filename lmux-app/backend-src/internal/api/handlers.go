@@ -459,11 +459,17 @@ func (h *Handler) DeleteAgentConversation(w http.ResponseWriter, r *http.Request
 	// Detach any lmux session that was bound to this conversation, otherwise
 	// its next connect would resume into an empty conversation with no
 	// explanation.
-	detached, _ := h.mgr.ClearAgentBinding(body.SessionID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	detached, detachErr := h.mgr.ClearAgentBinding(body.SessionID)
+	payload := map[string]interface{}{
 		"deleted":           path,
 		"detached_sessions": detached,
-	})
+	}
+	if detachErr != nil {
+		// The file is gone regardless, but a silent failure here would leave a
+		// session bound to a conversation that no longer exists.
+		payload["detach_error"] = detachErr.Error()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
