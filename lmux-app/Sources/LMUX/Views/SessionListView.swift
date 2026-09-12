@@ -336,8 +336,9 @@ private struct AgentBadgeContent: View {
 private struct SessionStatusView: View {
     @ObservedObject var manager: TerminalManager
 
-    /// Placeholders cover the seconds before the first sample lands, so the row
-    /// keeps its width from the moment the process starts.
+    /// Both carry a prefix so the pair reads symmetrically ("CPU 45% MEM 256MB");
+    /// the placeholders cover the seconds before the first sample lands, so the
+    /// row keeps its width from the moment the process starts.
     private var cpuLabel: String {
         guard let cpu = manager.cpuPercent else { return "CPU —" }
         // Below one percent the rounded figure would read "0%", which looks
@@ -346,8 +347,8 @@ private struct SessionStatusView: View {
     }
 
     private var memoryLabel: String {
-        guard let mem = manager.memoryMB else { return "—" }
-        return "\(Int(mem))MB"
+        guard let mem = manager.memoryMB else { return "MEM —" }
+        return "MEM \(Int(mem))MB"
     }
 
     var body: some View {
