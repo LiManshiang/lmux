@@ -129,6 +129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct LmuxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = ContentViewModel()
+    /// "system" | "light" | "dark" (see AppAppearance).
+    @AppStorage("appAppearance") private var appearance = AppAppearance.system.rawValue
 
     var body: some Scene {
         WindowGroup {
@@ -138,6 +140,10 @@ struct LmuxApp: App {
                 .onAppear {
                     appDelegate.viewModel = viewModel
                     viewModel.startBackend()
+                    AppAppearance.apply(rawValue: appearance)
+                }
+                .onChange(of: appearance) { newValue in
+                    AppAppearance.apply(rawValue: newValue)
                 }
         }
         .windowStyle(.titleBar)
