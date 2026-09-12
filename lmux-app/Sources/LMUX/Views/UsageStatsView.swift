@@ -57,6 +57,7 @@ struct UsageStatsView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .iconButtonChrome()
                 .help("Close")
                 .accessibilityLabel("Close usage statistics")
             }
