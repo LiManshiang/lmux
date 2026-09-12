@@ -82,6 +82,7 @@ struct SyncSettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .iconButtonChrome()
                         .help("Remove mapping")
                         .accessibilityLabel("Remove path mapping")
                     }
