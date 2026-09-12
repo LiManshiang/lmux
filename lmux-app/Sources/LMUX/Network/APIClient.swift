@@ -246,19 +246,24 @@ class APIClient: AgentSessionService {
             let conversations: [AgentConversation]
             let hidden: Int?
         }
-        var path = "/api/agent/conversations"
-        var queries: [String] = []
+        // URLComponents (not urlQueryAllowed) so values containing "+", "&" or
+        // "=" survive: those are legal in a path but meaningful in a query, and
+        // a directory like /Users/x/A+B used to arrive as "A B" and match
+        // nothing.
+        var components = URLComponents()
+        components.path = "/api/agent/conversations"
+        var items: [URLQueryItem] = []
         if let agent, !agent.isEmpty {
-            queries.append("agent=\(agent)")
+            items.append(URLQueryItem(name: "agent", value: agent))
         }
         if let projectDir, !projectDir.isEmpty {
-            guard let enc = projectDir.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
-                throw APIError.invalidURL
-            }
-            queries.append("project_dir=\(enc)")
+            items.append(URLQueryItem(name: "project_dir", value: projectDir))
         }
-        if !queries.isEmpty {
-            path += "?" + queries.joined(separator: "&")
+        if !items.isEmpty {
+            components.queryItems = items
+        }
+        guard let path = components.string else {
+            throw APIError.invalidURL
         }
         let data = try await get(path)
         let resp = try decode(Response.self, from: data)
