@@ -1463,6 +1463,9 @@ class ContentViewModel: ObservableObject {
 
     /// Search the text of past conversations.
     ///
+    /// `debounce` is seconds, not a `Duration`: Duration is macOS 13+ and this
+    /// app still targets 12.
+    ///
     /// Debounced here so a burst of keystrokes costs one scan: the caller
     /// drives this from a `.task(id:)` that SwiftUI cancels as the query
     /// changes, and the sleep below lets the cancellation win. Cancelling also
@@ -1473,7 +1476,7 @@ class ContentViewModel: ObservableObject {
         agent: String,
         projectDir: String,
         all: Bool,
-        debounce: Duration = .milliseconds(300)
+        debounce: TimeInterval = 0.3
     ) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1487,7 +1490,9 @@ class ContentViewModel: ObservableObject {
         let requestID = agentSearchRequestID
 
         do {
-            try await Task.sleep(for: debounce)
+            // Task.sleep(for:) and Duration are both macOS 13+; the nanosecond
+            // form is what the rest of the app already uses.
+            try await Task.sleep(nanoseconds: UInt64(max(debounce, 0) * 1_000_000_000))
         } catch {
             return // superseded before we even asked
         }
