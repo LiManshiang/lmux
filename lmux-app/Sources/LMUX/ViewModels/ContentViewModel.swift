@@ -1419,6 +1419,27 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Delete a conversation file from this machine (the browser confirms with
+    /// the user first). Refreshes the list, drops a stale preview, and clears
+    /// content-search results that may have matched the deleted conversation.
+    func deleteAgentConversation(_ conv: AgentConversation) async {
+        do {
+            try await api.deleteAgentConversation(agent: conv.agent, sessionID: conv.id)
+            if agentPreviewConversation?.id == conv.id {
+                agentPreviewConversation = nil
+                agentPreview = nil
+            }
+            if let results = agentSearchResults,
+               results.results.contains(where: { $0.conversation.id == conv.id }) {
+                agentSearchResults = nil
+            }
+            await loadAgentConversations()
+            showToast("Conversation deleted")
+        } catch {
+            showToast("Delete failed: \(error.localizedDescription)")
+        }
+    }
+
     /// Resume a raw agent conversation as a new lmux session (and connect).
     /// If the JSONL is missing locally, first try to pull it back from the
     /// sync mirror so the agent can actually resume it.
