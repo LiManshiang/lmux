@@ -1424,6 +1424,12 @@ class ContentViewModel: ObservableObject {
             agentHiddenBound = result.hidden
         } catch {
             guard requestID == agentLoadRequestID else { return }
+            // backendRunning is only recomputed on its own poll, so a backend
+            // that died mid-session leaves it true: check before showing the
+            // old list as if nothing happened.
+            if await !api.healthCheck() {
+                agentBackendDown = true
+            }
             agentConversationsError = error.localizedDescription
         }
     }
