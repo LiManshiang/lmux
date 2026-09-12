@@ -37,3 +37,43 @@ struct AgentConversationPreview: Codable {
     }
     let rows: [Row]
 }
+
+// MARK: - Content search
+
+/// One matching message found while searching conversation text.
+struct ConversationSearchHit: Codable, Hashable, Identifiable {
+    let role: String
+    /// The match plus a little context on both sides, elided with "…".
+    let snippet: String
+    let line: Int
+
+    var id: Int { line }
+}
+
+/// The hits found inside a single conversation.
+struct ConversationSearchGroup: Codable, Hashable, Identifiable {
+    let conversation: AgentConversation
+    let hits: [ConversationSearchHit]
+
+    var id: String { conversation.id }
+}
+
+/// Outcome of a content search: which conversations matched, how much was
+/// scanned, and whether the scan hit its limits.
+struct ConversationSearchResult: Codable {
+    let results: [ConversationSearchGroup]
+    let scanned: Int
+    let scannedBytes: Int64
+    let truncated: Bool
+    let timedOut: Bool
+    let elapsedMS: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case results
+        case scanned
+        case scannedBytes = "scanned_bytes"
+        case truncated
+        case timedOut = "timed_out"
+        case elapsedMS = "elapsed_ms"
+    }
+}
