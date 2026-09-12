@@ -183,7 +183,7 @@ class APIClient: AgentSessionService {
         return resp.valid
     }
 
-    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?)? {
+    func agentContext(agent: AgentType, projectDir: String, sessionID: String) async -> (tokens: Int, contextWindow: Int, model: String?, awaitingInput: Bool)? {
         struct Body: Codable {
             let agent: String
             let projectDir: String
@@ -198,17 +198,21 @@ class APIClient: AgentSessionService {
             let tokens: Int
             let contextWindow: Int
             let model: String?
+            /// Only the codebuddy branch reports this; absent values mean the
+            /// agent is not waiting (claude, or an older backend).
+            let awaitingInput: Bool?
             enum CodingKeys: String, CodingKey {
                 case tokens
                 case contextWindow = "context_window"
                 case model
+                case awaitingInput = "awaiting_input"
             }
         }
         guard let data = try? await post("/api/agent/context", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
               let resp = try? decode(Response.self, from: data) else {
             return nil
         }
-        return (resp.tokens, resp.contextWindow, resp.model)
+        return (resp.tokens, resp.contextWindow, resp.model, resp.awaitingInput ?? false)
     }
 
     func agentCwd(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
