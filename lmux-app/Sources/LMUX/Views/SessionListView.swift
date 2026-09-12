@@ -202,28 +202,52 @@ private struct GroupHeader: View {
     let count: Int
     @Binding var isCollapsed: Bool
 
+    @State private var hovering = false
+
     var body: some View {
         Button {
             isCollapsed.toggle()
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .frame(width: 8)
+                // Uppercased so the header reads as a label band rather than
+                // one more row of text.
+                Text(title.uppercased())
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.secondary)
                 Text("\(count)")
                     .font(.system(size: 9))
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .monospacedDigit()
+                    .foregroundColor(.secondary.opacity(0.65))
                 Spacer()
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        // Opaque: this header can now stay pinned over scrolling rows.
-        .background(Color(NSColor.windowBackgroundColor))
+        .onHover { hovering = $0 }
+        // A band rather than plain text: with a highlighted row underneath, the
+        // boundary between one group and the next was impossible to see. Stays
+        // opaque so it still works while pinned over scrolling rows.
+        .background(
+            ZStack {
+                Color(NSColor.controlBackgroundColor)
+                Color.primary.opacity(hovering ? 0.06 : 0)
+            }
+        )
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+        }
+        // A little air between groups; outside the background so the gap stays
+        // uncoloured.
+        .padding(.top, 6)
     }
 }
 
