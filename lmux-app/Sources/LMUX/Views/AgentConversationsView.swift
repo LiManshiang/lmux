@@ -20,6 +20,8 @@ struct AgentBrowserView: View {
     /// Selection inside the content results. One conversation can appear
     /// several times, so hit rows carry a unique tag: "conversationID|line".
     @State private var selectedHitKey: String?
+    /// Conversation awaiting the delete confirmation dialog.
+    @State private var pendingDelete: AgentConversation?
 
     enum SearchMode: String, CaseIterable, Identifiable {
         case titles
@@ -110,6 +112,23 @@ struct AgentBrowserView: View {
                 projectDir: viewModel.agentFilterProjectDir,
                 all: searchAllHistory
             )
+        }
+        // Deleting a conversation is irreversible, so it always goes through
+        // this confirmation.
+        .confirmationDialog(
+            "Delete this conversation?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { conv in
+            Button("Delete", role: .destructive) {
+                Task { await viewModel.deleteAgentConversation(conv) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { conv in
+            Text(deleteWarning(for: conv))
         }
         .task(id: filterID) {
             await viewModel.loadAgentConversations()
@@ -448,6 +467,10 @@ struct AgentBrowserView: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(group.conversation.id, forType: .string)
             }
+            Divider()
+            Button("Delete Conversation…", role: .destructive) {
+                pendingDelete = group.conversation
+            }
         }
     }
 
@@ -466,6 +489,23 @@ struct AgentBrowserView: View {
         return attributed
     }
 
+    /// Copy for the delete confirmation. Adds a caution when the file was
+    /// written seconds ago, which usually means an agent is still using it.
+    private func deleteWarning(for conv: AgentConversation) -> String {
+        let name = (conv.aiTitle?.isEmpty == false)
+            ? conv.aiTitle!
+            : "Conversation \(conv.id.prefix(8))"
+        var text = """
+        “\(name)” will be deleted from this Mac (~/.codebuddy/projects). \
+        This cannot be undone, and the deletion is not synced to your other Macs.
+        """
+        let age = Date().timeIntervalSince1970 - Double(conv.mtime)
+        if age < 10 {
+            text += "\n\n⚠️ It was written to \(Int(age)) second(s) ago — an agent may still be using it."
+        }
+        return text
+    }
+
     private func conversationRow(_ conv: AgentConversation) -> some View {
         AgentConversationRow(
             conv: conv,
@@ -480,6 +520,10 @@ struct AgentBrowserView: View {
             Button("Copy Session ID") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(conv.id, forType: .string)
+            }
+            Divider()
+            Button("Delete Conversation…", role: .destructive) {
+                pendingDelete = conv
             }
         }
     }
@@ -523,6 +567,14 @@ struct AgentBrowserView: View {
                 .help("Favorite")
                 AgentBadgePill(agentName: conv.agent, small: false)
                 Spacer()
+                Button {
+                    pendingDelete = conv
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .help("Delete this conversation file (asks first)")
                 Text(AgentBrowserView.timeAgo(conv.mtime))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
