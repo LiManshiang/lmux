@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"lmux/cbsm/internal/codebuddy"
 	"lmux/cbsm/internal/session"
@@ -737,5 +738,59 @@ func TestLocalizeSessionCwdSkipsRunningAndUnbound(t *testing.T) {
 	}
 	if string(after) != original {
 		t.Errorf("running session's file was modified: %s", after)
+	}
+}
+
+func TestAgentContextReportsAwaitingInput(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	sess, err := h.mgr.Create(session.CreateRequest{
+		ProjectDir: "/tmp/proj", Name: "await", CBCSessionID: "conv-await", AgentType: "codebuddy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A conversation whose newest meaningful record is a completed assistant
+	// turn: the agent answered and is now waiting for the user.
+	dir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "conv-await.jsonl")
+	line := `{"type":"message","role":"assistant","status":"completed",` +
+		`"message":{"usage":{"input_tokens":1000,"output_tokens":5,"cache_read_input_tokens":0}}}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Quieten it past the threshold: awaitingQuiet is 18s.
+	old := time.Now().Add(-30 * time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"agent":"codebuddy","project_dir":"/tmp/proj","session_id":"` + sess.CBCSessionID + `"}`
+	w := httptest.NewRecorder()
+	h.AgentContext(w, httptest.NewRequest(http.MethodPost, "/api/agent/context", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("AgentContext status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["awaiting_input"] != true {
+		t.Errorf("awaiting_input = %v, want true (body %s)", resp["awaiting_input"], w.Body.String())
+	}
+	if resp["last_record_type"] != "message" {
+		t.Errorf("last_record_type = %v, want message", resp["last_record_type"])
+	}
+	// The usage numbers must still come from the same single scan.
+	if resp["tokens"] != float64(1000) {
+		t.Errorf("tokens = %v, want 1000", resp["tokens"])
 	}
 }
