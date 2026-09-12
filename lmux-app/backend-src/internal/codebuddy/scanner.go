@@ -900,19 +900,65 @@ func GetSessionContext(sessionID string) (int64, string, error) {
 	return input, model, err
 }
 
-// GetSessionUsage returns the latest accumulated input tokens, cached input
-// tokens, summed output tokens, and the model ID for a session, read from its
-// JSONL (same source as the context percentage, so it stays live).
+// SessionActivity describes the tail of a conversation: when the file last
+// changed and what the agent recorded last. The sidebar uses it to tell "the
+// agent finished its turn and is waiting for you" apart from "the agent is
+// thinking or running a tool".
+type SessionActivity struct {
+	LastActivity   time.Time // mtime of the conversation file
+	LastRecordType string    // message / function_call / function_call_result / reasoning / turn-metrics
+	LastRole       string    // message records: assistant / user
+	LastStatus     string    // message records: completed / incomplete
+}
+
+// SessionUsage bundles the numbers the sidebar shows with the activity signal,
+// so one tail scan answers both questions.
+type SessionUsage struct {
+	Input     int64
+	CacheRead int64
+	Output    int64
+	Model     string
+	Activity  SessionActivity
+}
+
+// awaitingQuiet is how long a finished conversation must stay untouched before
+// it counts as "waiting for input" rather than "still streaming".
+const awaitingQuiet = 18 * time.Second
+
+// Awaiting reports whether the agent finished its turn and has been idle long
+// enough that it is almost certainly waiting for the user.
+//
+// A turn is over when the newest meaningful record is an assistant message
+// marked completed, or a turn-metrics summary. Anything else — a function call,
+// a call result, reasoning, or a fresh user message — means the agent is still
+// working. Noise records (file-history-snapshot, summary) are skipped, so a
+// conversation whose tail is all snapshots reads as "not awaiting": better to
+// miss a notification than to fire one while the agent is busy.
+func (a SessionActivity) Awaiting(now time.Time) bool {
+	if a.LastActivity.IsZero() || now.Sub(a.LastActivity) < awaitingQuiet {
+		return false
+	}
+	switch a.LastRecordType {
+	case "turn-metrics":
+		return true
+	case "message":
+		return a.LastRole == "assistant" && a.LastStatus == "completed"
+	default:
+		return false
+	}
+}
+
+// GetSessionUsageFull is GetSessionUsage plus the conversation's tail activity.
 //
 // The same session ID can exist under several project directories (e.g. the
 // conversation was started in ~ and later continued in /Volumes/...). The
 // stale copy shadows the live one if we just take the first directory hit —
 // the sidebar then shows a frozen model name and context size. Pick the most
 // recently modified file instead: only the live conversation keeps growing.
-func GetSessionUsage(sessionID string) (input, cacheRead, output int64, model string, err error) {
+func GetSessionUsageFull(sessionID string) (SessionUsage, error) {
 	dirs, err := FindUserSessionsDirs()
 	if err != nil {
-		return 0, 0, 0, "", err
+		return SessionUsage{}, err
 	}
 	var filePath string
 	var newest time.Time
@@ -928,24 +974,40 @@ func GetSessionUsage(sessionID string) (input, cacheRead, output int64, model st
 		}
 	}
 	if filePath == "" {
-		return 0, 0, 0, "", fmt.Errorf("JSONL for session %s not found", sessionID)
+		return SessionUsage{}, fmt.Errorf("JSONL for session %s not found", sessionID)
 	}
-	return lastUsageInfo(filePath)
+	return lastUsageInfoFull(filePath, newest)
 }
 
-// lastUsageInfo reads the tail of a JSONL file and returns the latest
-// accumulated input tokens, cached tokens, summed output tokens, and model
-// from the most recent message usage records.
-func lastUsageInfo(path string) (input, cacheRead, output int64, model string, err error) {
-	f, err := os.Open(path)
+// GetSessionUsage returns the latest accumulated input tokens, cached input
+// tokens, summed output tokens, and the model ID for a session, read from its
+// JSONL (same source as the context percentage, so it stays live).
+func GetSessionUsage(sessionID string) (input, cacheRead, output int64, model string, err error) {
+	u, err := GetSessionUsageFull(sessionID)
 	if err != nil {
 		return 0, 0, 0, "", err
+	}
+	return u.Input, u.CacheRead, u.Output, u.Model, nil
+}
+
+// lastUsageInfoFull reads the tail of a JSONL file in a single scan and
+// returns both the usage numbers and the conversation's tail activity, so the
+// sidebar can show the context percentage and decide whether the agent is
+// waiting for input without reading the file twice. It stays inside the same
+// 4MB tail window as before: an 80MB conversation still costs one bounded read.
+func lastUsageInfoFull(path string, mtime time.Time) (SessionUsage, error) {
+	var out SessionUsage
+	out.Activity.LastActivity = mtime
+
+	f, err := os.Open(path)
+	if err != nil {
+		return out, err
 	}
 	defer f.Close()
 
 	stat, err := f.Stat()
 	if err != nil {
-		return 0, 0, 0, "", err
+		return out, err
 	}
 	size := stat.Size()
 
@@ -956,11 +1018,12 @@ func lastUsageInfo(path string) (input, cacheRead, output int64, model string, e
 	}
 	buf := make([]byte, size-readStart)
 	if _, err := f.ReadAt(buf, readStart); err != nil && err != io.EOF {
-		return 0, 0, 0, "", err
+		return out, err
 	}
 
 	lines := strings.Split(string(buf), "\n")
 	first := true
+	activitySeen := false
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
@@ -968,6 +1031,8 @@ func lastUsageInfo(path string) (input, cacheRead, output int64, model string, e
 		}
 		var entry struct {
 			Type         string `json:"type"`
+			Role         string `json:"role"`
+			Status       string `json:"status"`
 			ProviderData *struct {
 				Model          string `json:"model"`
 				RequestModelID string `json:"requestModelId"`
@@ -983,6 +1048,20 @@ func lastUsageInfo(path string) (input, cacheRead, output int64, model string, e
 		if json.Unmarshal([]byte(line), &entry) != nil {
 			continue
 		}
+
+		// The newest *meaningful* record decides whether the turn is over.
+		// Noise records (file-history-snapshot, summary) fall through, so the
+		// scan keeps looking further back instead of concluding "idle".
+		if !activitySeen {
+			switch entry.Type {
+			case "message", "function_call", "function_call_result", "reasoning", "turn-metrics":
+				out.Activity.LastRecordType = entry.Type
+				out.Activity.LastRole = entry.Role
+				out.Activity.LastStatus = entry.Status
+				activitySeen = true
+			}
+		}
+
 		// Match ANY record carrying message.usage, not just type=="message".
 		// codebuddy writes the latest accumulated input_tokens on
 		// function_call records too (and a long-running conversation is
@@ -990,24 +1069,38 @@ func lastUsageInfo(path string) (input, cacheRead, output int64, model string, e
 		// returned a stale percentage that never moved.
 		if entry.Message.Usage != nil {
 			u := entry.Message.Usage
-			output += u.OutputTokens
+			out.Output += u.OutputTokens
 			if first {
 				first = false
-				input = u.InputTokens
-				cacheRead = u.CacheReadInputTokens
+				out.Input = u.InputTokens
+				out.CacheRead = u.CacheReadInputTokens
 				if entry.ProviderData != nil {
-					model = entry.ProviderData.RequestModelID
-					if model == "" {
-						model = entry.ProviderData.Model
+					out.Model = entry.ProviderData.RequestModelID
+					if out.Model == "" {
+						out.Model = entry.ProviderData.Model
 					}
 				}
 			}
 		}
 	}
 	if first {
-		return 0, 0, 0, "", fmt.Errorf("no message usage found in %s", path)
+		return out, fmt.Errorf("no message usage found in %s", path)
 	}
-	return input, cacheRead, output, model, nil
+	return out, nil
+}
+
+// lastUsageInfo keeps the original signature for callers that only need the
+// usage numbers.
+func lastUsageInfo(path string) (input, cacheRead, output int64, model string, err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, 0, "", err
+	}
+	u, err := lastUsageInfoFull(path, info.ModTime())
+	if err != nil {
+		return 0, 0, 0, "", err
+	}
+	return u.Input, u.CacheRead, u.Output, u.Model, nil
 }
 
 // GetSessionCreditUsage estimates the total credit (platform cost units) spent
@@ -1015,15 +1108,21 @@ func lastUsageInfo(path string) (input, cacheRead, output int64, model string, e
 // the context percentage). Input tokens are the latest accumulated value,
 // outputs are summed, and prices come from the model's cost table.
 func GetSessionCreditUsage(sessionID string) (float64, error) {
-	input, _, output, model, err := GetSessionUsage(sessionID)
+	u, err := GetSessionUsageFull(sessionID)
 	if err != nil {
 		return 0, err
 	}
-	cost := CostForModel(model)
+	return CreditForUsage(u), nil
+}
+
+// CreditForUsage estimates the credit spent from usage numbers that were
+// already read, so a caller needing both the context percentage and the credit
+// pays for a single tail scan instead of two.
+func CreditForUsage(u SessionUsage) float64 {
+	cost := CostForModel(u.Model)
 	// Count full input tokens (cached reads are discounted on the platform,
 	// but counting them keeps the figure visible and growing with the
 	// conversation).
-	credit := float64(input)/1e6*cost.Input +
-		float64(output)/1e6*cost.Output
-	return credit, nil
+	return float64(u.Input)/1e6*cost.Input +
+		float64(u.Output)/1e6*cost.Output
 }
