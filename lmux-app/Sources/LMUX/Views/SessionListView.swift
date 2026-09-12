@@ -377,21 +377,18 @@ private struct ContextUsageView: View {
                 if cbc == nil {
                     cbc = await viewModel.findAgentSession(agent: agent, projectDir: projectDir)
                 }
-                var awaiting = false
                 if let cbc, let usage = await viewModel.agentContextUsage(agent: agent, cbcSessionID: cbc, projectDir: projectDir) {
                     percent = usage.percent
                     model = usage.model
-                    awaiting = usage.awaitingInput
                     // Alert the user when context crosses 80%/90% so they can
                     // /compact before the conversation is too long.
                     viewModel.notifyIfContextHigh(sessionID: sessionID, percent: percent)
                 }
-                // Flag sessions whose agent finished its turn and is waiting.
-                // Gated on the process being alive, which only the frontend
-                // knows (the backend's session status does not track it).
+                // The waiting-for-input flag is decided by the shared 15s poll
+                // in ContentViewModel (it must also cover rows that are not on
+                // screen); this row only keeps the meter fresh.
                 let active = viewModel.selectedSession?.id == sessionID
                 let running = viewModel.isSessionActive(sessionID)
-                viewModel.updateAwaitingInput(sessionID: sessionID, awaiting: awaiting, running: running)
 
                 if percent != 0 || model != nil {
                     // Running sessions poll faster so "waiting for input" shows
