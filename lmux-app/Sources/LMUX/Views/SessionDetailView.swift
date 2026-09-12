@@ -45,6 +45,10 @@ struct SessionDetailView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(session.name)
                             .font(.system(size: 13, weight: .semibold))
+                            // A long name used to wrap and push the split/stop
+                            // buttons out of the header.
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                         // Live working directory when the process is running
                         // (it can `cd` away from the configured projectDir);
                         // falls back to the configured project dir.
@@ -72,6 +76,7 @@ struct SessionDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .help(showSplitPane ? "Close Terminal" : "Open Terminal")
+                        .accessibilityLabel(showSplitPane ? "Close terminal" : "Open terminal")
 
                         Button(action: {
                             confirmStop(session: session)
@@ -82,6 +87,7 @@ struct SessionDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Stop")
+                        .accessibilityLabel("Stop session")
                     }
                 }
                 .padding(.horizontal, 12)
