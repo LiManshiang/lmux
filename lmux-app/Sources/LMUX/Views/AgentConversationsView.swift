@@ -131,6 +131,12 @@ struct AgentBrowserView: View {
             Text(deleteWarning(for: conv))
         }
         .task(id: filterID) {
+            // A different agent or directory means the preview and any search
+            // results on screen belong to a set the user is no longer looking
+            // at; clear them so nothing stale is shown or acted on.
+            viewModel.resetAgentBrowsingState()
+            selectedID = nil
+            selectedHitKey = nil
             await viewModel.loadAgentConversations()
         }
     }
@@ -251,7 +257,25 @@ struct AgentBrowserView: View {
 
     @ViewBuilder
     private var listArea: some View {
-        if viewModel.agentConversationsLoading && viewModel.agentConversations.isEmpty {
+        if viewModel.agentBackendDown {
+            VStack(spacing: 6) {
+                Image(systemName: "bolt.slash")
+                    .font(.system(size: 20))
+                    .foregroundColor(.orange)
+                Text("The backend is not running")
+                    .font(.system(size: 12))
+                Text("Conversations are listed by the local backend. It starts with the app; use Retry if it has stopped.")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                Button("Retry") {
+                    Task { await viewModel.loadAgentConversations() }
+                }
+                .font(.system(size: 11))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if viewModel.agentConversationsLoading && viewModel.agentConversations.isEmpty {
             VStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Scanning conversations…")
@@ -515,7 +539,7 @@ struct AgentBrowserView: View {
         .tag(conv.id)
         .contextMenu {
             Button("Resume in lmux…") { resume(conv) }
-            Button("Open in Terminal") { openExternally(conv) }
+            Button("Open in Terminal.app") { openExternally(conv) }
             Divider()
             Button("Copy Session ID") {
                 NSPasteboard.general.clearContents()
@@ -627,6 +651,24 @@ struct AgentBrowserView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = viewModel.agentPreviewError {
+            VStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 22))
+                    .foregroundColor(.orange)
+                Text("Could not read this conversation")
+                    .font(.system(size: 12))
+                Text(error)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    Task { await viewModel.loadAgentPreview(conv) }
+                }
+                .font(.system(size: 11))
+            }
+            .padding(.horizontal, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let rows = viewModel.agentPreview?.rows, rows.isEmpty {
             VStack(spacing: 6) {
