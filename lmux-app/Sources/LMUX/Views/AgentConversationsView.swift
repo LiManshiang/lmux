@@ -22,6 +22,9 @@ struct AgentBrowserView: View {
     @State private var selectedHitKey: String?
     /// Conversation awaiting the delete confirmation dialog.
     @State private var pendingDelete: AgentConversation?
+    /// Lets ⌘F put the cursor in the browser's search field too (the sidebar
+    /// field used to be the only one listening to the focus token).
+    @FocusState private var contentSearchFocused: Bool
 
     enum SearchMode: String, CaseIterable, Identifiable {
         case titles
@@ -130,6 +133,9 @@ struct AgentBrowserView: View {
         } message: { conv in
             Text(deleteWarning(for: conv))
         }
+        .onChange(of: viewModel.searchFocusToken) { _ in
+            contentSearchFocused = true
+        }
         .task(id: filterID) {
             // A different agent or directory means the preview and any search
             // results on screen belong to a set the user is no longer looking
@@ -220,6 +226,14 @@ struct AgentBrowserView: View {
                 TextField(searchMode.placeholder, text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
+                    .focused($contentSearchFocused)
+                    .onExitCommand {
+                        if !trimmedQuery.isEmpty {
+                            searchText = ""
+                        } else {
+                            contentSearchFocused = false
+                        }
+                    }
                 Button {
                     showFavoritesOnly.toggle()
                 } label: {
@@ -523,9 +537,11 @@ struct AgentBrowserView: View {
         “\(name)” will be deleted from this Mac (~/.codebuddy/projects). \
         This cannot be undone, and the deletion is not synced to your other Macs.
         """
-        let age = Date().timeIntervalSince1970 - Double(conv.mtime)
-        if age < 10 {
-            text += "\n\n⚠️ It was written to \(Int(age)) second(s) ago — an agent may still be using it."
+        // Judge by whether a session is bound to it rather than by file age:
+        // an agent that finished a turn (and is now waiting for input) stops
+        // writing, so a fresh mtime is not the only sign of being in use.
+        if let bound = viewModel.sessions.first(where: { $0.cbcSessionID == conv.id }) {
+            text += "\n\n⚠️ The session “\(bound.name)” is bound to it; deleting will detach that session."
         }
         return text
     }
@@ -589,6 +605,7 @@ struct AgentBrowserView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Favorite")
+                .accessibilityLabel("Favorite conversation")
                 AgentBadgePill(agentName: conv.agent, small: false)
                 Spacer()
                 Button {
@@ -599,6 +616,7 @@ struct AgentBrowserView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Delete this conversation file (asks first)")
+                .accessibilityLabel("Delete conversation")
                 Text(AgentBrowserView.timeAgo(conv.mtime))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
@@ -617,7 +635,9 @@ struct AgentBrowserView: View {
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                    .lineLimit(nil)
+                    // Capped: an unbounded summary took over the whole pane
+                    // and pushed the messages off screen.
+                    .lineLimit(4)
                     .padding(.top, 2)
             }
             HStack(spacing: 8) {
@@ -710,6 +730,7 @@ struct AgentBrowserView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .help("Copy this prompt (reuse it after Resume)")
+                                .accessibilityLabel("Copy prompt")
                                 .padding(.top, 6)
                             }
                         }
@@ -728,11 +749,14 @@ struct AgentBrowserView: View {
 
     private func openExternally(_ conv: AgentConversation) {
         guard let agent = AgentType(rawValue: conv.agent) else { return }
-        TerminalLauncher.openInTerminal(
+        let launched = TerminalLauncher.openInTerminal(
             agentType: agent,
             sessionID: conv.id,
             cwd: conv.cwd ?? NSHomeDirectory()
         )
+        if !launched {
+            viewModel.showToast("Could not open Terminal for this conversation")
+        }
     }
 }
 
