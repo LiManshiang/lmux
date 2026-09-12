@@ -26,6 +26,8 @@ struct HelpView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Close")
+                .accessibilityLabel("Close help")
             }
 
             Text("lmux is a terminal session manager for AI agents. Each session runs a shell and can launch CodeBuddy or Claude; the sidebar shows each session's agent, status, and context usage.")
