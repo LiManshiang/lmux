@@ -13,6 +13,29 @@ struct AgentBrowserView: View {
     @State private var searchText = ""
     @State private var selectedID: String?
     @State private var showFavoritesOnly = false
+    /// Titles = filter the loaded list in memory (instant). Content = scan the
+    /// text of past conversations on the backend (~1s, bounded by default).
+    @State private var searchMode: SearchMode = .titles
+    @State private var searchAllHistory = false
+    /// Selection inside the content results. One conversation can appear
+    /// several times, so hit rows carry a unique tag: "conversationID|line".
+    @State private var selectedHitKey: String?
+
+    enum SearchMode: String, CaseIterable, Identifiable {
+        case titles
+        case content
+        var id: String { rawValue }
+        var label: String { self == .titles ? "Titles" : "Content" }
+        var placeholder: String {
+            self == .titles ? "Search title, summary, path…" : "Search inside conversations…"
+        }
+    }
+
+    /// Changing any of these restarts the content search; SwiftUI cancels the
+    /// previous task, which drops the in-flight request and stops the scan.
+    private var contentSearchKey: String {
+        "\(searchMode.rawValue)|\(searchText)|\(searchAllHistory)|\(viewModel.agentFilterName)|\(viewModel.agentFilterProjectDir)"
+    }
 
     private var filterID: String { "\(viewModel.agentFilterName)|\(viewModel.agentFilterProjectDir)" }
 
@@ -49,6 +72,23 @@ struct AgentBrowserView: View {
         }
     }
 
+    private var trimmedQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether the content-results list should drive the pane right now.
+    private var showingContentResults: Bool {
+        searchMode == .content && !trimmedQuery.isEmpty
+    }
+
+    /// Count beside the search field: matches in content mode, rows in title mode.
+    private var resultCount: Int {
+        if showingContentResults {
+            return viewModel.agentSearchResults?.results.reduce(0) { $0 + $1.hits.count } ?? 0
+        }
+        return filtered.count
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             leftPane
@@ -58,6 +98,18 @@ struct AgentBrowserView: View {
                 .frame(width: 1)
             previewPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        // Debounced content search. The id covers every input that changes the
+        // answer, so SwiftUI cancels the previous run (and its HTTP request)
+        // whenever one of them changes.
+        .task(id: contentSearchKey) {
+            guard searchMode == .content else { return }
+            await viewModel.searchAgentConversations(
+                query: searchText,
+                agent: viewModel.agentFilterName,
+                projectDir: viewModel.agentFilterProjectDir,
+                all: searchAllHistory
+            )
         }
         .task(id: filterID) {
             await viewModel.loadAgentConversations()
@@ -130,8 +182,17 @@ struct AgentBrowserView: View {
                 .help("Filter to one project directory")
             }
 
-            HStack {
-                TextField("Search title, summary, path…", text: $searchText)
+            HStack(spacing: 6) {
+                Picker("", selection: $searchMode) {
+                    ForEach(SearchMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+
+                TextField(searchMode.placeholder, text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 11))
                 Button {
@@ -143,9 +204,21 @@ struct AgentBrowserView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Show favorites only")
-                Text("\(filtered.count)")
+                Text("\(resultCount)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
+            }
+            if searchMode == .content {
+                HStack(spacing: 6) {
+                    Toggle("Search all history", isOn: $searchAllHistory)
+                        .font(.system(size: 10))
+                        .toggleStyle(.checkbox)
+                        .help("Off: recent conversations only (about a second). On: every conversation (a few seconds).")
+                    Spacer()
+                    if viewModel.agentSearchInFlight {
+                        ProgressView().controlSize(.mini)
+                    }
+                }
             }
             if viewModel.agentHiddenBound > 0 {
                 Text("\(viewModel.agentHiddenBound) bound conversation(s) already in Sessions are hidden")
@@ -182,6 +255,8 @@ struct AgentBrowserView: View {
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if showingContentResults {
+            contentResultsArea
         } else if filtered.isEmpty {
             VStack(spacing: 6) {
                 Image(systemName: "tray")
@@ -227,6 +302,168 @@ struct AgentBrowserView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Content search results
+
+    @ViewBuilder
+    private var contentResultsArea: some View {
+        if let err = viewModel.agentSearchError {
+            VStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundColor(.orange)
+                Text(err)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    Task {
+                        await viewModel.searchAgentConversations(
+                            query: searchText,
+                            agent: viewModel.agentFilterName,
+                            projectDir: viewModel.agentFilterProjectDir,
+                            all: searchAllHistory,
+                            debounce: .zero
+                        )
+                    }
+                }
+                .font(.system(size: 11))
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let result = viewModel.agentSearchResults, !result.results.isEmpty {
+            VStack(spacing: 0) {
+                contentSearchMeta(result)
+                List(selection: $selectedHitKey) {
+                    ForEach(result.results) { group in
+                        Section {
+                            ForEach(group.hits) { hit in
+                                contentHitRow(group: group, hit: hit)
+                            }
+                        } header: {
+                            contentGroupHeader(group)
+                        }
+                    }
+                }
+                .listStyle(.inset)
+                .onChange(of: selectedHitKey) { key in
+                    guard let key,
+                          let convID = key.split(separator: "|").first.map(String.init),
+                          let conv = viewModel.agentConversations.first(where: { $0.id == convID })
+                            ?? result.results.first(where: { $0.conversation.id == convID })?.conversation
+                    else { return }
+                    if convID != viewModel.agentPreviewConversation?.id {
+                        Task { await viewModel.loadAgentPreview(conv) }
+                    }
+                }
+            }
+        } else if viewModel.agentSearchInFlight {
+            VStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(searchAllHistory ? "Searching every conversation…" : "Searching recent conversations…")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "text.magnifyingglass")
+                    .font(.system(size: 22))
+                    .foregroundColor(.secondary)
+                Text("No matches in conversation text")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                if !searchAllHistory {
+                    Text("Try “Search all history” to include older conversations.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// One line above the results: how much was scanned and how long it took.
+    private func contentSearchMeta(_ result: ConversationSearchResult) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text("\(result.results.count) conversation(s) · \(resultCount) match(es)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(String(format: "%.2fs", Double(result.elapsedMS) / 1000))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            if result.truncated {
+                Text("Showing the first \(resultCount) matches — narrow the query to see the rest.")
+                    .font(.system(size: 9))
+                    .foregroundColor(.orange)
+            }
+            if result.timedOut {
+                Text("Search timed out after \(result.scanned) conversation(s) — try a narrower query.")
+                    .font(.system(size: 9))
+                    .foregroundColor(.orange)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private func contentGroupHeader(_ group: ConversationSearchGroup) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(group.conversation.aiTitle?.isEmpty == false
+                 ? group.conversation.aiTitle!
+                 : String(group.conversation.id.prefix(12)))
+                .font(.system(size: 10, weight: .semibold))
+                .lineLimit(1)
+            if let cwd = group.conversation.cwd, !cwd.isEmpty {
+                Text((cwd as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+        }
+    }
+
+    private func contentHitRow(group: ConversationSearchGroup, hit: ConversationSearchHit) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Image(systemName: hit.role == "user" ? "person.fill" : "sparkles")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+                Text(hit.role == "user" ? "You" : AgentBrowserView.displayName(for: group.conversation.agent))
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+            Text(highlighted(hit.snippet, query: trimmedQuery))
+                .font(.system(size: 10))
+                .lineLimit(3)
+        }
+        .tag("\(group.conversation.id)|\(hit.line)")
+        .contextMenu {
+            Button("Resume in lmux…") { resume(group.conversation) }
+            Button("Copy Session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(group.conversation.id, forType: .string)
+            }
+        }
+    }
+
+    /// Highlights every occurrence of the query inside a snippet.
+    private func highlighted(_ text: String, query: String) -> AttributedString {
+        var attributed = AttributedString(text)
+        guard !query.isEmpty else { return attributed }
+        var searchStart = attributed.startIndex
+        while searchStart < attributed.endIndex,
+              let found = attributed[searchStart...].range(of: query, options: .caseInsensitive) {
+            attributed[found].backgroundColor = .yellow.opacity(0.35)
+            attributed[found].font = .system(size: 10, weight: .semibold)
+            if found.upperBound <= searchStart { break } // safety: never loop
+            searchStart = found.upperBound
+        }
+        return attributed
     }
 
     private func conversationRow(_ conv: AgentConversation) -> some View {
