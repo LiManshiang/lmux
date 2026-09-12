@@ -13,7 +13,8 @@ enum TerminalLauncher {
     }
 
     /// Open Terminal.app and run the resume command in a new window/tab.
-    static func openInTerminal(agentType: AgentType, sessionID: String, cwd: String) {
+    @discardableResult
+    static func openInTerminal(agentType: AgentType, sessionID: String, cwd: String) -> Bool {
         let command = resumeCommand(agentType: agentType, sessionID: sessionID, cwd: cwd)
         // Escape for AppleScript string interpolation.
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
@@ -23,6 +24,12 @@ enum TerminalLauncher {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         proc.arguments = ["-e", script]
-        try? proc.run()
+        do {
+            try proc.run()
+            return true
+        } catch {
+            // Used to be try?: a failure looked like nothing happened at all.
+            return false
+        }
     }
 }
