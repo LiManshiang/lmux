@@ -34,7 +34,7 @@ struct NewSessionSheet: View {
                                 validateDir(newValue)
                             }
 
-                        Button("Browse...") {
+                        Button("Browse…") {
                             browseDirectory()
                         }
                     }
