@@ -82,6 +82,8 @@ struct SyncSettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .help("Remove mapping")
+                        .accessibilityLabel("Remove path mapping")
                     }
                 }
 
