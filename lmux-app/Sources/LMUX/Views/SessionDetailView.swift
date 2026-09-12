@@ -127,11 +127,11 @@ struct SessionDetailView: View {
                             .padding(.horizontal, 20)
                             .padding(.vertical, 14)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: 10)
                                     .fill(Color(NSColor.windowBackgroundColor).opacity(0.92))
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: 10)
                                     .strokeBorder(Color.secondary.opacity(0.25))
                             )
                         }
