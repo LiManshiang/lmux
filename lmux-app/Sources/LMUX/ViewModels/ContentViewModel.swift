@@ -79,6 +79,8 @@ class ContentViewModel: ObservableObject {
         completedSessionIds.removeAll()
         activeSessionIds.removeAll()
         attentionSessionIds.removeAll()
+        notifiedAwaitingInput.removeAll()
+        awaitingInputIds.removeAll()
     }
 
     /// Show a transient non-blocking toast (auto-dismisses after ~2.5s).
@@ -502,6 +504,13 @@ class ContentViewModel: ObservableObject {
     @Published var completedSessionIds: Set<String> = []
     /// Sessions that need user attention (completed while in background).
     @Published var attentionSessionIds: Set<String> = []
+    /// Sessions already notified during the current "agent is waiting for
+    /// input" stretch. Cleared once the agent starts working again, so the
+    /// next pause notifies once more.
+    private var notifiedAwaitingInput: Set<String> = []
+    /// Sessions whose attention flag was set by the awaiting-input detector.
+    /// Only those are cleared by it, so a completion marker survives.
+    private var awaitingInputIds: Set<String> = []
     /// Incremented whenever a TerminalManager is created. List rows read this
     /// so a row that first rendered without a manager (SessionRowStatic) is
     /// re-evaluated once the manager exists — otherwise the context-usage
@@ -678,6 +687,8 @@ class ContentViewModel: ObservableObject {
         completedSessionIds.remove(sessionID)
         activeSessionIds.remove(sessionID)
         attentionSessionIds.remove(sessionID)
+        notifiedAwaitingInput.remove(sessionID)
+        awaitingInputIds.remove(sessionID)
         splitTerminalManagers[sessionID]?.disconnect()
         splitTerminalManagers.removeValue(forKey: sessionID)
         SessionRestore.remove(sessionID: sessionID)
@@ -703,6 +714,8 @@ class ContentViewModel: ObservableObject {
         completedSessionIds.remove(id)
         activeSessionIds.remove(id)
         attentionSessionIds.remove(id)
+        notifiedAwaitingInput.remove(id)
+        awaitingInputIds.remove(id)
         if connectedSessionId == id {
             connectedSessionId = nil
         }
@@ -730,6 +743,52 @@ class ContentViewModel: ObservableObject {
     /// Clear the attention flag when user focuses the session.
     func clearSessionAttention(_ sessionID: String) {
         attentionSessionIds.remove(sessionID)
+        // Stop tracking the flag as ours (it is gone), but keep
+        // notifiedAwaitingInput so looking at a session does not make the same
+        // pause notify again.
+        awaitingInputIds.remove(sessionID)
+    }
+
+    /// Records whether a session's agent has finished its turn and is waiting
+    /// for input, and notifies once per pause.
+    ///
+    /// `awaiting` comes from the conversation JSONL (see
+    /// `codebuddy.SessionActivity.Awaiting`); `running` is passed in because
+    /// only the frontend knows whether the terminal process is still alive —
+    /// the backend's session status does not track that.
+    func updateAwaitingInput(sessionID: String, awaiting: Bool, running: Bool) {
+        guard awaiting, running else {
+            // The agent is working again (or the process is gone): the next
+            // pause may notify afresh.
+            notifiedAwaitingInput.remove(sessionID)
+            // Only clear attention we set ourselves — a completion marker from
+            // onProcessExit must survive.
+            if awaitingInputIds.remove(sessionID) != nil {
+                attentionSessionIds.remove(sessionID)
+            }
+            return
+        }
+        // The session the user is looking at needs no attention flag.
+        guard selectedSession?.id != sessionID else { return }
+
+        attentionSessionIds.insert(sessionID)
+        guard notifiedAwaitingInput.insert(sessionID).inserted else { return }
+        awaitingInputIds.insert(sessionID)
+        sendAwaitingInputNotification(sessionID: sessionID)
+    }
+
+    private func sendAwaitingInputNotification(sessionID: String) {
+        let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
+        let content = UNMutableNotificationContent()
+        content.title = name
+        content.body = "The agent is waiting for your input."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "lmux-awaiting-\(sessionID)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func sendCompletionNotification(sessionID: String) {
