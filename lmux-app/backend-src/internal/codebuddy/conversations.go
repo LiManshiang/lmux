@@ -214,6 +214,33 @@ func findConversationFile(agent, sessionID string) string {
 	return findConversationInRoot(root, sessionID)
 }
 
+// DeleteConversation removes one conversation's JSONL from this machine and
+// returns the path that was removed.
+//
+// The file is located through findConversationFile, so only paths inside the
+// agent's projects root can ever be touched. Deletion stays local on purpose:
+// the sync layer only adds or overwrites, so a conversation deleted here is
+// not removed from other machines (and could be pushed back by one).
+func DeleteConversation(agent, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", fmt.Errorf("empty session id")
+	}
+	path := findConversationFile(agent, sessionID)
+	if path == "" {
+		return "", fmt.Errorf("conversation %s not found", sessionID)
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	// The conversation list is memoised for 5s and the scanner keeps parsed
+	// summaries; drop both so the row disappears immediately.
+	conversationsMu.Lock()
+	conversationsCache = conversationsCacheEntry{}
+	conversationsMu.Unlock()
+	InvalidateCache()
+	return path, nil
+}
+
 // findConversationInRoot looks for "<sessionID>.jsonl" directly under one of
 // the root's subdirectories (or the root itself).
 func findConversationInRoot(root, sessionID string) string {
