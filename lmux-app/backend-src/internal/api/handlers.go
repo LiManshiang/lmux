@@ -59,13 +59,13 @@ func (h *Handler) SessionUsageStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type usageStat struct {
-		ID           string  `json:"id"`
-		Name         string  `json:"name"`
-		AgentType    string  `json:"agent_type"`
-		Model        string  `json:"model"`
-		Tokens       int64   `json:"tokens"`
-		ContextWindow int64  `json:"context_window"`
-		Credit       float64 `json:"credit"`
+		ID            string  `json:"id"`
+		Name          string  `json:"name"`
+		AgentType     string  `json:"agent_type"`
+		Model         string  `json:"model"`
+		Tokens        int64   `json:"tokens"`
+		ContextWindow int64   `json:"context_window"`
+		Credit        float64 `json:"credit"`
 	}
 
 	stats := make([]usageStat, 0, len(sessions))
@@ -433,6 +433,27 @@ func (h *Handler) SearchAgentConversations(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, res)
 }
 
+// DeleteAgentConversation deletes one conversation file from this machine.
+// Irreversible, so the client asks for confirmation before calling; deletion
+// is local and is not propagated to other machines by the sync layer.
+func (h *Handler) DeleteAgentConversation(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent     string `json:"agent"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.Agent == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/session_id")
+		return
+	}
+	path, err := codebuddy.DeleteConversation(body.Agent, body.SessionID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": path})
+}
+
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
 // for a project directory by scanning JSONL files.
 func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {
@@ -760,11 +781,11 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 //     create a new independent session.
 func (h *Handler) ImportSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
-		AgentType   string `json:"agent_type"`
-		ProjectDir  string `json:"project_dir"`
+		Name         string `json:"name"`
+		AgentType    string `json:"agent_type"`
+		ProjectDir   string `json:"project_dir"`
 		CBCSessionID string `json:"cbc_session_id"`
-		Content     string `json:"content"`
+		Content      string `json:"content"`
 		ConflictMode string `json:"conflict_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
