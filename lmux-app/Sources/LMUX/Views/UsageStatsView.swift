@@ -48,6 +48,8 @@ struct UsageStatsView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(viewModel.usageStatsLoading)
+                .help("Refresh")
+                .accessibilityLabel("Refresh usage statistics")
                 Button {
                     viewModel.showUsageStats = false
                 } label: {
@@ -55,6 +57,8 @@ struct UsageStatsView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Close")
+                .accessibilityLabel("Close usage statistics")
             }
 
             HStack(spacing: 12) {
@@ -141,6 +145,8 @@ private struct UsageStatsRow: View {
                 Text(stat.model?.isEmpty == false ? "\(agentLabel) · \(stat.model!)" : agentLabel)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
