@@ -26,6 +26,7 @@ struct HelpView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .iconButtonChrome()
                 .help("Close")
                 .accessibilityLabel("Close help")
             }
