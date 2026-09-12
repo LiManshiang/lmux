@@ -64,7 +64,7 @@ func TestSearchConversationsFindsChineseAndSkipsNoise(t *testing.T) {
 		assistantLine("登录脚本已经写好了"),
 	}, time.Now())
 
-	res := SearchConversations(context.Background(), SearchOptions{Query: "登录"})
+	res, _ := SearchConversations(context.Background(), SearchOptions{Query: "登录"})
 
 	if len(res.Groups) != 1 {
 		t.Fatalf("groups = %d, want 1", len(res.Groups))
@@ -99,7 +99,7 @@ func TestSearchConversationsSnippetWindow(t *testing.T) {
 		userLine(prefix + "关键词" + suffix),
 	}, time.Now())
 
-	res := SearchConversations(context.Background(), SearchOptions{Query: "关键词"})
+	res, _ := SearchConversations(context.Background(), SearchOptions{Query: "关键词"})
 	if len(res.Groups) != 1 || len(res.Groups[0].Hits) != 1 {
 		t.Fatalf("expected one hit, got %+v", res.Groups)
 	}
@@ -130,13 +130,13 @@ func TestSearchConversationsRangeFilter(t *testing.T) {
 		[]string{userLine("老会话里也有目标词")}, time.Now().AddDate(0, 0, -200))
 
 	// Default window: the 200-day-old conversation is out of range.
-	res := SearchConversations(context.Background(), SearchOptions{Query: "目标词"})
+	res, _ := SearchConversations(context.Background(), SearchOptions{Query: "目标词"})
 	if len(res.Groups) != 1 || res.Groups[0].Conversation.SessionID != "recent" {
 		t.Fatalf("default range should only match the recent conversation: %+v", res.Groups)
 	}
 
 	// All lifts the window.
-	resAll := SearchConversations(context.Background(), SearchOptions{Query: "目标词", All: true})
+	resAll, _ := SearchConversations(context.Background(), SearchOptions{Query: "目标词", All: true})
 	if len(resAll.Groups) != 2 {
 		t.Fatalf("All should match both conversations, got %d", len(resAll.Groups))
 	}
@@ -153,7 +153,7 @@ func TestSearchConversationsMaxHitsTruncates(t *testing.T) {
 	}
 	writeConversation(t, home, "/tmp/proj", "c1", lines, time.Now())
 
-	res := SearchConversations(context.Background(), SearchOptions{Query: "命中词", MaxHits: 2})
+	res, _ := SearchConversations(context.Background(), SearchOptions{Query: "命中词", MaxHits: 2})
 	if !res.Truncated {
 		t.Errorf("expected Truncated with MaxHits=2, got %+v", res)
 	}
@@ -180,7 +180,7 @@ func TestSearchConversationsConcurrentFilesStayOrdered(t *testing.T) {
 			now.Add(-time.Duration(i)*time.Minute))
 	}
 
-	res := SearchConversations(context.Background(), SearchOptions{Query: "并发搜索关键词", Workers: 4})
+	res, _ := SearchConversations(context.Background(), SearchOptions{Query: "并发搜索关键词", Workers: 4})
 	if len(res.Groups) != 12 {
 		t.Fatalf("groups = %d, want 12", len(res.Groups))
 	}
@@ -205,14 +205,14 @@ func TestSearchConversationsHonoursCancelledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	res := SearchConversations(ctx, SearchOptions{Query: "取消测试关键词"})
+	res, _ := SearchConversations(ctx, SearchOptions{Query: "取消测试关键词"})
 	if len(res.Groups) != 0 {
 		t.Errorf("cancelled search should return no groups, got %d", len(res.Groups))
 	}
 }
 
 func TestSearchConversationsEmptyQuery(t *testing.T) {
-	res := SearchConversations(context.Background(), SearchOptions{Query: "   "})
+	res, _ := SearchConversations(context.Background(), SearchOptions{Query: "   "})
 	if len(res.Groups) != 0 || res.ScannedConvos != 0 {
 		t.Errorf("blank query should do nothing: %+v", res)
 	}
