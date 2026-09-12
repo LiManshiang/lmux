@@ -120,6 +120,29 @@ func (s *Store) Save(sess *Session) error {
 	return err
 }
 
+// ClearAgentBinding detaches every lmux session bound to the given agent
+// conversation and reports how many were detached.
+//
+// Called when the conversation file itself is deleted. Without this the
+// session still looks bound, and the next connect would quietly start an empty
+// conversation instead of resuming the one that is gone.
+func (s *Store) ClearAgentBinding(agentSessionID string) (int, error) {
+	if agentSessionID == "" {
+		return 0, nil
+	}
+	res, err := s.db.Exec(
+		`UPDATE sessions SET cbc_session_id = '', updated_at = ? WHERE cbc_session_id = ?`,
+		time.Now(), agentSessionID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // Get retrieves a session by ID.
 func (s *Store) Get(id string) (*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
