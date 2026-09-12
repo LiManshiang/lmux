@@ -147,8 +147,14 @@ struct ContentView: View {
                     Task { await viewModel.quickCreateSession() }
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                        Text("New Session")
+                        // Creating a session can take a moment (backend spawn +
+                        // agent trust setup); show it rather than looking dead.
+                        if viewModel.isLoading {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "plus")
+                        }
+                        Text(viewModel.isLoading ? "Creating…" : "New Session")
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.accentColor)
@@ -158,7 +164,7 @@ struct ContentView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!viewModel.backendRunning)
+                .disabled(!viewModel.backendRunning || viewModel.isLoading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
 
@@ -291,7 +297,7 @@ struct BackendLoadingView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("Connecting to Backend...")
+            Text("Connecting to Backend…")
                 .font(.headline)
                 .foregroundColor(.secondary)
         }
