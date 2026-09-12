@@ -81,6 +81,10 @@ open .build/lmux.app
 - **Context & credit meter** — the sidebar shows each conversation's
   context-window usage (exact for CodeBuddy, estimated for Claude) and
   estimated credit spent.
+- **Waiting-for-input detection** — when an agent finishes its turn and sits
+  idle, its row gets an attention ring and you get a notification, so you can
+  tell which of several parallel sessions needs you. Read from the conversation
+  itself — nothing to configure.
 - **Agent detection** — launch an agent inside a plain bash session and lmux
   detects it, marks the session, and surfaces its status.
 - **Cross-device session sync** — incremental `.lmuxsession` bundles plus raw
