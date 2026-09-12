@@ -235,8 +235,13 @@ private struct GroupHeader: View {
         // opaque so it still works while pinned over scrolling rows.
         .background(
             ZStack {
-                Color(NSColor.controlBackgroundColor)
-                Color.primary.opacity(hovering ? 0.06 : 0)
+                // The list behind is windowBackgroundColor. Laying a primary
+                // wash over it separates the band in both appearances, whereas
+                // controlBackgroundColor sat almost on top of the list colour in
+                // dark mode (both read as the same near-black).
+                Color(NSColor.windowBackgroundColor)
+                Color.primary.opacity(0.09)
+                Color.primary.opacity(hovering ? 0.05 : 0)
             }
         )
         .overlay(alignment: .top) {
