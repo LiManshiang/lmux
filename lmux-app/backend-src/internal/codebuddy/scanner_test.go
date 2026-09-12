@@ -149,8 +149,8 @@ func TestLastUsageInfoPicksFunctionCallTokens(t *testing.T) {
 			"type": typ,
 			"message": map[string]interface{}{
 				"usage": map[string]interface{}{
-					"input_tokens":          input,
-					"output_tokens":         output,
+					"input_tokens":            input,
+					"output_tokens":           output,
 					"cache_read_input_tokens": 0,
 				},
 			},
@@ -188,7 +188,7 @@ func TestLatestSessionFilePrefersRecentlyModified(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mk("fresh-idle")        // newest creation time
+	mk("fresh-idle") // newest creation time
 	time.Sleep(20 * time.Millisecond)
 	oldResumed := filepath.Join(dir, "old-resumed.jsonl")
 	if err := os.WriteFile(oldResumed, []byte("x"), 0o644); err != nil {
@@ -609,5 +609,62 @@ func TestLastUsageInfoFullReadsTailActivity(t *testing.T) {
 	}
 	if u.Activity.Awaiting(info.ModTime().Add(time.Second)) {
 		t.Error("a conversation written a second ago must not count as awaiting")
+	}
+}
+
+func TestSessionActivityAwaitingClaude(t *testing.T) {
+	settled := time.Now().Add(-30 * time.Second) // past awaitingQuiet
+	fresh := time.Now()
+
+	cases := []struct {
+		name string
+		a    SessionActivity
+		want bool
+	}{
+		{"claude end_turn", SessionActivity{settled, "assistant", "assistant", "end_turn"}, true},
+		{"claude stop_sequence", SessionActivity{settled, "assistant", "assistant", "stop_sequence"}, true},
+		{"claude tool_use still working", SessionActivity{settled, "assistant", "assistant", "tool_use"}, false},
+		{"claude user turn", SessionActivity{settled, "user", "user", ""}, false},
+		{"claude just finished (streaming)", SessionActivity{fresh, "assistant", "assistant", "end_turn"}, false},
+	}
+	for _, c := range cases {
+		if got := c.a.Awaiting(time.Now()); got != c.want {
+			t.Errorf("%s: Awaiting() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestLastUsageInfoFullReadsClaudeTail(t *testing.T) {
+	// Claude shape: role/stop_reason inside "message", and plenty of noise
+	// records (permission-mode, last-prompt) after the real turn end.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.jsonl")
+	lines := []string{
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn",` +
+			`"usage":{"input_tokens":5000,"output_tokens":40,"cache_read_input_tokens":0}}}`,
+		`{"type":"permission-mode","permissionMode":"acceptEdits"}`,
+		`{"type":"last-prompt","text":"next"}`,
+		`{"type":"attachment","name":"file.txt"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := lastUsageInfoFull(path, info.ModTime())
+	if err != nil {
+		t.Fatalf("lastUsageInfoFull: %v", err)
+	}
+	if u.Activity.LastRecordType != "assistant" || u.Activity.LastStatus != "end_turn" {
+		t.Errorf("activity = %+v, want assistant/end_turn (noise skipped)", u.Activity)
+	}
+	if !u.Activity.Awaiting(info.ModTime().Add(awaitingQuiet + time.Second)) {
+		t.Error("a settled claude turn should count as awaiting input")
+	}
+	if u.Input != 5000 {
+		t.Errorf("input = %d, want 5000", u.Input)
 	}
 }
