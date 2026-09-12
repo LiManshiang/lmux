@@ -69,7 +69,11 @@ struct PTYTerminalView: NSViewRepresentable {
         // live-resize stretch) can never paint over the header row above.
         // (NSView.clipsToBounds is macOS 14+; the layer property works on all.)
         container.layer?.masksToBounds = true
-        container.layer?.backgroundColor = NSColor(red: 0.09, green: 0.09, blue: 0.11, alpha: 1.0).cgColor
+        // Follow the active theme: with a light theme (e.g. Solarized Light)
+        // a dark container flashed through the resize gap.
+        let themeID = UserDefaults.standard.string(forKey: "terminalTheme") ?? "dracula"
+        let theme = TerminalTheme.all.first { $0.id == themeID } ?? .dracula
+        container.layer?.backgroundColor = theme.backgroundNSColor.cgColor
         let mgr = manager
         container.onDrop = { [weak mgr] text in
             mgr?.sendInput(text)
