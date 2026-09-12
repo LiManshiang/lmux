@@ -56,6 +56,16 @@ class ContentViewModel: ObservableObject {
     @Published var agentPreviewConversation: AgentConversation?
     @Published var agentPreview: AgentConversationPreview?
     @Published var agentPreviewLoading = false
+    /// Set when the usage panel's request fails. Shown inside the sheet,
+    /// because the global alert is not visible while a sheet is presented.
+    @Published var usageStatsError: String?
+    /// Set when the Agent browser could not load because the backend is down,
+    /// so the list can say so instead of silently keeping a stale list.
+    @Published var agentBackendDown = false
+
+    /// Set when a preview could not be read, so the pane can say so instead of
+    /// claiming the conversation has no messages.
+    @Published var agentPreviewError: String?
     /// Content search: matches inside past conversations (rather than in their
     /// titles), plus the scan's bookkeeping for the UI to report.
     @Published var agentSearchResults: ConversationSearchResult?
@@ -842,7 +852,7 @@ class ContentViewModel: ObservableObject {
         let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
         let content = UNMutableNotificationContent()
         content.title = "Context \(percent)%"
-        content.body = "\(name) 上下文已用 \(percent)%。建议执行 /compact 压缩。"
+        content.body = "\(name) is at \(percent)% context. Consider running /compact."
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "lmux-context-\(sessionID)-\(hit)-\(UUID().uuidString)",
@@ -1351,7 +1361,11 @@ class ContentViewModel: ObservableObject {
     /// monotonically increasing request id so fast filter changes never let an
     /// older (slower) request overwrite a newer one.
     func loadAgentConversations() async {
-        guard backendRunning else { return }
+        guard backendRunning else {
+            agentBackendDown = true
+            return
+        }
+        agentBackendDown = false
         agentLoadRequestID += 1
         let requestID = agentLoadRequestID
         agentConversationsLoading = true
@@ -1379,6 +1393,7 @@ class ContentViewModel: ObservableObject {
 
         agentPreviewLoading = true
         agentPreview = nil
+        agentPreviewError = nil
         agentPreviewConversation = conv
         defer {
             if requestID == agentPreviewRequestID { agentPreviewLoading = false }
@@ -1391,6 +1406,8 @@ class ContentViewModel: ObservableObject {
             agentPreview = preview
         } catch {
             guard requestID == agentPreviewRequestID else { return }
+            // Keep this distinguishable from an empty conversation.
+            agentPreviewError = error.localizedDescription
             agentPreview = AgentConversationPreview(rows: [])
         }
     }
@@ -1444,6 +1461,17 @@ class ContentViewModel: ObservableObject {
         }
     }
 
+    /// Clears per-filter browsing state when the Agent browser's agent or
+    /// directory filter changes: the previous preview and search results belong
+    /// to a different set of conversations.
+    func resetAgentBrowsingState() {
+        agentPreviewConversation = nil
+        agentPreview = nil
+        agentPreviewError = nil
+        agentSearchResults = nil
+        agentSearchError = nil
+    }
+
     /// Delete a conversation file from this machine (the browser confirms with
     /// the user first). Refreshes the list, drops a stale preview, and clears
     /// content-search results that may have matched the deleted conversation.
@@ -1463,9 +1491,9 @@ class ContentViewModel: ObservableObject {
                 agentPreviewConversation = nil
                 agentPreview = nil
             }
-            if let results = agentSearchResults,
-               results.results.contains(where: { $0.conversation.id == conv.id }) {
-                agentSearchResults = nil
+            if let results = agentSearchResults {
+                // Keep the other matches; only this conversation's hits go.
+                agentSearchResults = results.removing(conversationID: conv.id)
             }
             await loadAgentConversations()
             showToast("Conversation deleted")
@@ -1510,13 +1538,19 @@ class ContentViewModel: ObservableObject {
     /// Load per-session usage statistics (tokens / credit / model) for the
     /// statistics panel.
     func loadUsageStats() async {
-        guard backendRunning else { return }
+        guard backendRunning else {
+            usageStatsError = "The backend is not running."
+            return
+        }
         usageStatsLoading = true
+        usageStatsError = nil
         defer { usageStatsLoading = false }
         do {
             usageStats = try await api.sessionUsageStats()
         } catch {
-            errorMessage = error.localizedDescription
+            // Deliberately not errorMessage: that alert lives on the main
+            // window and is invisible behind this sheet.
+            usageStatsError = error.localizedDescription
         }
     }
 
