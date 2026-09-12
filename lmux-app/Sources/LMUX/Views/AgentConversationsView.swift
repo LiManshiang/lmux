@@ -366,7 +366,9 @@ struct AgentBrowserView: View {
                         agent: viewModel.agentFilterName,
                         projectDir: viewModel.agentFilterProjectDir,
                         all: searchAllHistory,
-                        debounce: .zero
+                        // .milliseconds(0), not .zero: Duration.zero is macOS 13+,
+                        // and this app still targets 12 (the Intel CI build caught it).
+                        debounce: .milliseconds(0)
                     )
                 }
             }
