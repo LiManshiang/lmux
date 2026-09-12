@@ -279,6 +279,30 @@ class APIClient: AgentSessionService {
         return try decode(AgentConversationPreview.self, from: data)
     }
 
+    /// Search the text of past conversations. `all` lifts the default recency
+    /// window (recent conversations only), which costs a few seconds instead of
+    /// about one; the longer timeout covers it.
+    func agentSearch(query: String, agent: String, projectDir: String, all: Bool) async throws -> ConversationSearchResult {
+        struct Body: Codable {
+            let query: String
+            let agent: String
+            let projectDir: String
+            let all: Bool
+            enum CodingKeys: String, CodingKey {
+                case query
+                case agent
+                case projectDir = "project_dir"
+                case all
+            }
+        }
+        let data = try await post(
+            "/api/agent/search",
+            body: Body(query: query, agent: agent, projectDir: projectDir, all: all),
+            timeout: 30
+        )
+        return try decode(ConversationSearchResult.self, from: data)
+    }
+
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
         struct Body: Codable {
             let cbcSessionID: String
