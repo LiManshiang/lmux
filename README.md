@@ -13,16 +13,16 @@
 ![lmux — switching between two agent sessions with live context meters](docs/screenshots/demo.gif)
 
 lmux gives every agent its own embedded terminal session: launch CodeBuddy and
-Claude Code on different tasks, watch each conversation's **context-window and
-credit usage** in the sidebar, and **resume conversations exactly where they
-left off** — even on a different Mac.
+Claude Code on different tasks, watch each conversation's **context-window
+usage** in the sidebar, and **resume conversations exactly where they left
+off** — even on a different Mac.
 
 ## Why lmux?
 
 - **First-class CodeBuddy Code support** — the only GUI in this space built on
   CodeBuddy's session store: automatic conversation discovery, one-click
-  resume, and **exact** context-window and credit accounting. Claude Code gets
-  the same treatment with estimated usage.
+  resume, and **exact** context-window accounting. Claude Code gets the same
+  treatment with estimated usage.
 - **Cross-Mac session sync** — pinned sessions sync incrementally to any folder
   shared between your Macs (iCloud Drive, Syncthing, …). Recorded paths are
   localized on import, and two-sided edits raise a keep-local / use-remote
@@ -78,9 +78,9 @@ open .build/lmux.app
 - **Conversation resumption** — sessions remember their agent conversation and
   auto-resume it on reconnect; imported conversations are path-localized so
   resume works on the new machine.
-- **Context & credit meter** — the sidebar shows each conversation's
-  context-window usage (exact for CodeBuddy, estimated for Claude) and
-  estimated credit spent.
+- **Context meter** — the sidebar shows each conversation's context-window
+  usage (exact for CodeBuddy, estimated for Claude), so you can /compact before
+  a session runs out of room.
 - **Waiting-for-input detection** — when an agent finishes its turn and sits
   idle, its row gets an attention ring and you get a notification, so you can
   tell which of several parallel sessions needs you. Read from the conversation
@@ -139,9 +139,9 @@ terminals. Code and conversations stay on your machine unless you enable
 session sync to a folder you own.
 
 **How is this different from tmux plus a few terminal windows?**
-Session↔conversation binding, automatic resume, per-conversation context and
-credit accounting, and cross-Mac sync — none of which a plain terminal
-multiplexer knows about.
+Session↔conversation binding, automatic resume, per-conversation context
+accounting, and cross-Mac sync — none of which a plain terminal multiplexer
+knows about.
 
 <details>
 <summary><strong>Build from source / Architecture</strong></summary>
@@ -208,7 +208,7 @@ lmux-app/
                    # providers (codebuddy/claude), session restore
     LMUXCoreTests/ # unit tests
   backend-src/     # Go backend: session store (SQLite), agent scanning,
-                   # context/credit stats, REST API (port 19680)
+                   # context stats, REST API (port 19680)
   tools/
     export-lmux.sh # CLI export for migrating to another Mac
     patches/       # SwiftTerm 5.7 backport patch
