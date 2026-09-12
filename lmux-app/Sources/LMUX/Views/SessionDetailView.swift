@@ -22,6 +22,8 @@ struct SessionDetailView: View {
     @EnvironmentObject var viewModel: ContentViewModel
     @State private var showSplitPane = false
     @State private var terminalHeight: CGFloat = 200
+    /// The usage panel on the right. Persisted so it stays where the user左 it.
+    @AppStorage("showSessionInspector") private var showInspector = false
 
     /// When set, this view is hosted in its own window for one specific
     /// session (parallel workspace). It ignores the main window's selection.
@@ -88,6 +90,19 @@ struct SessionDetailView: View {
                         .buttonStyle(.borderless)
                         .help("Stop")
                         .accessibilityLabel("Stop session")
+
+                        Button {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                showInspector.toggle()
+                            }
+                        } label: {
+                            Image(systemName: "sidebar.right")
+                                .font(.system(size: 13))
+                                .foregroundColor(showInspector ? .accentColor : .secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(showInspector ? "Hide usage panel" : "Show usage panel")
+                        .accessibilityLabel("Toggle usage panel")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -134,6 +149,20 @@ struct SessionDetailView: View {
                                 RoundedRectangle(cornerRadius: 10)
                                     .strokeBorder(Color.secondary.opacity(0.25))
                             )
+                        }
+                    }
+                    .overlay(alignment: .trailing) {
+                        // Overlay rather than a side-by-side HStack: a conditional
+                        // branch around PTYTerminalView would let SwiftUI recreate
+                        // the terminal's NSView (see the note above).
+                        if showInspector {
+                            HStack(spacing: 0) {
+                                Divider()
+                                SessionInspectorView(session: session, manager: mgr)
+                                    .frame(width: 240)
+                                    .background(.bar)
+                            }
+                            .transition(.move(edge: .trailing))
                         }
                     }
                     .overlay(alignment: .bottom) {
