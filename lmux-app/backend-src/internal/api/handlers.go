@@ -468,14 +468,31 @@ func (h *Handler) AgentContext(w http.ResponseWriter, r *http.Request) {
 
 	switch body.Agent {
 	case "codebuddy":
-		tokens, model, _ := codebuddy.GetSessionContext(body.SessionID)
-		window := codebuddy.ContextWindowForModel(model)
-		credit, _ := codebuddy.GetSessionCreditUsage(body.SessionID)
+		usage, err := codebuddy.GetSessionUsageFull(body.SessionID)
+		if err != nil {
+			// A session whose JSONL cannot be read still deserves a
+			// well-formed answer: the sidebar shows a zeroed row rather than
+			// an error.
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"tokens":         0,
+				"context_window": codebuddy.ContextWindowForModel(""),
+				"credit":         0.0,
+				"model":          "",
+				"awaiting_input": false,
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"tokens":         tokens,
-			"context_window": window,
-			"credit":         credit,
-			"model":          model,
+			"tokens":         usage.Input,
+			"context_window": codebuddy.ContextWindowForModel(usage.Model),
+			"credit":         codebuddy.CreditForUsage(usage),
+			"model":          usage.Model,
+			// Whether the agent has finished its turn and is waiting for the
+			// user. The frontend still gates this on the process being alive
+			// (the backend's session status does not track that).
+			"awaiting_input":   usage.Activity.Awaiting(time.Now()),
+			"last_record_type": usage.Activity.LastRecordType,
+			"last_activity":    usage.Activity.LastActivity.UTC().Format(time.RFC3339),
 		})
 	case "claude":
 		tokens := codebuddy.GetClaudeContextTokens(body.ProjectDir, body.SessionID)
