@@ -60,7 +60,7 @@ struct TerminalSettingsView: View {
             Rectangle().fill(Color(nsColor: theme.cursorNSColor)).frame(width: 4, height: 16)
             Rectangle().fill(Color(nsColor: theme.selectionNSColor)).frame(width: 4, height: 16)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1))
     }
 }
