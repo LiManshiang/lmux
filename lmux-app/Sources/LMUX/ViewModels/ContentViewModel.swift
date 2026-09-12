@@ -46,6 +46,12 @@ class ContentViewModel: ObservableObject {
     @Published var agentConversationsError: String?
     /// Monotonic guard against out-of-order agent list reloads.
     private var agentLoadRequestID = 0
+    /// Same guard for the session list: the 15s poll and manual refreshes can
+    /// overlap, and a slow older response must not overwrite a newer snapshot.
+    private var refreshRequestID = 0
+    /// Same guard for conversation previews: clicking two conversations in
+    /// quick succession must not let the first (slower) response win.
+    private var agentPreviewRequestID = 0
     /// Conversation shown in the Agent browser's preview pane.
     @Published var agentPreviewConversation: AgentConversation?
     @Published var agentPreview: AgentConversationPreview?
@@ -1122,10 +1128,16 @@ class ContentViewModel: ObservableObject {
 
     func refreshSessions() async {
         guard backendRunning else { return }
+        refreshRequestID += 1
+        let requestID = refreshRequestID
 
         do {
             let previousSelection = selectedSession?.id
             let summaries = try await api.listSessions()
+
+            // A newer refresh landed while we were waiting: its snapshot is
+            // fresher than ours, so drop this response entirely.
+            guard requestID == refreshRequestID else { return }
 
             // Avoid triggering SwiftUI diff on every poll when nothing changed.
             // Compare full contents (status, pid, ai_title, ...) not just IDs,
@@ -1144,6 +1156,9 @@ class ContentViewModel: ObservableObject {
                 errorMessage = nil
             }
         } catch {
+            // A stale failure should not raise an alert over newer good data;
+            // the next poll re-checks the backend anyway.
+            guard requestID == refreshRequestID else { return }
             if backendRunning {
                 // check if backend died
                 if await !api.healthCheck() {
@@ -1359,13 +1374,23 @@ class ContentViewModel: ObservableObject {
     /// Load the preview (title/summary metadata already in the list row plus
     /// the recent readable messages) for a selected agent conversation.
     func loadAgentPreview(_ conv: AgentConversation) async {
+        agentPreviewRequestID += 1
+        let requestID = agentPreviewRequestID
+
         agentPreviewLoading = true
         agentPreview = nil
         agentPreviewConversation = conv
-        defer { agentPreviewLoading = false }
+        defer {
+            if requestID == agentPreviewRequestID { agentPreviewLoading = false }
+        }
         do {
-            agentPreview = try await api.agentConversationPreview(agent: conv.agent, sessionID: conv.id)
+            let preview = try await api.agentConversationPreview(agent: conv.agent, sessionID: conv.id)
+            // Clicking a second conversation while the first is still loading
+            // must not end up showing the first one's messages.
+            guard requestID == agentPreviewRequestID else { return }
+            agentPreview = preview
         } catch {
+            guard requestID == agentPreviewRequestID else { return }
             agentPreview = AgentConversationPreview(rows: [])
         }
     }
@@ -1423,6 +1448,15 @@ class ContentViewModel: ObservableObject {
     /// the user first). Refreshes the list, drops a stale preview, and clears
     /// content-search results that may have matched the deleted conversation.
     func deleteAgentConversation(_ conv: AgentConversation) async {
+        // A conversation bound to a session whose process is alive is in use:
+        // removing the file would break the agent mid-turn. (The browser
+        // already hides conversations that are bound in the database; this
+        // covers the window before that binding is persisted, and live
+        // detection the backend cannot see.)
+        if let bound = sessions.first(where: { $0.cbcSessionID == conv.id }), isSessionActive(bound.id) {
+            showToast("“\(bound.name)” is using this conversation — stop it first")
+            return
+        }
         do {
             try await api.deleteAgentConversation(agent: conv.agent, sessionID: conv.id)
             if agentPreviewConversation?.id == conv.id {
@@ -1864,7 +1898,27 @@ class ContentViewModel: ObservableObject {
                 // surface as a false "Backend connection lost".
                 guard let self, !self.syncWaitVisible else { return }
                 await self.refreshSessions()
+                await self.detectAwaitingInput()
             }
+        }
+    }
+
+    /// Flags sessions whose agent finished its turn and is waiting for input.
+    ///
+    /// This used to run inside each row's `.task`, which only covered rows
+    /// currently scrolled into view — a session running in the background was
+    /// never checked. It now rides the shared 15s poll instead. Only sessions
+    /// with a live terminal count (the backend's session status does not track
+    /// processes, so a session that has never been attached is skipped).
+    private func detectAwaitingInput() async {
+        for session in sessions where isSessionActive(session.id) {
+            guard let cbc = session.cbcSessionID, !cbc.isEmpty else { continue }
+            guard let usage = await agentContextUsage(
+                agent: session.agentType,
+                cbcSessionID: cbc,
+                projectDir: session.projectDir
+            ) else { continue }
+            updateAwaitingInput(sessionID: session.id, awaiting: usage.awaitingInput, running: true)
         }
     }
 
