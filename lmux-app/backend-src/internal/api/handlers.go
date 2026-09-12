@@ -424,12 +424,17 @@ func (h *Handler) SearchAgentConversations(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "missing query")
 		return
 	}
-	res := codebuddy.SearchConversations(r.Context(), codebuddy.SearchOptions{
+	res, err := codebuddy.SearchConversations(r.Context(), codebuddy.SearchOptions{
 		Query:      body.Query,
 		Agent:      body.Agent,
 		ProjectDir: body.ProjectDir,
 		All:        body.All,
 	})
+	if err != nil {
+		// A broken projects root must not look like "no matches".
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -451,7 +456,14 @@ func (h *Handler) DeleteAgentConversation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": path})
+	// Detach any lmux session that was bound to this conversation, otherwise
+	// its next connect would resume into an empty conversation with no
+	// explanation.
+	detached, _ := h.mgr.ClearAgentBinding(body.SessionID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"deleted":           path,
+		"detached_sessions": detached,
+	})
 }
 
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
@@ -546,11 +558,18 @@ func (h *Handler) AgentContext(w http.ResponseWriter, r *http.Request) {
 		})
 	case "claude":
 		tokens := codebuddy.GetClaudeContextTokens(body.ProjectDir, body.SessionID)
+		// Claude records sessionId in the file name and role/stop_reason inside
+		// "message", so the same tail scan that drives CodeBuddy answers this.
+		awaiting := false
+		if usage, err := codebuddy.GetSessionUsageFullFor("claude", body.SessionID); err == nil {
+			awaiting = usage.Activity.Awaiting(time.Now())
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"tokens":         tokens,
 			"context_window": codebuddy.ContextWindowTokens, // claude maps to deepseek-v4-flash
 			"credit":         0,
 			"model":          "claude",
+			"awaiting_input": awaiting,
 		})
 	default:
 		writeError(w, http.StatusBadRequest, "unknown agent")
