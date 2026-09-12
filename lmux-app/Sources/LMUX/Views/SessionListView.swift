@@ -638,11 +638,12 @@ private struct PulsingRing: NSViewRepresentable {
             halfCycle: halfCycle,
             minOpacity: minOpacity
         ))
-        // The pulse repeats on the GPU after this one call.
+        // The window may not exist yet; ensurePulsing() runs again from
+        // layout() and viewDidMoveToWindow().
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             view.holdStill()
         } else {
-            view.startPulsing()
+            view.ensurePulsing()
         }
         return view
     }
@@ -671,6 +672,9 @@ final class PulsingRingView: NSView {
         var minOpacity: CGFloat
     }
 
+    /// Key for the repeating animation, so it can be checked and replaced.
+    private static let animationKey = "pulsing"
+
     private let geometry: Geometry
     private let ring = CAShapeLayer()
 
@@ -693,16 +697,37 @@ final class PulsingRingView: NSView {
         // the scale animation would grow the ring out of the bottom-left.
         ring.frame = bounds
         let side = min(bounds.width, bounds.height)
-        guard side > 0 else { return }
-        let diameter = geometry.dotSize * geometry.diameterRatio
-        let inset = (side - diameter) / 2
-        ring.path = CGPath(
-            ellipseIn: CGRect(x: inset, y: inset, width: diameter, height: diameter),
-            transform: nil
-        )
+        if side > 0 {
+            let diameter = geometry.dotSize * geometry.diameterRatio
+            let inset = (side - diameter) / 2
+            ring.path = CGPath(
+                ellipseIn: CGRect(x: inset, y: inset, width: diameter, height: diameter),
+                transform: nil
+            )
+        }
+        ensurePulsing()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Core Animation drops an animation when its layer leaves the render
+        // tree, and SwiftUI does move these views (list recycling, switching
+        // filters, the `if` around the ring being rebuilt). Re-arming on every
+        // re-attach is what stops the ring from sitting still.
+        ensurePulsing()
+    }
+
+    /// Starts the pulse unless it is already running, so a detach/attach pair
+    /// does not stack duplicate animations.
+    func ensurePulsing() {
+        guard window != nil else { return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        guard ring.animation(forKey: Self.animationKey) == nil else { return }
+        startPulsing()
     }
 
     func startPulsing() {
+        ring.removeAnimation(forKey: Self.animationKey)
         ring.opacity = 1
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 1.0
@@ -716,7 +741,7 @@ final class PulsingRingView: NSView {
         pulse.autoreverses = true      // halfCycle out + halfCycle back
         pulse.repeatCount = .infinity
         pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        ring.add(pulse, forKey: "pulsing")
+        ring.add(pulse, forKey: Self.animationKey)
     }
 
     /// Reduce Motion: a static mark instead of a pulse.
