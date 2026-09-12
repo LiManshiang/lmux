@@ -143,7 +143,9 @@ class ContentViewModel: ObservableObject {
             let ok = await withTransferWait {
                 await importSessions(from: url)
             }
-            showToast(ok ? "Import complete" : "Import failed")
+            showToast(ok
+                      ? "Import complete"
+                      : "Import finished with errors — some data may be missing")
         }
     }
 
@@ -328,6 +330,9 @@ class ContentViewModel: ObservableObject {
         }
 
         // Merge the imported data into the current user's home directory.
+        // Track failures: a partial merge must not be reported as a clean
+        // import (it used to).
+        var mergeFailed = false
         let home = NSHomeDirectory()
         if let backupName, let backupHome = usersDir.appendingPathComponent(backupName) as URL? {
             // Merge the session database row-by-row so sessions already on
@@ -335,29 +340,31 @@ class ContentViewModel: ObservableObject {
             // imported (its data_dir points at the old user's home).
             let backupLMUX = backupHome.appendingPathComponent(".lmux")
             if fm.fileExists(atPath: backupLMUX.appendingPathComponent("sessions.db").path) {
-                await Self.mergeSQLite(
+                let ok = await Self.mergeSQLite(
                     from: backupLMUX.appendingPathComponent("sessions.db").path,
                     into: "\(home)/.lmux/sessions.db"
                 )
+                mergeFailed = !ok || mergeFailed
             }
-            Self.mergeRestoreJSON(
+            let restoreOK = Self.mergeRestoreJSON(
                 from: backupHome.appendingPathComponent("Library/Application Support/lmux/restore.json").path,
                 to: "\(home)/Library/Application Support/lmux/restore.json"
             )
-            Self.mergeCopy(
+            let codebuddyOK = Self.mergeCopy(
                 from: backupHome.appendingPathComponent(".codebuddy"),
                 to: URL(fileURLWithPath: "\(home)/.codebuddy")
             )
-            Self.mergeCopy(
+            let claudeOK = Self.mergeCopy(
                 from: backupHome.appendingPathComponent(".claude"),
                 to: URL(fileURLWithPath: "\(home)/.claude")
             )
+            mergeFailed = !restoreOK || !codebuddyOK || !claudeOK || mergeFailed
         }
 
         try? fm.removeItem(at: tmp)
 
         await launchBackend()
-        return true
+        return !mergeFailed
     }
 
     /// Migrate a backup made under `fromUser` to the current user: rename
@@ -413,32 +420,52 @@ class ContentViewModel: ObservableObject {
     /// Recursively merge `from` into `to`. Files that already exist in `to`
     /// are replaced by the backup; other files/directories are added. The
     /// destination is never deleted, so live data on this machine survives.
-    private static func mergeCopy(from: URL, to: URL) {
+    /// Copy every entry of `from` over `to`, reporting whether all of them made
+    /// it. A missing source is not a failure — there is simply nothing to merge.
+    @discardableResult
+    private static func mergeCopy(from: URL, to: URL) -> Bool {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: from.path) else { return }
-        try? fm.createDirectory(at: to, withIntermediateDirectories: true)
-        guard let items = try? fm.contentsOfDirectory(at: from, includingPropertiesForKeys: nil) else { return }
+        guard fm.fileExists(atPath: from.path) else { return true }
+        do {
+            try fm.createDirectory(at: to, withIntermediateDirectories: true)
+        } catch {
+            return false
+        }
+        guard let items = try? fm.contentsOfDirectory(at: from, includingPropertiesForKeys: nil) else {
+            return false
+        }
+        var allCopied = true
         for item in items {
             let dest = to.appendingPathComponent(item.lastPathComponent)
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: item.path, isDirectory: &isDir) {
                 if isDir.boolValue {
-                    mergeCopy(from: item, to: dest)
+                    allCopied = mergeCopy(from: item, to: dest) && allCopied
                 } else {
-                    try? fm.removeItem(at: dest)
-                    try? fm.copyItem(at: item, to: dest)
+                    do {
+                        if fm.fileExists(atPath: dest.path) {
+                            try fm.removeItem(at: dest)
+                        }
+                        try fm.copyItem(at: item, to: dest)
+                    } catch {
+                        allCopied = false
+                    }
                 }
             }
         }
+        return allCopied
     }
 
     /// Merge every row of `fromDB` into `toDB`, backup winning on conflicts.
-    private static func mergeSQLite(from fromDB: String, into toDB: String) async {
+    @discardableResult
+    private static func mergeSQLite(from fromDB: String, into toDB: String) async -> Bool {
         let fm = FileManager.default
         let destDir = URL(fileURLWithPath: toDB).deletingLastPathComponent()
         try? fm.createDirectory(at: destDir, withIntermediateDirectories: true)
-        guard fm.fileExists(atPath: fromDB) else { return }
-        _ = await runProcess("/usr/bin/sqlite3", [
+        guard fm.fileExists(atPath: fromDB) else { return true }
+        // runProcess already reports the exit status; this call used to throw
+        // it away, so a failed merge still produced "Import complete".
+        return await runProcess("/usr/bin/sqlite3", [
             toDB,
             "ATTACH '\(fromDB)' AS src; INSERT OR REPLACE INTO sessions SELECT * FROM src.sessions; DETACH src;",
         ])
@@ -446,11 +473,16 @@ class ContentViewModel: ObservableObject {
 
     /// Merge the backup's restore.json into the current one by session ID,
     /// keeping entries that already exist on this machine.
-    private static func mergeRestoreJSON(from: String, to: String) {
+    @discardableResult
+    private static func mergeRestoreJSON(from: String, to: String) -> Bool {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: from) else { return }
+        guard fm.fileExists(atPath: from) else { return true }
         let dest = URL(fileURLWithPath: to)
-        try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        } catch {
+            return false
+        }
 
         var merged: [[String: Any]] = []
         if let data = try? Data(contentsOf: dest),
@@ -466,8 +498,12 @@ class ContentViewModel: ObservableObject {
                 merged.append(entry)
             }
         }
-        if let data = try? JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys]) {
-            try? data.write(to: dest)
+        do {
+            let data = try JSONSerialization.data(withJSONObject: merged, options: [.sortedKeys])
+            try data.write(to: dest)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -712,6 +748,10 @@ class ContentViewModel: ObservableObject {
         attentionSessionIds.remove(sessionID)
         notifiedAwaitingInput.remove(sessionID)
         awaitingInputIds.remove(sessionID)
+        // Detection caches keyed by session id would otherwise linger forever.
+        detectedAgents.removeValue(forKey: sessionID)
+        detectedCBCs.removeValue(forKey: sessionID)
+        notifiedContextThresholds.removeValue(forKey: sessionID)
         splitTerminalManagers[sessionID]?.disconnect()
         splitTerminalManagers.removeValue(forKey: sessionID)
         SessionRestore.remove(sessionID: sessionID)
@@ -739,6 +779,9 @@ class ContentViewModel: ObservableObject {
         attentionSessionIds.remove(id)
         notifiedAwaitingInput.remove(id)
         awaitingInputIds.remove(id)
+        detectedAgents.removeValue(forKey: id)
+        detectedCBCs.removeValue(forKey: id)
+        notifiedContextThresholds.removeValue(forKey: id)
         if connectedSessionId == id {
             connectedSessionId = nil
         }
@@ -1494,6 +1537,11 @@ class ContentViewModel: ObservableObject {
             if let results = agentSearchResults {
                 // Keep the other matches; only this conversation's hits go.
                 agentSearchResults = results.removing(conversationID: conv.id)
+            }
+            // The star would otherwise stay in UserDefaults forever, pointing
+            // at an id that no longer exists.
+            if agentStars.remove(conv.id) != nil {
+                UserDefaults.standard.set(Array(agentStars), forKey: Self.agentStarsKey)
             }
             await loadAgentConversations()
             showToast("Conversation deleted")
