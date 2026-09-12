@@ -303,6 +303,24 @@ class APIClient: AgentSessionService {
         return try decode(ConversationSearchResult.self, from: data)
     }
 
+    /// Delete one conversation file from this machine. Irreversible and local
+    /// (the sync layer never propagates deletions), so the browser confirms
+    /// with the user before calling this.
+    func deleteAgentConversation(agent: String, sessionID: String) async throws {
+        struct Body: Codable {
+            let agent: String
+            let sessionID: String
+            enum CodingKeys: String, CodingKey {
+                case agent
+                case sessionID = "session_id"
+            }
+        }
+        _ = try await post(
+            "/api/agent/conversation-delete",
+            body: Body(agent: agent, sessionID: sessionID)
+        )
+    }
+
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws {
         struct Body: Codable {
             let cbcSessionID: String
