@@ -50,7 +50,7 @@ struct EditSessionSheet: View {
                                 validateDir(newValue)
                             }
 
-                        Button("Browse...") {
+                        Button("Browse…") {
                             browseDirectory()
                         }
                     }
