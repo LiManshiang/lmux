@@ -1,15 +1,13 @@
 import SwiftUI
 
-/// Usage statistics panel: per-session context usage, model and estimated
-/// credit, sorted by credit descending so the most expensive sessions are
-/// at the top.
+/// Usage statistics panel: per-session context usage, model and token counts,
+/// sorted by context usage so the fullest sessions are at the top.
 struct UsageStatsView: View {
     @EnvironmentObject var viewModel: ContentViewModel
-    @State private var sortOrder: SortOrder = .credit
+    @State private var sortOrder: SortOrder = .percent
     @State private var showOnlyAgent = false
 
     enum SortOrder: String, CaseIterable, Identifiable {
-        case credit
         case tokens
         case percent
         case name
@@ -17,7 +15,6 @@ struct UsageStatsView: View {
 
         var label: String {
             switch self {
-            case .credit: return "积分"
             case .tokens: return "Token"
             case .percent: return "上下文"
             case .name: return "名称"
@@ -31,7 +28,6 @@ struct UsageStatsView: View {
             list = list.filter { $0.tokens > 0 }
         }
         switch sortOrder {
-        case .credit: list.sort { $0.credit > $1.credit }
         case .tokens: list.sort { $0.tokens > $1.tokens }
         case .percent: list.sort { $0.percent > $1.percent }
         case .name: list.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -159,11 +155,6 @@ private struct UsageStatsRow: View {
                 .foregroundColor(.secondary)
                 .frame(width: 80, alignment: .trailing)
 
-            // Credit.
-            Text(String(format: "%.2f", stat.credit))
-                .font(.system(size: 11))
-                .monospacedDigit()
-                .frame(width: 60, alignment: .trailing)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
