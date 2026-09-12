@@ -91,7 +91,7 @@ struct ContentView: View {
                     .padding(.vertical, 2)
                     .background(Color.orange.opacity(0.2))
                     .foregroundColor(.orange)
-                    .cornerRadius(4)
+                    .cornerRadius(3)
             } else {
                 Text("SwiftTerm")
                     .font(.system(size: 8))
