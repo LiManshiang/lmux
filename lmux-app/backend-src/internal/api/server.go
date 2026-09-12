@@ -154,6 +154,13 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	mux.HandleFunc("/api/agent/conversation-delete", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.DeleteAgentConversation(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	mux.HandleFunc("/api/codebuddy/session/", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			h.CodebuddySessionStatus(w, r)
@@ -176,7 +183,7 @@ func (s *Server) Start() error {
 	return s.server.ListenAndServe()
 }
 
-func (s *Server) Addr() string { return fmt.Sprintf("127.0.0.1:%d", s.cfg.Port) }
+func (s *Server) Addr() string  { return fmt.Sprintf("127.0.0.1:%d", s.cfg.Port) }
 func (s *Server) Token() string { return s.cfg.Token }
 
 func (s *Server) auth(handler http.HandlerFunc) http.HandlerFunc {
