@@ -794,3 +794,66 @@ func TestAgentContextReportsAwaitingInput(t *testing.T) {
 		t.Errorf("tokens = %v, want 1000", resp["tokens"])
 	}
 }
+
+func TestSearchAgentConversations(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	// /tmp/proj encodes to tmp-proj under ~/.codebuddy/projects.
+	dir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"sessionId":"conv-search","type":"message","role":"user",` +
+		`"content":[{"type":"input_text","text":"帮我写一个登录脚本"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "conv-search.jsonl"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"query":"登录","agent":"codebuddy","project_dir":"/tmp/proj"}`
+	w := httptest.NewRecorder()
+	h.SearchAgentConversations(w, httptest.NewRequest(http.MethodPost, "/api/agent/search", strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Results []struct {
+			Conversation struct {
+				SessionID string `json:"id"`
+			} `json:"conversation"`
+			Hits []struct {
+				Role    string `json:"role"`
+				Snippet string `json:"snippet"`
+			} `json:"hits"`
+		} `json:"results"`
+		Scanned     int   `json:"scanned"`
+		ElapsedMS   int64 `json:"elapsed_ms"`
+		ScannedByte int64 `json:"scanned_bytes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 1 {
+		t.Fatalf("results = %d, want 1 (body %s)", len(resp.Results), w.Body.String())
+	}
+	if resp.Results[0].Conversation.SessionID != "conv-search" {
+		t.Errorf("conversation id = %q", resp.Results[0].Conversation.SessionID)
+	}
+	if len(resp.Results[0].Hits) != 1 || !strings.Contains(resp.Results[0].Hits[0].Snippet, "登录") {
+		t.Errorf("hits = %+v", resp.Results[0].Hits)
+	}
+	if resp.Scanned != 1 || resp.ScannedByte == 0 {
+		t.Errorf("scanned = %d bytes = %d, want 1 / >0", resp.Scanned, resp.ScannedByte)
+	}
+
+	// A blank query is a client error, not an empty search.
+	w2 := httptest.NewRecorder()
+	h.SearchAgentConversations(w2, httptest.NewRequest(http.MethodPost, "/api/agent/search",
+		strings.NewReader(`{"query":"   "}`)))
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("blank query status = %d, want 400", w2.Code)
+	}
+}
