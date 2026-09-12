@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -75,14 +76,14 @@ type SearchResult struct {
 // bounded parallel scan answers in about a second. The default window (recent
 // MaxAgeDays and MaxConvos) covers what people actually search for; All lifts
 // the window at the cost of a few seconds.
-func SearchConversations(ctx context.Context, o SearchOptions) SearchResult {
+func SearchConversations(ctx context.Context, o SearchOptions) (SearchResult, error) {
 	start := time.Now()
 	res := SearchResult{Groups: []SearchGroup{}}
 
 	query := strings.TrimSpace(o.Query)
 	if query == "" {
 		res.ElapsedMS = time.Since(start).Milliseconds()
-		return res
+		return res, nil
 	}
 	if o.MaxAgeDays <= 0 {
 		o.MaxAgeDays = searchMaxAgeDays
@@ -106,7 +107,7 @@ func SearchConversations(ctx context.Context, o SearchOptions) SearchResult {
 	all, err := ListConversations(o.Agent, o.ProjectDir)
 	if err != nil {
 		res.ElapsedMS = time.Since(start).Milliseconds()
-		return res
+		return res, fmt.Errorf("list conversations: %w", err)
 	}
 
 	// ListConversations may hand back the slice held by its cache, so build the
@@ -214,7 +215,7 @@ func SearchConversations(ctx context.Context, o SearchOptions) SearchResult {
 	res.Truncated = trunc
 	res.TimedOut = errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	res.ElapsedMS = time.Since(start).Milliseconds()
-	return res
+	return res, nil
 }
 
 type rankedGroup struct {
