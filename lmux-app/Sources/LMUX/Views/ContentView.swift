@@ -41,24 +41,29 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.2), value: viewModel.toastMessage)
         .sheet(isPresented: $viewModel.showHelp) {
             HelpView()
+                .onExitCommand { viewModel.showHelp = false }
         }
         .sheet(isPresented: $viewModel.showMirrorConflicts) {
             MirrorConflictPanelView()
                 .environmentObject(viewModel)
+                .onExitCommand { viewModel.showMirrorConflicts = false }
         }
         .sheet(item: $viewModel.editingSession) { session in
             EditSessionSheet(session: session)
                 .environmentObject(viewModel)
+                .onExitCommand { viewModel.editingSession = nil }
         }
         .sheet(isPresented: $viewModel.showUsageStats) {
             UsageStatsView()
                 .environmentObject(viewModel)
+                .onExitCommand { viewModel.showUsageStats = false }
         }
         // ⌘N lands here (App.swift sets showNewSessionSheet); without this
         // binding the shortcut did nothing at all.
         .sheet(isPresented: $viewModel.showNewSessionSheet) {
             NewSessionSheet()
                 .environmentObject(viewModel)
+                .onExitCommand { viewModel.showNewSessionSheet = false }
         }
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
