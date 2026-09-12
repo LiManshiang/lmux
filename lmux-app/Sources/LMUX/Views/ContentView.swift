@@ -54,6 +54,12 @@ struct ContentView: View {
             UsageStatsView()
                 .environmentObject(viewModel)
         }
+        // ⌘N lands here (App.swift sets showNewSessionSheet); without this
+        // binding the shortcut did nothing at all.
+        .sheet(isPresented: $viewModel.showNewSessionSheet) {
+            NewSessionSheet()
+                .environmentObject(viewModel)
+        }
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
