@@ -53,8 +53,13 @@ struct SessionListView: View {
                     .help("Open the session's working directory in Finder")
                 }
                 Divider()
-                Button(session.pinned ? "Unpin (取消置顶)" : "Pin to Top (置顶)") {
+                Button(session.pinned ? "Unpin" : "Pin to Top") {
                     Task { await viewModel.togglePin(session: session) }
+                }
+                // Rename sits with the other one-click actions; it is not part
+                // of the heavier Edit sheet below.
+                Button("Rename…") {
+                    showRenameAlert(session)
                 }
                 Divider()
                 Button("Export Session…") {
@@ -68,10 +73,9 @@ struct SessionListView: View {
                     viewModel.promptEditSession(session)
                 }
                 .disabled(session.status == .running)
-                Button("Rename...") {
-                    showRenameAlert(session)
-                }
-                Button("Delete", role: .destructive) {
+                Divider()
+                // Trailing "…": it opens a confirmation first.
+                Button("Delete Session…", role: .destructive) {
                     confirmDelete(session)
                 }
             }
@@ -85,7 +89,7 @@ struct SessionListView: View {
 
                 // Pinned (starred) sessions at the very top.
                 if !pinned.isEmpty {
-                    GroupHeader(title: "置顶", count: pinned.count, isCollapsed: $pinnedCollapsed)
+                    GroupHeader(title: "Pinned", count: pinned.count, isCollapsed: $pinnedCollapsed)
                     if !pinnedCollapsed {
                         ForEach(pinned) { session in
                             sessionRow(session)
@@ -103,7 +107,7 @@ struct SessionListView: View {
                 let unbound = grouping.unbound
 
                 if !unbound.isEmpty {
-                    GroupHeader(title: "未启动", count: unbound.count, isCollapsed: $unboundCollapsed)
+                    GroupHeader(title: "Unstarted", count: unbound.count, isCollapsed: $unboundCollapsed)
                     if !unboundCollapsed {
                         ForEach(unbound) { session in
                             sessionRow(session)
@@ -359,7 +363,7 @@ private struct ContextUsageView: View {
         HStack(spacing: 4) {
             Image(systemName: "text.page")
                 .font(.system(size: 9))
-            Text("上下文 \(percent)%")
+            Text("Context \(percent)%")
                 .font(.system(size: 10))
                 .monospacedDigit()
             if let model, !model.isEmpty {
