@@ -895,3 +895,58 @@ func TestDeleteAgentConversation(t *testing.T) {
 		t.Errorf("missing session_id status = %d, want 400", w.Code)
 	}
 }
+
+func TestDeleteAgentConversationDetachesBoundSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	// A session bound to the conversation we are about to delete.
+	sess, err := h.mgr.Create(session.CreateRequest{
+		ProjectDir: "/tmp/proj", Name: "bound", CBCSessionID: "conv-bound", AgentType: "codebuddy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "conv-bound.jsonl")
+	line := `{"sessionId":"conv-bound","type":"message","role":"user",` +
+		`"content":[{"type":"input_text","text":"hi"}]}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	h.DeleteAgentConversation(w, httptest.NewRequest(http.MethodPost, "/api/agent/conversation-delete",
+		strings.NewReader(`{"agent":"codebuddy","session_id":"conv-bound"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Detached int `json:"detached_sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Detached != 1 {
+		t.Errorf("detached_sessions = %d, want 1 (body %s)", resp.Detached, w.Body.String())
+	}
+
+	// The session must no longer point at the deleted conversation, so its next
+	// connect starts a new one instead of "resuming" into an empty file.
+	got, err := h.mgr.Get(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CBCSessionID != "" {
+		t.Errorf("session still bound to %q after delete", got.CBCSessionID)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("conversation file should be gone")
+	}
+}
