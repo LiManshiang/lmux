@@ -404,6 +404,35 @@ func (h *Handler) AgentConversationPreview(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]interface{}{"rows": rows})
 }
 
+// SearchAgentConversations searches the text of user/assistant messages across
+// conversation histories. Bounded by default (recent conversations only, about
+// a second); `all: true` lifts the window and takes a few seconds. The request
+// context is passed through, so cancelling the HTTP request (the client typing
+// another query) stops the scan.
+func (h *Handler) SearchAgentConversations(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Query      string `json:"query"`
+		Agent      string `json:"agent"`
+		ProjectDir string `json:"project_dir"`
+		All        bool   `json:"all"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(body.Query) == "" {
+		writeError(w, http.StatusBadRequest, "missing query")
+		return
+	}
+	res := codebuddy.SearchConversations(r.Context(), codebuddy.SearchOptions{
+		Query:      body.Query,
+		Agent:      body.Agent,
+		ProjectDir: body.ProjectDir,
+		All:        body.All,
+	})
+	writeJSON(w, http.StatusOK, res)
+}
+
 // FindCodebuddySessionByProject looks up the most recent codebuddy session ID
 // for a project directory by scanning JSONL files.
 func (h *Handler) FindCodebuddySessionByProject(w http.ResponseWriter, r *http.Request) {
