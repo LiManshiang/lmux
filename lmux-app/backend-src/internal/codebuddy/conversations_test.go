@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTempJSONL(t *testing.T, dir, name, content string) string {
@@ -255,5 +256,46 @@ func TestFindConversationInRoot(t *testing.T) {
 	}
 	if p := findConversationInRoot(root, "missing"); p != "" {
 		t.Fatalf("missing returned %q", p)
+	}
+}
+
+func TestDeleteConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	resetConversationsCache()
+
+	path := writeConversation(t, home, "/tmp/proj", "doomed", []string{userLine("将被删除")}, time.Now())
+
+	list, err := ListConversations("codebuddy", "")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("setup: list = %d, err = %v", len(list), err)
+	}
+
+	removed, err := DeleteConversation("codebuddy", "doomed")
+	if err != nil {
+		t.Fatalf("DeleteConversation: %v", err)
+	}
+	if removed != path {
+		t.Errorf("removed = %q, want %q", removed, path)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("file still exists after delete")
+	}
+
+	// The 5s list memo must have been dropped along with the file.
+	after, err := ListConversations("codebuddy", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Errorf("list still reports %d conversations after delete", len(after))
+	}
+
+	// A second delete is a not-found, not a silent success.
+	if _, err := DeleteConversation("codebuddy", "doomed"); err == nil {
+		t.Error("expected an error deleting a missing conversation")
+	}
+	if _, err := DeleteConversation("codebuddy", ""); err == nil {
+		t.Error("expected an error for an empty session id")
 	}
 }
