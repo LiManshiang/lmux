@@ -532,3 +532,82 @@ func TestLocalizeSessionCwdFileMissingFile(t *testing.T) {
 		t.Errorf("expected not-exist error, got %v", err)
 	}
 }
+
+// --- awaiting-input detection ---
+
+func TestSessionActivityAwaiting(t *testing.T) {
+	settled := time.Now().Add(-30 * time.Second) // older than awaitingQuiet
+	fresh := time.Now()
+
+	cases := []struct {
+		name string
+		a    SessionActivity
+		want bool
+	}{
+		{"assistant completed", SessionActivity{settled, "message", "assistant", "completed"}, true},
+		{"turn metrics", SessionActivity{settled, "turn-metrics", "", ""}, true},
+		{"function call in flight", SessionActivity{settled, "function_call", "", ""}, false},
+		{"call result", SessionActivity{settled, "function_call_result", "", ""}, false},
+		{"reasoning", SessionActivity{settled, "reasoning", "", ""}, false},
+		{"assistant incomplete", SessionActivity{settled, "message", "assistant", "incomplete"}, false},
+		{"user just spoke", SessionActivity{settled, "message", "user", ""}, false},
+		{"still streaming", SessionActivity{fresh, "message", "assistant", "completed"}, false},
+		{"no activity", SessionActivity{}, false},
+	}
+	for _, c := range cases {
+		if got := c.a.Awaiting(time.Now()); got != c.want {
+			t.Errorf("%s: Awaiting() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestLastUsageInfoFullReadsTailActivity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.jsonl")
+	write := func(rec map[string]interface{}) {
+		b, _ := json.Marshal(rec)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(string(b) + "\n"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	usage := map[string]interface{}{
+		"input_tokens": 1234, "output_tokens": 10, "cache_read_input_tokens": 0,
+	}
+	write(map[string]interface{}{"type": "function_call",
+		"message": map[string]interface{}{"usage": usage}})
+	write(map[string]interface{}{"type": "message", "role": "assistant", "status": "completed",
+		"message": map[string]interface{}{"usage": usage}})
+	// Noise after the real turn end must not flip the verdict.
+	write(map[string]interface{}{"type": "file-history-snapshot"})
+	write(map[string]interface{}{"type": "summary",
+		"message": map[string]interface{}{"usage": usage}})
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := lastUsageInfoFull(path, info.ModTime())
+	if err != nil {
+		t.Fatalf("lastUsageInfoFull: %v", err)
+	}
+	// output is summed across all three usage-carrying records (10 each); the
+	// input/percent figure comes from the newest one.
+	if u.Input != 1234 || u.Output != 30 {
+		t.Errorf("usage = input %d output %d, want 1234 / 30", u.Input, u.Output)
+	}
+	if u.Activity.LastRecordType != "message" || u.Activity.LastRole != "assistant" ||
+		u.Activity.LastStatus != "completed" {
+		t.Errorf("activity = %+v, want message/assistant/completed with noise skipped", u.Activity)
+	}
+	if !u.Activity.Awaiting(info.ModTime().Add(awaitingQuiet + time.Second)) {
+		t.Error("a settled assistant turn should count as awaiting")
+	}
+	if u.Activity.Awaiting(info.ModTime().Add(time.Second)) {
+		t.Error("a conversation written a second ago must not count as awaiting")
+	}
+}
