@@ -330,6 +330,7 @@ func encodeCodebuddyProjectDir(projectDir string) string {
 //     process's own cwd, which for a pty-spawned agent never moves);
 //  2. the per-line "cwd" field recorded on every JSONL row (the process cwd,
 //     usually the session launch directory).
+//
 // Reads only the file tail rather than the whole history. "" when none.
 func RecentSessionCwd(agent, projectDir, sessionID string) string {
 	home, err := os.UserHomeDir()
@@ -943,6 +944,9 @@ func (a SessionActivity) Awaiting(now time.Time) bool {
 		return true
 	case "message":
 		return a.LastRole == "assistant" && a.LastStatus == "completed"
+	case "assistant":
+		// Claude finished its turn (LastStatus carries stop_reason).
+		return a.LastStatus == "end_turn" || a.LastStatus == "stop_sequence"
 	default:
 		return false
 	}
@@ -956,14 +960,42 @@ func (a SessionActivity) Awaiting(now time.Time) bool {
 // the sidebar then shows a frozen model name and context size. Pick the most
 // recently modified file instead: only the live conversation keeps growing.
 func GetSessionUsageFull(sessionID string) (SessionUsage, error) {
-	dirs, err := FindUserSessionsDirs()
+	return GetSessionUsageFullFor("codebuddy", sessionID)
+}
+
+// agentProjectsRoot returns the directory holding an agent's conversation
+// files. Anything other than "claude" is treated as codebuddy, matching the
+// rest of the package.
+func agentProjectsRoot(agent string) string {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return SessionUsage{}, err
+		return ""
+	}
+	if agent == "claude" {
+		return filepath.Join(home, ".claude", "projects")
+	}
+	return filepath.Join(home, ".codebuddy", "projects")
+}
+
+// GetSessionUsageFullFor reads a session's usage numbers and its tail activity
+// from the given agent's conversation store. Both CodeBuddy and Claude sessions
+// work: the tail scan understands each format's records.
+func GetSessionUsageFullFor(agent, sessionID string) (SessionUsage, error) {
+	root := agentProjectsRoot(agent)
+	if root == "" {
+		return SessionUsage{}, fmt.Errorf("cannot determine home directory")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return SessionUsage{}, fmt.Errorf("read %s: %w", root, err)
 	}
 	var filePath string
 	var newest time.Time
-	for _, dir := range dirs {
-		p := filepath.Join(dir, sessionID+".jsonl")
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		p := filepath.Join(root, entry.Name(), sessionID+".jsonl")
 		info, err := os.Stat(p)
 		if err != nil {
 			continue
@@ -1038,7 +1070,10 @@ func lastUsageInfoFull(path string, mtime time.Time) (SessionUsage, error) {
 				RequestModelID string `json:"requestModelId"`
 			} `json:"providerData"`
 			Message struct {
-				Usage *struct {
+				// Claude puts role/stop_reason inside "message".
+				Role       string `json:"role"`
+				StopReason string `json:"stop_reason"`
+				Usage      *struct {
 					InputTokens          int64 `json:"input_tokens"`
 					OutputTokens         int64 `json:"output_tokens"`
 					CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
@@ -1054,10 +1089,28 @@ func lastUsageInfoFull(path string, mtime time.Time) (SessionUsage, error) {
 		// scan keeps looking further back instead of concluding "idle".
 		if !activitySeen {
 			switch entry.Type {
-			case "message", "function_call", "function_call_result", "reasoning", "turn-metrics":
-				out.Activity.LastRecordType = entry.Type
+			case "message":
+				// CodeBuddy: role/status live at the top level.
+				out.Activity.LastRecordType = "message"
 				out.Activity.LastRole = entry.Role
 				out.Activity.LastStatus = entry.Status
+				activitySeen = true
+			case "assistant":
+				// Claude: "message.role" plus stop_reason, where end_turn /
+				// stop_sequence mean the turn is over and tool_use means it is
+				// still working. stop_reason is kept in LastStatus so Awaiting
+				// has one field to look at.
+				out.Activity.LastRecordType = "assistant"
+				out.Activity.LastRole = "assistant"
+				out.Activity.LastStatus = entry.Message.StopReason
+				activitySeen = true
+			case "user":
+				// Claude user turn (CodeBuddy uses type "message" for those).
+				out.Activity.LastRecordType = "user"
+				out.Activity.LastRole = "user"
+				activitySeen = true
+			case "function_call", "function_call_result", "reasoning", "turn-metrics":
+				out.Activity.LastRecordType = entry.Type
 				activitySeen = true
 			}
 		}
