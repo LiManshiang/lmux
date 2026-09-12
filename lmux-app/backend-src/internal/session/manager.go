@@ -157,6 +157,12 @@ func (m *Manager) Update(id string, req UpdateRequest) (*Session, error) {
 }
 
 // Get returns a session by ID.
+// ClearAgentBinding detaches sessions bound to a conversation that no longer
+// exists on disk (see Store.ClearAgentBinding).
+func (m *Manager) ClearAgentBinding(agentSessionID string) (int, error) {
+	return m.store.ClearAgentBinding(agentSessionID)
+}
+
 func (m *Manager) Get(id string) (*Session, error) {
 	return m.store.Get(id)
 }
@@ -190,9 +196,15 @@ func (m *Manager) RestoreAll() ([]*Session, error) {
 
 	var restored []*Session
 	for _, info := range cbcSessions {
-		if info.CWD == "" { continue }
-		if existingIDs[info.SessionID] { continue }
-		if _, err := os.Stat(info.CWD); os.IsNotExist(err) { continue }
+		if info.CWD == "" {
+			continue
+		}
+		if existingIDs[info.SessionID] {
+			continue
+		}
+		if _, err := os.Stat(info.CWD); os.IsNotExist(err) {
+			continue
+		}
 
 		name := filepath.Base(info.CWD)
 		if info.AiTitle != "" {
@@ -204,7 +216,9 @@ func (m *Manager) RestoreAll() ([]*Session, error) {
 			Name:         name,
 			CBCSessionID: info.SessionID,
 		})
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		restored = append(restored, sess)
 	}
 
@@ -223,7 +237,9 @@ func getGitBranch(dir string) string {
 		return ""
 	}
 	branch := strings.TrimSpace(string(out))
-	if branch == "HEAD" { return "" }
+	if branch == "HEAD" {
+		return ""
+	}
 	return branch
 }
 
