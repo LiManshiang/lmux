@@ -85,8 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Ask before syncing on quit. Defer termination until the (async) sync
         // completes so the export isn't cut off by process exit.
         let alert = NSAlert()
-        alert.messageText = "Sync before quitting?"
-        alert.informativeText = "You have pinned sessions. Sync them to your shared directory before quitting? This keeps the other machine up to date."
+        alert.messageText = L("Sync before quitting?")
+        alert.informativeText = L("You have pinned sessions. Sync them to your shared directory before quitting? This keeps the other machine up to date.")
         // NSAlert lays buttons out right-to-left: first addButton is the
         // rightmost (default, Return key). Sync & Quit stays the default;
         // Cancel sits on the far left but is always visible.
@@ -149,22 +149,22 @@ struct LmuxApp: App {
         .windowStyle(.titleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Session") { viewModel.showNewSessionSheet = true }
+                Button(L("New Session")) { viewModel.showNewSessionSheet = true }
                     .keyboardShortcut("n", modifiers: .command)
             }
             CommandMenu("Session") {
-                Button("Search Sessions") { viewModel.focusSearch() }
+                Button(L("Search Sessions")) { viewModel.focusSearch() }
                     .keyboardShortcut("f", modifiers: .command)
                 Divider()
-                Button("Next Session") { viewModel.selectNextSession() }
+                Button(L("Next Session")) { viewModel.selectNextSession() }
                     .keyboardShortcut(.downArrow, modifiers: .command)
-                Button("Previous Session") { viewModel.selectPreviousSession() }
+                Button(L("Previous Session")) { viewModel.selectPreviousSession() }
                     .keyboardShortcut(.upArrow, modifiers: .command)
                 Divider()
-                Button("Stop Session") { viewModel.stopCurrentSession() }
+                Button(L("Stop Session")) { viewModel.stopCurrentSession() }
                     .keyboardShortcut("k", modifiers: .command)
                 Divider()
-                Button("Sync Now") {
+                Button(L("Sync Now")) {
                     Task {
                         let result = await viewModel.syncNow()
                         viewModel.reportSyncResult(result)
@@ -173,19 +173,19 @@ struct LmuxApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(viewModel.syncInProgress)
                 Divider()
-                Button("Usage Statistics…") { viewModel.showUsageStats = true }
-                Button("Export Sessions…") { viewModel.promptExportSessions() }
-                Button("Import Sessions…") { viewModel.promptImportSessions() }
+                Button(L("Usage Statistics…")) { viewModel.showUsageStats = true }
+                Button(L("Export Sessions…")) { viewModel.promptExportSessions() }
+                Button(L("Import Sessions…")) { viewModel.promptImportSessions() }
             }
             CommandGroup(replacing: .help) {
-                Button("Usage & Shortcuts") { viewModel.showHelp = true }
+                Button(L("Usage & Shortcuts")) { viewModel.showHelp = true }
                     .keyboardShortcut("?", modifiers: .command)
             }
             // One settings window implementation: a reusable titled window
             // (closable via the traffic lights or Cmd+W), shared by the app
             // menu (Cmd+,) and the sidebar (⋯) menu.
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
+                Button(L("Settings…")) {
                     SettingsWindowController.shared.open(viewModel: viewModel)
                 }
                 .keyboardShortcut(",", modifiers: .command)
