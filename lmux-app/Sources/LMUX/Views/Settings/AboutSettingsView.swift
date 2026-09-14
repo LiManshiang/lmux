@@ -8,11 +8,11 @@ struct AboutSettingsView: View {
             AppIconView()
                 .frame(width: 96, height: 96)
 
-            Text("lmux")
+            Text(L("lmux"))
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("Version \(AppVersion.current)")
+            Text(L("Version") + " " + AppVersion.current)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
 
@@ -21,7 +21,7 @@ struct AboutSettingsView: View {
 
             VStack(spacing: 6) {
                 CompatLabeledContent(title: "Agent") {
-                    Text("CodeBuddy / Claude")
+                    Text(L("CodeBuddy / Claude"))
                 }
                 CompatLabeledContent(title: "Sync Device ID") {
                     Text(SessionSync.deviceID)
