@@ -38,7 +38,7 @@ struct UsageStatsView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text("Session Usage")
+                Text(L("Session Usage"))
                     .font(.title2)
                     .fontWeight(.semibold)
                 Spacer()
@@ -48,8 +48,8 @@ struct UsageStatsView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(viewModel.usageStatsLoading)
-                .help("Refresh")
-                .accessibilityLabel("Refresh usage statistics")
+                .help(L("Refresh"))
+                .accessibilityLabel(L("Refresh usage statistics"))
                 Button {
                     viewModel.showUsageStats = false
                 } label: {
@@ -58,12 +58,12 @@ struct UsageStatsView: View {
                 }
                 .buttonStyle(.plain)
                 .iconButtonChrome()
-                .help("Close")
-                .accessibilityLabel("Close usage statistics")
+                .help(L("Close"))
+                .accessibilityLabel(L("Close usage statistics"))
             }
 
             HStack(spacing: 12) {
-                Picker("Sort", selection: $sortOrder) {
+                Picker(L("Sort"), selection: $sortOrder) {
                     ForEach(SortOrder.allCases) { order in
                         Text(order.label).tag(order)
                     }
@@ -71,7 +71,7 @@ struct UsageStatsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 240)
 
-                Toggle("Agent sessions only", isOn: $showOnlyAgent)
+                Toggle(L("Agent sessions only"), isOn: $showOnlyAgent)
                     .font(.system(size: 11))
                     .toggleStyle(.checkbox)
 
@@ -93,7 +93,7 @@ struct UsageStatsView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Button("Retry") {
+                    Button(L("Retry")) {
                         Task { await viewModel.loadUsageStats() }
                     }
                     .font(.system(size: 11))
@@ -102,7 +102,7 @@ struct UsageStatsView: View {
             }
             if viewModel.usageStats.isEmpty && !viewModel.usageStatsLoading {
                 Spacer()
-                Text("No data")
+                Text(L("No data"))
                     .foregroundColor(.secondary)
                 Spacer()
             } else {
