@@ -7,6 +7,7 @@ struct GeneralSettingsView: View {
     @AppStorage("lmux_restore_last_session") private var restoreLastSession = true
 
     @AppStorage("appAppearance") private var appearance = AppAppearance.system.rawValue
+    @AppStorage("appLanguage") private var language = AppLanguage.system.rawValue
 
     var body: some View {
         Form {
@@ -28,6 +29,19 @@ struct GeneralSettingsView: View {
                 .pickerStyle(.segmented)
 
                 Text("Applies to lmux's own windows. The terminal keeps its own theme (see Settings → Terminal).")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
+            Section("Language") {
+                Picker("Interface language", selection: $language) {
+                    ForEach(AppLanguage.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text("Takes effect after relaunching lmux — rebuilding the interface live would drop the terminal sessions.")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
