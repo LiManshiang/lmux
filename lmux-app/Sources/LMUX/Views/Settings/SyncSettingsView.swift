@@ -12,11 +12,11 @@ struct SyncSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Cross-Device Sync") {
-                Toggle("Enable session sync", isOn: $syncEnabled)
+            Section(L("Cross-Device Sync")) {
+                Toggle(L("Enable session sync"), isOn: $syncEnabled)
                     .toggleStyle(.switch)
 
-                Text("Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate.")
+                Text(L("Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
 
@@ -38,11 +38,11 @@ struct SyncSettingsView: View {
                 .disabled(!syncEnabled || viewModel.syncInProgress)
             }
 
-            Section("Sync Directory") {
+            Section(L("Sync Directory")) {
                 HStack(spacing: 6) {
                     TextField("~/Library/Mobile Documents/…/lmux-sync", text: $syncDir)
                         .textFieldStyle(.roundedBorder)
-                    Button("Browse...") {
+                    Button(L("Browse...")) {
                         let panel = NSOpenPanel()
                         panel.canChooseDirectories = true
                         panel.canChooseFiles = false
@@ -56,16 +56,16 @@ struct SyncSettingsView: View {
                 }
             }
 
-            Section("Agent Conversations Sync") {
-                Toggle("Mirror all agent conversations", isOn: $agentMirrorEnabled)
+            Section(L("Agent Conversations Sync")) {
+                Toggle(L("Mirror all agent conversations"), isOn: $agentMirrorEnabled)
                     .toggleStyle(.switch)
 
-                Text("Raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects is mirrored to <sync dir>/agents and pulled back on other machines, so the Agent browser can find and resume every conversation. Only .jsonl files up to 50 MB sync; two-way changes keep the local copy.")
+                Text(L("Raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects is mirrored to <sync dir>/agents and pulled back on other machines, so the Agent browser can find and resume every conversation. Only .jsonl files up to 50 MB sync; two-way changes keep the local copy."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
 
-            Section("Path Mappings (old machine path → this machine)") {
+            Section(L("Path Mappings (old machine path → this machine)")) {
                 ForEach($mappings) { $mapping in
                     HStack(spacing: 6) {
                         TextField("/Users/limanshiang/proj", text: $mapping.from)
@@ -83,8 +83,8 @@ struct SyncSettingsView: View {
                         }
                         .buttonStyle(.plain)
                         .iconButtonChrome()
-                        .help("Remove mapping")
-                        .accessibilityLabel("Remove path mapping")
+                        .help(L("Remove mapping"))
+                        .accessibilityLabel(L("Remove path mapping"))
                     }
                 }
 
@@ -92,7 +92,7 @@ struct SyncSettingsView: View {
                     mappings.append(PathMapping(from: "", to: ""))
                 } label: {
                     Image(systemName: "plus.circle")
-                    Text("Add Mapping")
+                    Text(L("Add Mapping"))
                 }
                 .buttonStyle(.plain)
             }
