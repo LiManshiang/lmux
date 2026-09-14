@@ -128,10 +128,10 @@ struct AgentBrowserView: View {
             ),
             presenting: pendingDelete
         ) { conv in
-            Button("Delete", role: .destructive) {
+            Button(L("Delete"), role: .destructive) {
                 Task { await viewModel.deleteAgentConversation(conv) }
             }
-            Button("Cancel", role: .cancel) { }
+            Button(L("Cancel"), role: .cancel) { }
         } message: { conv in
             Text(deleteWarning(for: conv))
         }
@@ -156,14 +156,14 @@ struct AgentBrowserView: View {
             // Sessions/Agent switch pinned to the top-left, same spot as on the
             // Sessions page, so toggling pages doesn't make the control jump.
             HStack(spacing: 0) {
-                Picker("Browse", selection: $sidebarTab) {
-                    Text("Sessions").tag("sessions")
-                    Text("Agent").tag("agent")
+                Picker(L("Browse"), selection: $sidebarTab) {
+                    Text(L("Sessions")).tag("sessions")
+                    Text(L("Agent")).tag("agent")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
-                .help("Browse sessions or agent conversations")
+                .help(L("Browse sessions or agent conversations"))
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -185,8 +185,8 @@ struct AgentBrowserView: View {
                 // Dropdown rather than segmented tabs so additional agents can
                 // be added later without overflowing the row. Options are the
                 // known agents plus any agent present in the loaded data.
-                Picker("Agent", selection: $viewModel.agentFilterName) {
-                    Text("All agents").tag("")
+                Picker(L("Agent"), selection: $viewModel.agentFilterName) {
+                    Text(L("All agents")).tag("")
                     ForEach(agentMenuOptions, id: \.self) { name in
                         Text(AgentBrowserView.displayName(for: name)).tag(name)
                     }
@@ -212,11 +212,11 @@ struct AgentBrowserView: View {
                 } label: {
                     Image(systemName: "folder")
                 }
-                .help("Filter to one project directory")
+                .help(L("Filter to one project directory"))
             }
 
             HStack(spacing: 6) {
-                Picker("", selection: $searchMode) {
+                Picker(L(""), selection: $searchMode) {
                     ForEach(SearchMode.allCases) { mode in
                         Text(mode.label).tag(mode)
                     }
@@ -244,17 +244,17 @@ struct AgentBrowserView: View {
                         .foregroundColor(showFavoritesOnly ? .yellow : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Show favorites only")
+                .help(L("Show favorites only"))
                 Text("\(resultCount)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
             if searchMode == .content {
                 HStack(spacing: 6) {
-                    Toggle("Search all history", isOn: $searchAllHistory)
+                    Toggle(L("Search all history"), isOn: $searchAllHistory)
                         .font(.system(size: 10))
                         .toggleStyle(.checkbox)
-                        .help("Off: recent conversations only (about a second). On: every conversation (a few seconds).")
+                        .help(L("Off: recent conversations only (about a second). On: every conversation (a few seconds)."))
                     Spacer()
                     if viewModel.agentSearchInFlight {
                         ProgressView().controlSize(.mini)
@@ -262,7 +262,7 @@ struct AgentBrowserView: View {
                 }
             }
             if viewModel.agentHiddenBound > 0 {
-                Text("\(viewModel.agentHiddenBound) bound conversation(s) already in Sessions are hidden")
+                Text(L("%d bound conversation(s) already in Sessions are hidden", viewModel.agentHiddenBound))
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
             }
@@ -278,14 +278,14 @@ struct AgentBrowserView: View {
                 Image(systemName: "bolt.slash")
                     .font(.system(size: 20))
                     .foregroundColor(.orange)
-                Text("The backend is not running")
+                Text(L("The backend is not running"))
                     .font(.system(size: 12))
-                Text("Conversations are listed by the local backend. It starts with the app; use Retry if it has stopped.")
+                Text(L("Conversations are listed by the local backend. It starts with the app; use Retry if it has stopped."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20)
-                Button("Retry") {
+                Button(L("Retry")) {
                     Task { await viewModel.loadAgentConversations() }
                 }
                 .font(.system(size: 11))
@@ -294,7 +294,7 @@ struct AgentBrowserView: View {
         } else if viewModel.agentConversationsLoading && viewModel.agentConversations.isEmpty {
             VStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Scanning conversations…")
+                Text(L("Scanning conversations…"))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -312,10 +312,10 @@ struct AgentBrowserView: View {
                 Image(systemName: "tray")
                     .font(.system(size: 22))
                     .foregroundColor(.secondary)
-                Text("No conversations found")
+                Text(L("No conversations found"))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
-                Text("This directory has no conversations on this machine. Conversations live under ~/.codebuddy/projects and ~/.claude/projects; sync them across machines from Settings → Sync → Agent Conversations Sync.")
+                Text(L("This directory has no conversations on this machine. Conversations live under ~/.codebuddy/projects and ~/.claude/projects; sync them across machines from Settings → Sync → Agent Conversations Sync."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -333,7 +333,7 @@ struct AgentBrowserView: View {
                         Section {
                             ForEach(favorites) { conversationRow($0) }
                         } header: {
-                            Text("Favorites")
+                            Text(L("Favorites"))
                                 .font(.system(size: 10, weight: .semibold))
                         }
                     }
@@ -410,11 +410,11 @@ struct AgentBrowserView: View {
                 Image(systemName: "text.magnifyingglass")
                     .font(.system(size: 22))
                     .foregroundColor(.secondary)
-                Text("No matches in conversation text")
+                Text(L("No matches in conversation text"))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                 if !searchAllHistory {
-                    Text("Try “Search all history” to include older conversations.")
+                    Text(L("Try “Search all history” to include older conversations."))
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
@@ -427,7 +427,7 @@ struct AgentBrowserView: View {
     private func contentSearchMeta(_ result: ConversationSearchResult) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text("\(result.results.count) conversation(s) · \(resultCount) match(es)")
+                Text(L("%d conversation(s) · %d match(es)", result.results.count, resultCount))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -436,12 +436,12 @@ struct AgentBrowserView: View {
                     .foregroundColor(.secondary)
             }
             if result.truncated {
-                Text("Showing the first \(resultCount) matches — narrow the query to see the rest.")
+                Text(L("Showing the first %d matches — narrow the query to see the rest.", resultCount))
                     .font(.system(size: 9))
                     .foregroundColor(.orange)
             }
             if result.timedOut {
-                Text("Search timed out after \(result.scanned) conversation(s) — try a narrower query.")
+                Text(L("Search timed out after %d conversation(s) — try a narrower query.", result.scanned))
                     .font(.system(size: 9))
                     .foregroundColor(.orange)
             }
@@ -493,13 +493,13 @@ struct AgentBrowserView: View {
         }
         .tag(hitKey(group, hit))
         .contextMenu {
-            Button("Resume in lmux…") { resume(group.conversation) }
-            Button("Copy Session ID") {
+            Button(L("Resume in lmux…")) { resume(group.conversation) }
+            Button(L("Copy Session ID")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(group.conversation.id, forType: .string)
             }
             Divider()
-            Button("Delete Conversation…", role: .destructive) {
+            Button(L("Delete Conversation…"), role: .destructive) {
                 pendingDelete = group.conversation
             }
         }
@@ -547,15 +547,15 @@ struct AgentBrowserView: View {
         )
         .tag(conv.id)
         .contextMenu {
-            Button("Resume in lmux…") { resume(conv) }
-            Button("Open in Terminal.app") { openExternally(conv) }
+            Button(L("Resume in lmux…")) { resume(conv) }
+            Button(L("Open in Terminal.app")) { openExternally(conv) }
             Divider()
-            Button("Copy Session ID") {
+            Button(L("Copy Session ID")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(conv.id, forType: .string)
             }
             Divider()
-            Button("Delete Conversation…", role: .destructive) {
+            Button(L("Delete Conversation…"), role: .destructive) {
                 pendingDelete = conv
             }
         }
@@ -576,10 +576,10 @@ struct AgentBrowserView: View {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(.system(size: 30))
                     .foregroundColor(.secondary)
-                Text("Select a conversation to preview")
+                Text(L("Select a conversation to preview"))
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
-                Text("Single-click a conversation to read its recent messages before resuming it.")
+                Text(L("Single-click a conversation to read its recent messages before resuming it."))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -598,8 +598,8 @@ struct AgentBrowserView: View {
                 }
                 .buttonStyle(.plain)
                 .iconButtonChrome()
-                .help("Favorite")
-                .accessibilityLabel("Favorite conversation")
+                .help(L("Favorite"))
+                .accessibilityLabel(L("Favorite conversation"))
                 AgentBadgePill(agentName: conv.agent, small: false)
                 Spacer()
                 Button {
@@ -610,8 +610,8 @@ struct AgentBrowserView: View {
                 }
                 .buttonStyle(.plain)
                 .iconButtonChrome()
-                .help("Delete this conversation file (asks first)")
-                .accessibilityLabel("Delete conversation")
+                .help(L("Delete this conversation file (asks first)"))
+                .accessibilityLabel(L("Delete conversation"))
                 Text(AgentBrowserView.timeAgo(conv.mtime))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
@@ -639,7 +639,7 @@ struct AgentBrowserView: View {
                 Button {
                     resume(conv)
                 } label: {
-                    Label("Resume in lmux", systemImage: "play.circle")
+                    Label(L("Resume in lmux"), systemImage: "play.circle")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -647,7 +647,7 @@ struct AgentBrowserView: View {
                 Button {
                     openExternally(conv)
                 } label: {
-                    Label("Open in Terminal", systemImage: "terminal")
+                    Label(L("Open in Terminal"), systemImage: "terminal")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -674,7 +674,7 @@ struct AgentBrowserView: View {
         if viewModel.agentPreviewLoading {
             VStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Reading conversation…")
+                Text(L("Reading conversation…"))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -688,7 +688,7 @@ struct AgentBrowserView: View {
             )
         } else if let rows = viewModel.agentPreview?.rows, rows.isEmpty {
             VStack(spacing: 6) {
-                Text("No readable messages in the recent tail")
+                Text(L("No readable messages in the recent tail"))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
@@ -726,8 +726,8 @@ struct AgentBrowserView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .iconButtonChrome()
-                                .help("Copy this prompt (reuse it after Resume)")
-                                .accessibilityLabel("Copy prompt")
+                                .help(L("Copy this prompt (reuse it after Resume)"))
+                                .accessibilityLabel(L("Copy prompt"))
                                 .padding(.top, 6)
                             }
                         }
@@ -752,7 +752,7 @@ struct AgentBrowserView: View {
             cwd: conv.cwd ?? NSHomeDirectory()
         )
         if !launched {
-            viewModel.showToast("Could not open Terminal for this conversation")
+            viewModel.showToast(L("Could not open Terminal for this conversation"))
         }
     }
 }
