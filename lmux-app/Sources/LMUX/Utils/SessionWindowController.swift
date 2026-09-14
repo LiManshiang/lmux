@@ -21,7 +21,7 @@ final class SessionWindowController: NSObject {
         // main window (its TerminalManager is connected to the main terminal
         // view). Other sessions are detach/reattach-safe.
         if let mgr = viewModel.terminalManagerIfExists(for: session.id), mgr.isConnected {
-            viewModel.showToast("Session '\(session.name)' is already open in the main window")
+            viewModel.showToast(L("Session '%@' is already open in the main window", session.name as NSString))
             NSApp.activate(ignoringOtherApps: true)
             return
         }
