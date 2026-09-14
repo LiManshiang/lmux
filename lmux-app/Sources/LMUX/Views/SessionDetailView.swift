@@ -14,7 +14,7 @@ private struct SessionCwdLabel: View {
             .foregroundColor(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
-            .help("Working directory of this session's process")
+            .help(L("Working directory of this session's process"))
     }
 }
 
@@ -88,8 +88,8 @@ struct SessionDetailView: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.borderless)
-                        .help("Stop")
-                        .accessibilityLabel("Stop session")
+                        .help(L("Stop"))
+                        .accessibilityLabel(L("Stop session"))
 
                         Button {
                             withAnimation(.easeOut(duration: 0.15)) {
@@ -102,7 +102,7 @@ struct SessionDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .help(showInspector ? "Hide usage panel" : "Show usage panel")
-                        .accessibilityLabel("Toggle usage panel")
+                        .accessibilityLabel(L("Toggle usage panel"))
                     }
                 }
                 .padding(.horizontal, 12)
@@ -279,7 +279,7 @@ struct SessionDetailView: View {
     /// Confirm before stopping a session's running agent process.
     private func confirmStop(session: SessionSummary) {
         let alert = NSAlert()
-        alert.messageText = "Stop Session"
+        alert.messageText = L("Stop Session")
         alert.informativeText = "Stop the running process in '\(session.name)'? You can restart it later."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Stop")
@@ -301,14 +301,14 @@ private struct ConnectionErrorView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 26))
                 .foregroundColor(.orange)
-            Text("Connection Failed")
+            Text(L("Connection Failed"))
                 .font(.headline)
             Text(message)
                 .font(.system(size: 12))
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 16)
-            Button("Dismiss") { onDismiss() }
+            Button(L("Dismiss")) { onDismiss() }
                 .buttonStyle(.borderedProminent)
         }
         .padding(24)
