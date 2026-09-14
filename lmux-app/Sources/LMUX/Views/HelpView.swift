@@ -17,7 +17,7 @@ struct HelpView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("lmux Help")
+                Text(L("lmux Help"))
                     .font(.title2).bold()
                 Spacer()
                 Button { viewModel.showHelp = false } label: {
@@ -27,17 +27,17 @@ struct HelpView: View {
                 }
                 .buttonStyle(.plain)
                 .iconButtonChrome()
-                .help("Close")
-                .accessibilityLabel("Close help")
+                .help(L("Close"))
+                .accessibilityLabel(L("Close help"))
             }
 
-            Text("lmux is a terminal session manager for AI agents. Each session runs a shell and can launch CodeBuddy or Claude; the sidebar shows each session's agent, status, and context usage.")
+            Text(L("lmux is a terminal session manager for AI agents. Each session runs a shell and can launch CodeBuddy or Claude; the sidebar shows each session's agent, status, and context usage."))
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Group {
-                Text("Keyboard Shortcuts").font(.headline)
+                Text(L("Keyboard Shortcuts")).font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(shortcutsTable, id: \.keys) { item in
                         HStack {
@@ -52,7 +52,7 @@ struct HelpView: View {
             }
 
             Group {
-                Text("Sessions").font(.headline)
+                Text(L("Sessions")).font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
                     helpRow("Create a session with ⌘N, then run an agent inside the terminal.")
                     helpRow("When an agent is detected, the sidebar shows its badge, status (running/idle) and context usage percentage.")
@@ -61,14 +61,14 @@ struct HelpView: View {
             }
 
             Group {
-                Text("Backup & Migration").font(.headline)
+                Text(L("Backup & Migration")).font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
                     helpRow("Session → Export Sessions… packs sessions, settings and agent conversations into a tar.gz.")
                     helpRow("Session → Import Sessions… restores a backup and restarts the backend. If the backup came from a different username, paths are migrated automatically.")
                 }
             }
 
-            Text("Version \(AppVersion.current) · lmux")
+            Text(L("Version") + " " + AppVersion.current + " · lmux")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 
