@@ -13,7 +13,7 @@
 # its build (trap-based restore) and uses a separate --scratch-path (.build-st)
 # so the two variants never pollute each other's build artifacts.
 
-.PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86
+.PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86 verify
 
 BINARY = .build/debug/lmux
 APP_NAME = lmux.app
@@ -63,6 +63,14 @@ build-st:
 	@cp Package.st.swift Package.swift
 	@trap 'cp /tmp/lmux-Package.swift.backup Package.swift' EXIT; \
 	swift build --skip-update --scratch-path .build-st $(MACOS_MIN_TARGET)
+
+# Verify against the configuration CI uses, before tagging a release.
+#
+# `make app` takes the default manifest and passes no -target, so it checks
+# nothing about macOS 12: two release runs were lost to macOS 13-only APIs
+# that only the CI build caught. This runs the builds and tests that do.
+verify: build-st build-x86 test
+	@echo "Verified: both architectures build for macOS 12, tests pass."
 
 # Cross-compile Swift frontend for x86_64 (Intel target), macOS 12 enforced.
 build-x86:
