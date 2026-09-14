@@ -10,7 +10,7 @@ struct MirrorConflictPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Agent Conversation Conflicts")
+            Text(L("Agent Conversation Conflicts"))
                 .font(.system(size: 14, weight: .semibold))
             Text("These conversations changed on both this machine and the sync mirror. Local copies were kept — choose \"Use mirror\" to take the other version instead.")
                 .font(.system(size: 10))
@@ -26,7 +26,7 @@ struct MirrorConflictPanelView: View {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 26))
                     .foregroundColor(.green)
-                Text("No unresolved conflicts")
+                Text(L("No unresolved conflicts"))
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
@@ -46,7 +46,7 @@ struct MirrorConflictPanelView: View {
 
         HStack {
             Spacer()
-            Button("Done") { dismiss() }
+            Button(L("Done")) { dismiss() }
                 .keyboardShortcut(.defaultAction)
         }
         .padding(10)
@@ -62,8 +62,8 @@ struct MirrorConflictPanelView: View {
                     .truncationMode(.middle)
             }
             HStack(spacing: 12) {
-                Text("Local · \(Self.kb(conflict.localSize)) · \(Self.timeAgo(conflict.localMTime))")
-                Text("Mirror · \(Self.kb(conflict.remoteSize)) · \(Self.timeAgo(conflict.remoteMTime))")
+                Text(L("Local") + " · " + Self.kb(conflict.localSize) + " · " + Self.timeAgo(conflict.localMTime))
+                Text(L("Mirror") + " · " + Self.kb(conflict.remoteSize) + " · " + Self.timeAgo(conflict.remoteMTime))
             }
             .font(.system(size: 9))
             .foregroundColor(.secondary)
@@ -72,7 +72,7 @@ struct MirrorConflictPanelView: View {
                 Button {
                     viewModel.dismissMirrorConflict(id: conflict.id)
                 } label: {
-                    Label("Keep Local", systemImage: "checkmark")
+                    Label(L("Keep Local"), systemImage: "checkmark")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -80,7 +80,7 @@ struct MirrorConflictPanelView: View {
                 Button {
                     viewModel.resolveMirrorConflictUseRemote(conflict)
                 } label: {
-                    Label("Use Mirror", systemImage: "arrow.down.doc")
+                    Label(L("Use Mirror"), systemImage: "arrow.down.doc")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
