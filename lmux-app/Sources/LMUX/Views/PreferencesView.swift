@@ -7,19 +7,19 @@ struct PreferencesView: View {
         TabView {
             TerminalSettingsView()
                 .tabItem {
-                    Label("Terminal", systemImage: "terminal")
+                    Label(L("Terminal"), systemImage: "terminal")
                 }
             SyncSettingsView()
                 .tabItem {
-                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                    Label(L("Sync"), systemImage: "arrow.triangle.2.circlepath")
                 }
             GeneralSettingsView()
                 .tabItem {
-                    Label("General", systemImage: "gearshape")
+                    Label(L("General"), systemImage: "gearshape")
                 }
             AboutSettingsView()
                 .tabItem {
-                    Label("About", systemImage: "info.circle")
+                    Label(L("About"), systemImage: "info.circle")
                 }
         }
         // Fill the host window so Form items use the full width. Fixed
