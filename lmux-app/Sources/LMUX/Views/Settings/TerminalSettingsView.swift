@@ -9,21 +9,21 @@ struct TerminalSettingsView: View {
     var body: some View {
         Form {
 #if canImport(GhosttyTerminal)
-            Section("Renderer") {
-                Picker("Renderer", selection: $selectedRenderer) {
-                    Text("SwiftTerm").tag(TerminalRendererSetting.swiftterm)
-                    Text("Ghostty (libghostty)").tag(TerminalRendererSetting.ghostty)
+            Section(L("Renderer")) {
+                Picker(L("Renderer"), selection: $selectedRenderer) {
+                    Text(L("SwiftTerm")).tag(TerminalRendererSetting.swiftterm)
+                    Text(L("Ghostty (libghostty)")).tag(TerminalRendererSetting.ghostty)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
 
-                Text("Rendering engine. Ghostty uses GPU-accelerated Metal rendering (macOS 13+). Changes apply to newly connected sessions.")
+                Text(L("Rendering engine. Ghostty uses GPU-accelerated Metal rendering (macOS 13+). Changes apply to newly connected sessions."))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
 #endif
 
-            Section("Theme") {
+            Section(L("Theme")) {
                 ForEach(TerminalTheme.all) { theme in
                     HStack(spacing: 10) {
                         themePreview(theme)
