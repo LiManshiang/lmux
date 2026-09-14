@@ -18,13 +18,13 @@ struct NewSessionSheet: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("New Session")
+            Text(L("New Session"))
                 .font(.title2)
                 .fontWeight(.semibold)
 
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Project Directory")
+                    Text(L("Project Directory"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     HStack {
@@ -34,19 +34,19 @@ struct NewSessionSheet: View {
                                 validateDir(newValue)
                             }
 
-                        Button("Browse…") {
+                        Button(L("Browse…")) {
                             browseDirectory()
                         }
                     }
                     if showDirError {
-                        Text("Directory does not exist or is not accessible")
+                        Text(L("Directory does not exist or is not accessible"))
                             .font(.caption)
                             .foregroundColor(.red)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Session Name (optional)")
+                    Text(L("Session Name (optional)"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextField("Auto-generated from project name", text: $sessionName)
@@ -56,10 +56,10 @@ struct NewSessionSheet: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Agent")
+                    Text(L("Agent"))
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Picker("Agent", selection: $agentType) {
+                    Picker(L("Agent"), selection: $agentType) {
                         ForEach(AgentType.allCases, id: \.self) { agent in
                             Text(agent.displayName).tag(agent)
                         }
@@ -69,13 +69,13 @@ struct NewSessionSheet: View {
                 }
 
                 Toggle(isOn: $useResume) {
-                    Text("Resume existing session")
+                    Text(L("Resume existing session"))
                         .font(.body)
                 }
 
                 if useResume {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Session ID")
+                        Text(L("Session ID"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                         TextField("UUID", text: $cbcSessionID)
@@ -87,11 +87,11 @@ struct NewSessionSheet: View {
             HStack(spacing: 12) {
                 Spacer()
 
-                Button("Cancel") {
+                Button(L("Cancel")) {
                     viewModel.showNewSessionSheet = false
                 }
 
-                Button("Create") {
+                Button(L("Create")) {
                     let dir = projectDir.trimmingCharacters(in: .whitespaces)
                     let name = sessionName.trimmingCharacters(in: .whitespaces)
                     let cbc = useResume ? cbcSessionID.trimmingCharacters(in: .whitespaces) : nil
