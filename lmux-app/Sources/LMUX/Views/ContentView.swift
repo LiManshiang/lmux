@@ -69,9 +69,9 @@ struct ContentView: View {
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
         )) {
-            Button("OK") { viewModel.errorMessage = nil }
+            Button(L("OK")) { viewModel.errorMessage = nil }
             if !viewModel.backendRunning && !viewModel.backendStarting {
-                Button("Retry Backend") {
+                Button(L("Retry Backend")) {
                     viewModel.retryBackend()
                 }
             }
@@ -85,7 +85,7 @@ struct ContentView: View {
         HStack(spacing: 4) {
 #if canImport(GhosttyTerminal)
             if selectedRenderer == TerminalRendererSetting.ghostty {
-                Text("Ghostty")
+                Text(L("Ghostty"))
                     .font(.system(size: 8, weight: .bold))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -93,12 +93,12 @@ struct ContentView: View {
                     .foregroundColor(.orange)
                     .cornerRadius(3)
             } else {
-                Text("SwiftTerm")
+                Text(L("SwiftTerm"))
                     .font(.system(size: 8))
                     .foregroundColor(.secondary)
             }
 #else
-            Text("SwiftTerm")
+            Text(L("SwiftTerm"))
                 .font(.system(size: 8))
                 .foregroundColor(.secondary)
 #endif
@@ -112,7 +112,7 @@ struct ContentView: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
                 .resizable()
                 .frame(width: 15, height: 15)
-            Text("lmux")
+            Text(L("lmux"))
                 .font(.system(size: 12, weight: .semibold))
             rendererBadge
             Text(AppVersion.current)
@@ -207,19 +207,19 @@ struct ContentView: View {
                     viewModel.reportSyncResult(result)
                 }
             } label: {
-                Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                Label(L("Sync Now"), systemImage: "arrow.triangle.2.circlepath")
             }
             Divider()
             Button {
                 SettingsWindowController.shared.open(viewModel: viewModel)
             } label: {
-                Label("Settings…", systemImage: "gearshape")
+                Label(L("Settings…"), systemImage: "gearshape")
             }
             Divider()
             Button {
                 NSApp.orderFrontStandardAboutPanel(nil)
             } label: {
-                Label("About lmux", systemImage: "info.circle")
+                Label(L("About lmux"), systemImage: "info.circle")
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -228,19 +228,19 @@ struct ContentView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .menuIndicator(.hidden)
-        .help("Sync Now, Settings…, About…")
+        .help(L("Sync Now, Settings…, About…"))
     }
 
     /// Sessions / Agent switch, now in the sidebar strip where the search box
     /// used to be (search moved to the bottom, above the identity row).
     private var tabSwitch: some View {
-        Picker("Browse", selection: $sidebarTab) {
-            Text("Sessions").tag("sessions")
-            Text("Agent").tag("agent")
+        Picker(L("Browse"), selection: $sidebarTab) {
+            Text(L("Sessions")).tag("sessions")
+            Text(L("Agent")).tag("agent")
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .help("Browse sessions or agent conversations")
+        .help(L("Browse sessions or agent conversations"))
     }
 
     @ViewBuilder
@@ -265,13 +265,13 @@ struct BackendNotRunningView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
                 .foregroundColor(.orange)
-            Text("Backend Not Running")
+            Text(L("Backend Not Running"))
                 .font(.title2)
                 .foregroundColor(.secondary)
-            Text("Start the lmux backend to manage sessions.")
+            Text(L("Start the lmux backend to manage sessions."))
                 .font(.body)
                 .foregroundColor(.secondary)
-            Button("Start Backend") {
+            Button(L("Start Backend")) {
                 viewModel.retryBackend()
             }
             .buttonStyle(.borderedProminent)
@@ -286,10 +286,10 @@ struct EmptyStateView: View {
             Image(systemName: "terminal")
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
-            Text("No Session Selected")
+            Text(L("No Session Selected"))
                 .font(.title2)
                 .foregroundColor(.secondary)
-            Text("Select a session from the sidebar or create a new one.")
+            Text(L("Select a session from the sidebar or create a new one."))
                 .font(.body)
                 .foregroundColor(.secondary)
         }
@@ -302,7 +302,7 @@ struct BackendLoadingView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("Connecting to Backend…")
+            Text(L("Connecting to Backend…"))
                 .font(.headline)
                 .foregroundColor(.secondary)
         }
