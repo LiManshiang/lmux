@@ -121,20 +121,20 @@ class ContentViewModel: ObservableObject {
     /// Present a save panel and export sessions + agent data to a tar.gz.
     func promptExportSessions() {
         let panel = NSSavePanel()
-        panel.title = "Export lmux Sessions"
+        panel.title = L("Export lmux Sessions")
         panel.nameFieldStringValue = "lmux-backup-\(Self.dateStamp()).tar.gz"
         panel.allowedContentTypes = [.gzip]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
             let ok = await exportSessions(to: url)
-            showToast(ok ? "Exported to \(url.lastPathComponent)" : "Export failed")
+            showToast(ok ? L("Exported to %@", url.lastPathComponent as NSString) : L("Export failed"))
         }
     }
 
     /// Present an open panel, import a tar.gz, and reload the backend.
     func promptImportSessions() {
         let panel = NSOpenPanel()
-        panel.title = "Import lmux Sessions"
+        panel.title = L("Import lmux Sessions")
         panel.allowedContentTypes = [.gzip]
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -153,7 +153,7 @@ class ContentViewModel: ObservableObject {
     /// a self-contained `.lmuxsession` file.
     func promptExportSession(_ session: SessionSummary) {
         let panel = NSSavePanel()
-        panel.title = "Export Session"
+        panel.title = L("Export Session")
         panel.nameFieldStringValue = "\(session.name).lmuxsession"
         panel.allowedContentTypes = [.lmuxSession]
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -163,7 +163,7 @@ class ContentViewModel: ObservableObject {
                 try bundle.toJSON().write(to: url, options: [.atomic])
                 showToast("Exported \(url.lastPathComponent)")
             } catch {
-                showToast("Export failed: \(error.localizedDescription)")
+                showToast(L("Export failed: %@", error.localizedDescription as NSString))
             }
         }
     }
@@ -176,13 +176,13 @@ class ContentViewModel: ObservableObject {
     /// them pick the actual directory.
     func promptImportSession() {
         let filePanel = NSOpenPanel()
-        filePanel.title = "Import Session"
+        filePanel.title = L("Import Session")
         filePanel.allowedContentTypes = [.lmuxSession]
         filePanel.canChooseFiles = true
         filePanel.canChooseDirectories = false
         guard filePanel.runModal() == .OK, let fileURL = filePanel.url else { return }
         guard let bundle = SessionExportBundle.fromJSON(fileURL) else {
-            showToast("Import failed: invalid .lmuxsession file")
+            showToast(L("Import failed: invalid .lmuxsession file"))
             return
         }
 
@@ -193,14 +193,14 @@ class ContentViewModel: ObservableObject {
 
         if !FileManager.default.fileExists(atPath: targetDir, isDirectory: nil) {
             let alert = NSAlert()
-            alert.messageText = "Working Directory Not Found"
+            alert.messageText = L("Working Directory Not Found")
             alert.informativeText = "This session's working directory doesn't exist on this Mac:\n\n\(targetDir)\n\nPick the folder this session should live in, or cancel."
             alert.addButton(withTitle: "Choose Folder…")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
 
             let dirPanel = NSOpenPanel()
-            dirPanel.title = "Choose Session Working Directory"
+            dirPanel.title = L("Choose Session Working Directory")
             dirPanel.canChooseFiles = false
             dirPanel.canChooseDirectories = true
             dirPanel.prompt = "Import Here"
@@ -236,12 +236,12 @@ class ContentViewModel: ObservableObject {
         do {
             try await withTransferWait {
                 _ = try await api.importSession(bundle, projectDir: projectDir, conflictMode: nil)
-                showToast("Imported \(bundle.name)")
+                showToast(L("Imported %@", bundle.name as NSString))
             }
         } catch APIError.conflict {
             let alert = NSAlert()
-            alert.messageText = "Session Already Exists"
-            alert.informativeText = "A session for this conversation already exists on this machine. Overwrite it, or import a new independent copy?"
+            alert.messageText = L("Session Already Exists")
+            alert.informativeText = L("A session for this conversation already exists on this machine. Overwrite it, or import a new independent copy?")
             alert.addButton(withTitle: "Overwrite")
             alert.addButton(withTitle: "New Copy")
             alert.addButton(withTitle: "Cancel")
@@ -255,7 +255,7 @@ class ContentViewModel: ObservableObject {
                 break
             }
         } catch {
-            showToast("Import failed: \(error.localizedDescription)")
+            showToast(L("Import failed: %@", error.localizedDescription as NSString))
         }
         await refreshSessions()
     }
@@ -264,7 +264,7 @@ class ContentViewModel: ObservableObject {
         do {
             try await withTransferWait {
                 let session = try await api.importSession(bundle, projectDir: projectDir, conflictMode: mode)
-                showToast("Imported \(session.name)")
+                showToast(L("Imported %@", session.name as NSString))
             }
         } catch {
             showToast("Import failed: \(error.localizedDescription)")
@@ -286,7 +286,7 @@ class ContentViewModel: ObservableObject {
         ]
         let ok = await Self.runProcess("/usr/bin/tar", args)
         if !ok {
-            errorMessage = "Export failed. Make sure the source data exists."
+            errorMessage = L("Export failed. Make sure the source data exists.")
         }
         return ok
     }
@@ -307,7 +307,7 @@ class ContentViewModel: ObservableObject {
         let ok = await Self.runProcess("/usr/bin/tar", ["-xzf", url.path, "-C", tmp.path])
         guard ok else {
             try? fm.removeItem(at: tmp)
-            errorMessage = "Import failed. The file may be corrupt or not an lmux backup."
+            errorMessage = L("Import failed. The file may be corrupt or not an lmux backup.")
             return false
         }
 
@@ -625,7 +625,7 @@ class ContentViewModel: ObservableObject {
         mgr.onFirstOutput = { [weak self] in
             self?.activeSessionIds.insert(sessionID)
             if self?.selectedSession?.id == sessionID {
-                self?.showToast("Connected")
+                self?.showToast(L("Connected"))
             }
         }
         mgr.onProcessExit = { [weak self] in
@@ -785,7 +785,7 @@ class ContentViewModel: ObservableObject {
         if connectedSessionId == id {
             connectedSessionId = nil
         }
-        showToast("Session stopped")
+        showToast(L("Session stopped"))
         if selectedSession?.id == id {
             selectedSession = nil
         }
@@ -847,7 +847,7 @@ class ContentViewModel: ObservableObject {
         let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
         let content = UNMutableNotificationContent()
         content.title = name
-        content.body = "The agent is waiting for your input."
+        content.body = L("The agent is waiting for your input.")
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "lmux-awaiting-\(sessionID)-\(UUID().uuidString)",
@@ -860,8 +860,8 @@ class ContentViewModel: ObservableObject {
     private func sendCompletionNotification(sessionID: String) {
         let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
         let content = UNMutableNotificationContent()
-        content.title = "Task Complete"
-        content.body = "\(name) has finished."
+        content.title = L("Task Complete")
+        content.body = name + L(" has finished.")
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "lmux-complete-\(sessionID)-\(UUID().uuidString)",
@@ -894,8 +894,8 @@ class ContentViewModel: ObservableObject {
 
         let name = sessions.first(where: { $0.id == sessionID })?.name ?? "Session"
         let content = UNMutableNotificationContent()
-        content.title = "Context \(percent)%"
-        content.body = "\(name) is at \(percent)% context. Consider running /compact."
+        content.title = L("Context %d%%", percent)
+        content.body = L("%@ is at %d%% context. Consider running /compact.", name as NSString, percent)
         content.sound = .default
         let request = UNNotificationRequest(
             identifier: "lmux-context-\(sessionID)-\(hit)-\(UUID().uuidString)",
@@ -1024,7 +1024,7 @@ class ContentViewModel: ObservableObject {
         backendProcess = nil
         backendStarting = true
         errorMessage = nil
-        statusMessage = "Starting backend..."
+        statusMessage = L("Starting backend...")
         Task {
             await launchBackend()
         }
@@ -1052,8 +1052,8 @@ class ContentViewModel: ObservableObject {
 
         guard let execPath = execPath else {
             backendStarting = false
-            errorMessage = "lmux backend not found. Try: cd ~/Projects/lmux && make build"
-            statusMessage = "Backend not found"
+            errorMessage = L("lmux backend not found. Try: cd ~/Projects/lmux && make build")
+            statusMessage = L("Backend not found")
             return
         }
         print("[lmux] Using backend at: \(execPath)")
@@ -1072,8 +1072,8 @@ class ContentViewModel: ObservableObject {
             print("[lmux] Process started, PID: \(process.processIdentifier)")
         } catch {
             backendStarting = false
-            errorMessage = "Failed to start backend: \(error.localizedDescription)"
-            statusMessage = "Backend failed to start"
+            errorMessage = L("Failed to start backend: %@", error.localizedDescription as NSString)
+            statusMessage = L("Backend failed to start")
             return
         }
 
@@ -1136,8 +1136,8 @@ class ContentViewModel: ObservableObject {
         closeBackendIO()
         backendStarting = false
         backendRunning = false
-        errorMessage = "Backend failed to start on \(loadAddr() ?? "127.0.0.1:19680")"
-        statusMessage = "Backend failed"
+        errorMessage = L("Backend failed to start on %@", (loadAddr() ?? "127.0.0.1:19680") as NSString)
+        statusMessage = L("Backend failed")
     }
 
     private func findCBSPaths() -> [String] {
@@ -1226,14 +1226,14 @@ class ContentViewModel: ObservableObject {
                         alive = await api.healthCheck()
                     }
                     if alive {
-                        statusMessage = "Refresh failed"
-                        errorMessage = "Failed to refresh sessions: \(error.localizedDescription)"
+                        statusMessage = L("Refresh failed")
+                        errorMessage = L("Failed to refresh sessions: %@", error.localizedDescription as NSString)
                     } else {
                         await recoverBackend()
                     }
                 } else {
-                    statusMessage = "Refresh failed"
-                    errorMessage = "Failed to refresh sessions: \(error.localizedDescription)"
+                    statusMessage = L("Refresh failed")
+                    errorMessage = L("Failed to refresh sessions: %@", error.localizedDescription as NSString)
                 }
             }
         }
@@ -1243,7 +1243,7 @@ class ContentViewModel: ObservableObject {
         // A session already running in its own pop-out window has its terminal
         // attached there; showing it in the main window again would double-attach.
         if session.id != selectedSession?.id, SessionWindowController.shared.isOpen(sessionID: session.id) {
-            showToast("Session '\(session.name)' is open in its own window")
+            showToast(L("Session '%@' is open in its own window", session.name as NSString))
             return
         }
         // Detach previous session
@@ -1303,7 +1303,7 @@ class ContentViewModel: ObservableObject {
                 agentType: agentType
             )
             await refreshSessions()
-            showToast("Session created")
+            showToast(L("Session created"))
             // Auto-select the new session so the terminal connects immediately.
             // Use the created session's id (never a name/project match, which
             // can hit an older pinned session with the same project).
@@ -1329,7 +1329,7 @@ class ContentViewModel: ObservableObject {
                 selectedSession = nil
             }
             await refreshSessions()
-            showToast("Session deleted")
+            showToast(L("Session deleted"))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1339,7 +1339,7 @@ class ContentViewModel: ObservableObject {
         do {
             _ = try await api.renameSession(id: id, name: name)
             await refreshSessions()
-            showToast("Session renamed")
+            showToast(L("Session renamed"))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1368,7 +1368,7 @@ class ContentViewModel: ObservableObject {
             // stale path on next launch, so drop the cached restore entry.
             SessionRestore.remove(sessionID: id)
             await refreshSessions()
-            showToast("Session updated")
+            showToast(L("Session updated"))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1536,7 +1536,7 @@ class ContentViewModel: ObservableObject {
         // covers the window before that binding is persisted, and live
         // detection the backend cannot see.)
         if let bound = sessions.first(where: { $0.cbcSessionID == conv.id }), isSessionActive(bound.id) {
-            showToast("“\(bound.name)” is using this conversation — stop it first")
+            showToast(L("“%@” is using this conversation — stop it first", bound.name as NSString))
             return
         }
         do {
@@ -1555,9 +1555,9 @@ class ContentViewModel: ObservableObject {
                 UserDefaults.standard.set(Array(agentStars), forKey: Self.agentStarsKey)
             }
             await loadAgentConversations()
-            showToast("Conversation deleted")
+            showToast(L("Conversation deleted"))
         } catch {
-            showToast("Delete failed: \(error.localizedDescription)")
+            showToast(L("Delete failed: %@", error.localizedDescription as NSString))
         }
     }
 
@@ -1566,7 +1566,7 @@ class ContentViewModel: ObservableObject {
     /// sync mirror so the agent can actually resume it.
     func resumeAgentConversation(_ conv: AgentConversation) async {
         guard let agentType = AgentType(rawValue: conv.agent) else {
-            showToast("Unknown agent \(conv.agent)")
+            showToast(L("Unknown agent %@", conv.agent as NSString))
             return
         }
         let projectDir = conv.cwd ?? NSHomeDirectory()
@@ -1667,7 +1667,7 @@ class ContentViewModel: ObservableObject {
         )
         if importedAny {
             await refreshSessions()
-            showToast("Imported \(imported.count) synced session(s)")
+            showToast(L("Imported %d synced session(s)", imported.count))
         }
     }
 
@@ -1730,16 +1730,16 @@ class ContentViewModel: ObservableObject {
     func resolveMirrorConflictUseRemote(_ conflict: SessionSync.AgentMirrorConflict) {
         if SessionSync.resolveMirrorConflict(agentName: conflict.agentName, fileRel: conflict.fileRel) {
             dismissMirrorConflict(id: conflict.id)
-            showToast("Replaced local copy with mirror version")
+            showToast(L("Replaced local copy with mirror version"))
         } else {
-            showToast("Could not resolve conflict — file missing")
+            showToast(L("Could not resolve conflict — file missing"))
         }
     }
 
     @discardableResult
     func syncNow(showsWaitOverlay: Bool = true) async -> SyncNowResult {
         guard SessionSync.isEnabled, SessionSync.syncDir != nil else {
-            showToast("Sync not configured — enable it in Settings")
+            showToast(L("Sync not configured — enable it in Settings"))
             return SyncNowResult()
         }
         syncInProgress = true
@@ -1835,7 +1835,7 @@ class ContentViewModel: ObservableObject {
             parts.append(agent)
         }
         if parts.isEmpty {
-            showToast("Everything is up to date")
+            showToast(L("Everything is up to date"))
         } else {
             showToast("Sync complete — \(parts.joined(separator: " · "))")
         }
@@ -1849,18 +1849,14 @@ class ContentViewModel: ObservableObject {
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
         fmt.timeStyle = .short
-        let remote = "Cloud: \(fmt.string(from: info.remoteModified))"
-        let local = info.localModified.map { "This Mac: \(fmt.string(from: $0))" } ?? "This Mac: has unsynced changes"
+        let remote = L("Cloud: %@", fmt.string(from: info.remoteModified) as NSString)
+        let local = info.localModified.map { L("This Mac: %@", fmt.string(from: $0) as NSString) } ?? L("This Mac: has unsynced changes")
 
         let alert = NSAlert()
-        alert.messageText = "Sync conflict: \(info.sessionName)"
-        alert.informativeText = """
-            This conversation was modified on both this Mac and another device. \
-            Only one version can be kept.
-
-            \(local)
-            \(remote)
-            """
+        alert.messageText = L("Sync conflict: %@", info.sessionName as NSString)
+        alert.informativeText =
+            L("This conversation was modified on both this Mac and another device. Only one version can be kept.")
+            + "\n\n" + local + "\n" + remote
         alert.alertStyle = .warning
         // NSAlert lays buttons out right-to-left: the first addButton is the
         // rightmost default (Return key).
@@ -2029,7 +2025,7 @@ class ContentViewModel: ObservableObject {
         backendRecovering = true
         defer { backendRecovering = false }
 
-        statusMessage = "Reconnecting to backend…"
+        statusMessage = L("Reconnecting to backend…")
         startBackend()
         // startBackend() runs its work in a Task; give it time to settle.
         for _ in 0..<40 {
@@ -2039,11 +2035,11 @@ class ContentViewModel: ObservableObject {
 
         if backendRunning {
             errorMessage = nil
-            showToast("Reconnected to backend")
+            showToast(L("Reconnected to backend"))
         } else {
             backendRunning = false
-            statusMessage = "Backend disconnected"
-            errorMessage = "Backend connection lost. Try restarting."
+            statusMessage = L("Backend disconnected")
+            errorMessage = L("Backend connection lost. Try restarting.")
         }
     }
 
