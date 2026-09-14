@@ -23,16 +23,16 @@ struct SessionListView: View {
                 viewModel.selectSession(session)
             }
             .contextMenu {
-                Button("Attach in Terminal") {
+                Button(L("Attach in Terminal")) {
                     Task { await viewModel.attachToSession(session) }
                 }
                 Menu("Open In") {
-                    Button("New Window") {
+                    Button(L("New Window")) {
                         SessionWindowController.shared.open(session: session, viewModel: viewModel)
                     }
                     .disabled(viewModel.selectedSession?.id == session.id)
-                    .help("Run this session in its own terminal window")
-                    Button("Finder") {
+                    .help(L("Run this session in its own terminal window"))
+                    Button(L("Finder")) {
                         Task {
                             let cwd: String?
                             if let cbc = session.cbcSessionID, !cbc.isEmpty {
@@ -50,7 +50,7 @@ struct SessionListView: View {
                             NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
                         }
                     }
-                    .help("Open the session's working directory in Finder")
+                    .help(L("Open the session's working directory in Finder"))
                 }
                 Divider()
                 Button(session.pinned ? "Unpin" : "Pin to Top") {
@@ -58,24 +58,24 @@ struct SessionListView: View {
                 }
                 // Rename sits with the other one-click actions; it is not part
                 // of the heavier Edit sheet below.
-                Button("Rename…") {
+                Button(L("Rename…")) {
                     showRenameAlert(session)
                 }
                 Divider()
-                Button("Export Session…") {
+                Button(L("Export Session…")) {
                     viewModel.promptExportSession(session)
                 }
-                Button("Import Session…") {
+                Button(L("Import Session…")) {
                     viewModel.promptImportSession()
                 }
                 Divider()
-                Button("Edit Session…") {
+                Button(L("Edit Session…")) {
                     viewModel.promptEditSession(session)
                 }
                 .disabled(session.status == .running)
                 Divider()
                 // Trailing "…": it opens a confirmation first.
-                Button("Delete Session…", role: .destructive) {
+                Button(L("Delete Session…"), role: .destructive) {
                     confirmDelete(session)
                 }
             }
@@ -157,7 +157,7 @@ struct SessionListView: View {
                     if viewModel.searchText.isEmpty {
                         // Agent conversations (raw JSONL that was never opened
                         // in lmux) are browsed and resumed from the Agent tab.
-                        Text("Browse all agent conversations from the Agent tab")
+                        Text(L("Browse all agent conversations from the Agent tab"))
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     }
@@ -168,8 +168,8 @@ struct SessionListView: View {
 
     private func showRenameAlert(_ session: SessionSummary) {
         let alert = NSAlert()
-        alert.messageText = "Rename Session"
-        alert.informativeText = "Enter a new name for this session."
+        alert.messageText = L("Rename Session")
+        alert.informativeText = L("Enter a new name for this session.")
         alert.addButton(withTitle: "Rename")
         alert.addButton(withTitle: "Cancel")
 
@@ -185,7 +185,7 @@ struct SessionListView: View {
     /// Confirm before deleting a session (destructive, removes history).
     private func confirmDelete(_ session: SessionSummary) {
         let alert = NSAlert()
-        alert.messageText = "Delete Session"
+        alert.messageText = L("Delete Session")
         alert.informativeText = "Delete '\(session.name)'? This cannot be undone."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Delete")
@@ -426,7 +426,7 @@ private struct ContextUsageView: View {
         HStack(spacing: 4) {
             Image(systemName: "text.page")
                 .font(.system(size: 9))
-            Text("Context \(percent)%")
+            Text(L("Context %d%%", percent))
                 .font(.system(size: 10))
                 .monospacedDigit()
             if let model, !model.isEmpty {
@@ -804,8 +804,8 @@ struct SessionSearchField: View {
                 }
                 .buttonStyle(.plain)
                 .iconButtonChrome()
-                .help("Clear search")
-                .accessibilityLabel("Clear search")
+                .help(L("Clear search"))
+                .accessibilityLabel(L("Clear search"))
             }
         }
         .padding(.horizontal, 10)
