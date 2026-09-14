@@ -26,13 +26,13 @@ struct EditSessionSheet: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("Edit Session")
+            Text(L("Edit Session"))
                 .font(.title2)
                 .fontWeight(.semibold)
 
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Session Name")
+                    Text(L("Session Name"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextField("Session name", text: $sessionName)
@@ -40,7 +40,7 @@ struct EditSessionSheet: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Project Directory")
+                    Text(L("Project Directory"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     HStack {
@@ -50,19 +50,19 @@ struct EditSessionSheet: View {
                                 validateDir(newValue)
                             }
 
-                        Button("Browse…") {
+                        Button(L("Browse…")) {
                             browseDirectory()
                         }
                     }
                     if showDirError {
-                        Text("Directory does not exist or is not accessible")
+                        Text(L("Directory does not exist or is not accessible"))
                             .font(.caption)
                             .foregroundColor(.red)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Session ID (cbc_session_id)")
+                    Text(L("Session ID (cbc_session_id)"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     TextField("Conversation ID", text: $cbcSessionID)
@@ -73,11 +73,11 @@ struct EditSessionSheet: View {
             HStack(spacing: 12) {
                 Spacer()
 
-                Button("Cancel") {
+                Button(L("Cancel")) {
                     viewModel.editingSession = nil
                 }
 
-                Button("Save") {
+                Button(L("Save")) {
                     let name = sessionName.trimmingCharacters(in: .whitespaces)
                     let dir = projectDir.trimmingCharacters(in: .whitespaces)
                     let cbc = cbcSessionID.trimmingCharacters(in: .whitespaces)
