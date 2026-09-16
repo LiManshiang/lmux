@@ -237,6 +237,11 @@ enum L10n {
         "Import lmux Sessions": "导入 lmux 会话",
         "Import Session": "导入会话",
         "Sync & Quit": "同步并退出",
+        "Sessions waiting for input": "等待输入的会话",
+        "%d session(s) waiting for input": "%d 个会话正在等待输入",
+        "No sessions waiting": "没有会话在等待",
+        "Show lmux": "显示 lmux",
+        "Context is at %d%%. Consider running /compact.": "上下文已用到 %d%%，建议执行 /compact。",
     ]
 }
 
