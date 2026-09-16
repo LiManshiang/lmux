@@ -806,6 +806,19 @@ class ContentViewModel: ObservableObject {
         attentionSessionIds.contains(sessionID)
     }
 
+    /// The sessions the menu bar item lists, in sidebar order.
+    var sessionsNeedingAttention: [SessionSummary] {
+        sessions.filter { attentionSessionIds.contains($0.id) }
+    }
+
+    /// Select a session from outside the window (the menu bar menu).
+    func revealSession(id: String) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        selectedSession = session
+        // Looking at it is what clears the flag, same as clicking the row.
+        clearSessionAttention(id)
+    }
+
     /// Clear the attention flag when user focuses the session.
     func clearSessionAttention(_ sessionID: String) {
         attentionSessionIds.remove(sessionID)
@@ -841,6 +854,43 @@ class ContentViewModel: ObservableObject {
         guard notifiedAwaitingInput.insert(sessionID).inserted else { return }
         awaitingInputIds.insert(sessionID)
         sendAwaitingInputNotification(sessionID: sessionID)
+    }
+
+    /// Session IDs already warned about a nearly-full context. Cleared when the
+    /// figure drops back (i.e. after a /compact) so the next climb warns again.
+    private var warnedContextHigh: Set<String> = []
+
+    /// 80% is still cheap to /compact; past ~90% the agent starts dropping
+    /// earlier turns, which is the thing worth interrupting the user for.
+    private static let contextWarnPercent = 80
+    private static let contextResetPercent = 70
+
+    /// Warns once per climb. `usage` is already fetched by the calling poll, so
+    /// this costs no extra request.
+    private func checkContextPressure(sessionID: String, name: String, usage: ContextUsageInfo) {
+        guard usage.contextWindow > 0 else { return }
+        let percent = usage.tokens * 100 / usage.contextWindow
+        if percent >= Self.contextWarnPercent {
+            guard !warnedContextHigh.contains(sessionID) else { return }
+            warnedContextHigh.insert(sessionID)
+            sendContextPressureNotification(sessionID: sessionID, name: name, percent: percent)
+        } else if percent < Self.contextResetPercent {
+            // Falling below the reset line re-arms the warning.
+            warnedContextHigh.remove(sessionID)
+        }
+    }
+
+    private func sendContextPressureNotification(sessionID: String, name: String, percent: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = name
+        content.body = L("Context is at %d%%. Consider running /compact.", percent)
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "lmux-context-\(sessionID)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     private func sendAwaitingInputNotification(sessionID: String) {
@@ -2008,6 +2058,7 @@ class ContentViewModel: ObservableObject {
                 projectDir: session.projectDir
             ) else { continue }
             updateAwaitingInput(sessionID: session.id, awaiting: usage.awaitingInput, running: true)
+            checkContextPressure(sessionID: session.id, name: session.name, usage: usage)
         }
     }
 
