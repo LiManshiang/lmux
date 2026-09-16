@@ -81,6 +81,19 @@ build-x86:
 
 # Shared bundle assembler. $(1)=app dir, $(2)=frontend binary,
 # $(3)=icon png, $(4)=minimum OS, $(5)=bundle id.
+#
+# The SwiftPM resource bundles that sit next to the frontend binary are copied
+# into Contents/Resources. They are not optional: GhosttyTerminal calls
+# `Bundle.module` (via GhosttyRuntimeResources) before ghostty_init, and its
+# generated accessor probes Bundle.main.resourceURL — where a packaged .app is
+# expected to keep SwiftPM bundles — then traps with fatalError when it finds
+# nothing. SwiftTerm's metallib lookup goes through the same location.
+#
+# An absolute build-products path used to be baked into the accessor, which
+# masked the missing copy on the machine that built the app; the swiftbuild
+# toolchain (Xcode 27) no longer emits one, so the copy is what makes the app
+# work anywhere. The check below fails the build rather than shipping an app
+# that crashes on its first terminal session.
 define assemble_bundle
 	@rm -rf $(1)
 	@mkdir -p $(1)/Contents/MacOS
@@ -89,6 +102,13 @@ define assemble_bundle
 	@cp $(BACKEND_BIN) $(1)/Contents/MacOS/lmux-backend
 	@cp $(INFO_PLIST) $(1)/Contents/Info.plist
 	@cp lmux.entitlements $(1)/Contents/Resources/
+	@bundles="$$(ls -d $(dir $(2))*.bundle 2>/dev/null)"; \
+	if [ -z "$$bundles" ]; then \
+		echo "ERROR: no SwiftPM resource bundles in $(dir $(2)) (Rebuild, or check swift build)"; \
+		exit 1; \
+	fi; \
+	echo "Copying resource bundles: $$(basename -a $$bundles | tr '\n' ' ')"; \
+	cp -R $$bundles $(1)/Contents/Resources/
 	@if [ -n "$(4)" ]; then /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $(4)" $(1)/Contents/Info.plist; fi
 	@if [ -n "$(5)" ]; then /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(5)" $(1)/Contents/Info.plist; fi
 	@echo "Generating AppIcon.icns from $(3)..."
