@@ -33,6 +33,23 @@ cd backend-src && go test ./...   # backend tests
   codebuddy/claude providers for the shape.
 - Improve docs and translations (README.zh-CN.md parity is tracked).
 
+## Packaging
+
+The app must ship its SwiftPM resource bundles. `Contents/Resources/` needs
+`GhosttyKit_GhosttyTerminal.bundle` and `SwiftTerm_SwiftTerm.bundle`, or the
+generated `Bundle.module` accessor traps with `fatalError` before
+`ghostty_init` and the app dies the first time a terminal session connects.
+
+`assemble_bundle` in `lmux-app/Makefile` copies them and fails the build when
+there are none; the release workflow asserts they are present before packaging.
+**Compiling and running the unit tests does not catch this** — either launch the
+app or inspect its `Contents/Resources` before shipping. To check a published
+release:
+
+```sh
+tools/verify-release.sh v1.0.274
+```
+
 ## Code style
 
 - Swift: match the existing style (4 spaces, doc comments on public API).
