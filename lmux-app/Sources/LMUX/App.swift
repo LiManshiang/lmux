@@ -2,10 +2,16 @@ import SwiftUI
 import AppKit
 import UserNotifications
 
+/// Main-actor bound: it owns AppKit objects (the status item) and every
+/// delegate callback arrives on the main thread anyway.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set by the SwiftUI App once the view model exists, so termination can
     /// offer a final manual sync.
     weak var viewModel: ContentViewModel?
+
+    /// Menu bar item: how many sessions are waiting for input.
+    let statusBar = StatusBarController()
 
     /// Guards the terminate reply so only the first (sync-done or timeout)
     /// reply reaches AppKit.
@@ -139,6 +145,7 @@ struct LmuxApp: App {
                 .frame(minWidth: 800, minHeight: 500)
                 .onAppear {
                     appDelegate.viewModel = viewModel
+                    appDelegate.statusBar.attach(viewModel)
                     viewModel.startBackend()
                     AppAppearance.apply(rawValue: appearance)
                 }
