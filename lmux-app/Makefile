@@ -13,7 +13,7 @@
 # its build (trap-based restore) and uses a separate --scratch-path (.build-st)
 # so the two variants never pollute each other's build artifacts.
 
-.PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86 verify
+.PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86 verify verify-bundles
 
 BINARY = .build/debug/lmux
 APP_NAME = lmux.app
@@ -69,8 +69,21 @@ build-st:
 # `make app` takes the default manifest and passes no -target, so it checks
 # nothing about macOS 12: two release runs were lost to macOS 13-only APIs
 # that only the CI build caught. This runs the builds and tests that do.
-verify: build-st build-x86 test
-	@echo "Verified: both architectures build for macOS 12, tests pass."
+verify: build-st build-x86 test verify-bundles
+	@echo "Verified: both architectures build for macOS 12, tests pass, and the app carries its resource bundles."
+
+# The app must ship its SwiftPM resource bundles or it traps on the first
+# terminal session (see the assemble_bundle comment). assemble_bundle enforces
+# this while packaging; this checks an app that has already been built.
+verify-bundles: app
+	@bundles="$$(ls -d $(APP_DIR)/Contents/Resources/*.bundle 2>/dev/null)"; \
+	if [ -z "$$bundles" ]; then \
+		echo "ERROR: $(APP_DIR) ships no SwiftPM resource bundles - it would crash on first connect"; \
+		exit 1; \
+	fi; \
+	echo "Bundles present: $$(basename -a $$bundles | tr '\n' ' ')"
+	@if strings $(APP_DIR)/Contents/MacOS/lmux 2>/dev/null | grep -qE '(\.build/|/Users/)[^ ]*\.bundle'; then \
+		echo "ERROR: binary contains a hard-coded build path"; exit 1; fi
 
 # Cross-compile Swift frontend for x86_64 (Intel target), macOS 12 enforced.
 build-x86:
