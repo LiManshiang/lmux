@@ -80,6 +80,29 @@ jobs:
             || { echo "ERROR: Intel backend is not x86_64"; exit 1; }
           echo "Intel bundle verified: $(lipo -archs "$GITHUB_WORKSPACE/lmux-app/.build/lmux-st.app/Contents/MacOS/lmux")"
 
+      # The app traps with fatalError on its first terminal session if these are
+      # missing (see the assemble_bundle comment in lmux-app/Makefile). Releases
+      # shipped broken for months because nothing verified this; fail the build
+      # here instead of handing users a crash on launch.
+      - name: Verify packaged resource bundles
+        run: |
+          status=0
+          for app in lmux-app/.build/lmux.app lmux-app/.build/lmux-st.app; do
+            [ -d "$app" ] || continue
+            bundles=$(ls -d "$app"/Contents/Resources/*.bundle 2>/dev/null || true)
+            if [ -z "$bundles" ]; then
+              echo "::error::$app ships no SwiftPM resource bundles (it would crash on first connect)"
+              status=1
+            else
+              echo "$app: $(basename -a $bundles | tr '\n' ' ')"
+            fi
+            if strings "$app/Contents/MacOS/lmux" | grep -qE '(\.build/|/Users/)[^ ]*\.bundle'; then
+              echo "::error::$app binary contains a hard-coded build path"
+              status=1
+            fi
+          done
+          exit $status
+
       - name: Package zip
         run: |
           cd lmux-app/.build
