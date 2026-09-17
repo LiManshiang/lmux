@@ -15,7 +15,14 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-14 only carries Xcode 16, whose `swift build` drives the deprecated
+    # native build system. That toolchain generates a `Bundle.module` accessor
+    # which probes Bundle.main.bundleURL — the .app root — instead of
+    # Contents/Resources, so it could not see the bundles assemble_bundle had
+    # just copied and 1.0.279 trapped on every user's first terminal session.
+    # macos-26 ships Xcode 26, which builds with swiftbuild, the same accessor
+    # this machine's Xcode 27 emits (see lmux-app/Makefile, assemble_bundle).
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
@@ -24,14 +31,30 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: lmux-app/backend-src/go.sum
 
-      # libghostty-spm declares swift-tools-version 6.0, but the macos-14
-      # default toolchain is Swift 5.10 — pick the newest Xcode 16 available.
-      - name: Select Xcode 16 (Swift 6)
+      # libghostty-spm declares swift-tools-version 6.0, so the toolchain has to
+      # be Swift 6 or newer; take the newest Xcode the image has rather than
+      # pinning a version that goes stale, and let the accessor check in
+      # check-app-bundles.sh — not the Xcode number — decide whether the app is
+      # shippable.
+      - name: Select the newest Xcode
         run: |
-          XC=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XC" ]; then echo "no Xcode 16 found:"; ls /Applications | grep -i xcode; exit 1; fi
+          XC=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XC" ]; then echo "no Xcode found:"; ls /Applications | grep -i xcode; exit 1; fi
           sudo xcode-select -s "$XC"
           swift --version
+          swift build --help 2>&1 | grep -A1 -- '--build-system' || true
+
+      # Xcode 26 moved the Metal compiler into a separately downloaded
+      # component, and SwiftTerm's renderer compiles Shaders.metal: without it
+      # the build dies with "unable to spawn process .../Metal.xctoolchain/
+      # usr/bin/metal". Install it only when the image is missing it.
+      - name: Ensure the Metal toolchain is present
+        run: |
+          if ! xcrun -f metal >/dev/null 2>&1; then
+            echo "Metal toolchain not installed, downloading the component..."
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -f metal
 
       # libghostty-spm is pinned to our fork's `lmux-pinned` branch: it carries
       # the TerminalSurface API (close/sendText/readViewportText) that lmux
