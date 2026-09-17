@@ -367,10 +367,18 @@ class TerminalManager: ObservableObject {
         return (cpu, mem, cwd)
     }
 
+    /// CPU for the whole process tree rooted at `pid`; memory for that process.
+    ///
+    /// The agent is largely a supervisor: when it runs a tool — rg, git, a build
+    /// — the CPU lands in a child while the parent sits in `wait()`. Sampling the
+    /// root alone therefore read 0.0% precisely when the machine was busy. Memory
+    /// stays on the root process, because summing RSS over a tree counts shared
+    /// pages once per member and overstates it.
     nonisolated private static func queryPerf(pid: Int32) -> (Double?, Double?) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
-        task.arguments = ["-p", "\(pid)", "-o", "%cpu=", "-o", "rss="]
+        // One pass over the whole table so the tree can be walked locally.
+        task.arguments = ["-Ao", "pid=,ppid=,%cpu=,rss="]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -378,11 +386,30 @@ class TerminalManager: ObservableObject {
             try task.run()
             task.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let parts = String(data: data, encoding: .utf8)?.split(whereSeparator: \.isWhitespace) ?? []
-            guard parts.count >= 2, let cpu = Double(parts[0]), let rss = Double(parts[1]) else {
-                return (nil, nil)
+            guard let text = String(data: data, encoding: .utf8) else { return (nil, nil) }
+
+            var children: [Int32: [Int32]] = [:]
+            var cpuByPID: [Int32: Double] = [:]
+            var rssByPID: [Int32: Double] = [:]
+            for line in text.split(separator: "\n") {
+                let f = line.split(whereSeparator: \.isWhitespace)
+                guard f.count >= 4,
+                      let p = Int32(f[0]), let pp = Int32(f[1]),
+                      let cpu = Double(f[2]), let rss = Double(f[3]) else { continue }
+                cpuByPID[p] = cpu
+                rssByPID[p] = rss
+                children[pp, default: []].append(p)
             }
-            return (cpu, rss / 1024) // rss is KB on macOS
+            // The root may already be gone; that is a missing sample, not zero.
+            guard cpuByPID[pid] != nil else { return (nil, nil) }
+
+            var totalCPU = 0.0
+            var stack = [pid]
+            while let p = stack.popLast() {
+                totalCPU += cpuByPID[p] ?? 0
+                stack.append(contentsOf: children[p] ?? [])
+            }
+            return (totalCPU, (rssByPID[pid] ?? 0) / 1024) // rss is KB on macOS
         } catch {
             return (nil, nil)
         }
