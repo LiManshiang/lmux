@@ -47,7 +47,7 @@ app or inspect its `Contents/Resources` before shipping. To check a published
 release:
 
 ```sh
-tools/verify-release.sh v1.0.274
+bash tools/verify-release.sh v1.0.274
 ```
 
 ## Code style
