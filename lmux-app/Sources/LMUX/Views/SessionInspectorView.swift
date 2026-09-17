@@ -77,8 +77,8 @@ struct SessionInspectorView: View {
     }
 
     private var cpuLabel: String {
-        guard let cpu = manager?.cpuPercent else { return manager?.processRunning == true ? "—" : "—" }
-        return cpu < 1 ? "<1%" : String(format: "%.0f%%", cpu)
+        guard let cpu = manager?.cpuPercent else { return "—" }
+        return TerminalManager.cpuText(cpu)
     }
 
     private var memoryLabel: String {
