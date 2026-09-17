@@ -15,7 +15,6 @@
 
 .PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86 verify verify-bundles
 
-BINARY = .build/debug/lmux
 APP_NAME = lmux.app
 APP_DIR = .build/$(APP_NAME)
 INFO_PLIST = Info.plist
@@ -68,18 +67,23 @@ MACOS_MIN_TARGET = -Xswiftc -target -Xswiftc $(HOST_ARCH)-apple-macosx12.0
 ST_APP_NAME = lmux-st.app
 ST_APP_DIR = .build-st/$(ST_APP_NAME)
 ST_ICON_PNG = Resources/lmux-icon-st.png
-# SwiftPM keeps products at <scratch>/debug; under swiftbuild that is a symlink
-# to out/Products/Debug.
-BINARY_ST = .build-st/debug/lmux
+# Ask SwiftPM where the products are instead of assuming a path: swiftbuild
+# writes <scratch>/out/Products/Debug and the deprecated native build system
+# <scratch>/<triple>/debug, and `.build/debug` — the symlink the Makefile used
+# to rely on — was missing right after a successful swiftbuild build on CI.
+# --show-bin-path answers for the toolchain, scratch path and architecture in
+# use. These are expanded lazily, so only the packaging targets pay for it.
+BIN_DIR = $(shell swift build --skip-update --show-bin-path 2>/dev/null)
+BIN_DIR_ST = $(shell swift build --skip-update --scratch-path .build-st --show-bin-path 2>/dev/null)
+BIN_DIR_X86 = $(shell swift build --skip-update --arch x86_64 --scratch-path .build --show-bin-path 2>/dev/null)
+BINARY = $(BIN_DIR)/lmux
+BINARY_ST = $(BIN_DIR_ST)/lmux
+BINARY_X86 = $(BIN_DIR_X86)/lmux
 # st variant is a distinct bundle (isolated UserDefaults / launch services).
 ST_BUNDLE_ID = com.manshiangli.lmux-st
 
 # x86_64 cross-compiled SwiftTerm variant (Intel machines, macOS 12).
 X86_12_TARGET = -Xswiftc -target -Xswiftc x86_64-apple-macosx12.0
-# swiftbuild keeps every architecture in <scratch>/out/Products/Debug, where the
-# native build system wrote .build/x86_64-apple-macosx/debug. Take whichever the
-# build produced.
-BINARY_X86 = $(firstword $(wildcard .build/x86_64-apple-macosx/debug/lmux) $(wildcard .build/out/Products/Debug/lmux))
 
 # Build Go backend
 backend:
@@ -144,6 +148,11 @@ build-x86:
 # comment — and check-app-bundles.sh below fails the packaging if the frontend
 # was built the other way.
 define assemble_bundle
+	@test -x $(2) || { \
+		echo "ERROR: frontend binary not found at '$(2)'"; \
+		echo "       swift build --show-bin-path says '$$(swift build --skip-update --show-bin-path 2>/dev/null)'"; \
+		exit 1; \
+	}
 	@rm -rf $(1)
 	@mkdir -p $(1)/Contents/MacOS
 	@mkdir -p $(1)/Contents/Resources
