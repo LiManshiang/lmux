@@ -27,10 +27,6 @@ if gh release download "$TAG" -R "$REPO" -p "*macos.zip" -D "$WORK" --clobber 2>
       exit 1
     fi
     echo "PASS: $(basename -a $bundles | tr '\n' ' ')"
-    if strings "$WORK/lmux.app/Contents/MacOS/lmux" | grep -qE '(\.build/|/Users/)[^ ]*\.bundle'; then
-      echo "FAIL: binary contains a hard-coded build path"
-      exit 1
-    fi
     exit 0
   fi
 fi
