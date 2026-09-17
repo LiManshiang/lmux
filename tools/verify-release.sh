@@ -21,13 +21,25 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo "Verifying $TAG"
 
-# 1) Preferred: inspect the published zip.
-# Both a versioned and a stable-named archive match, so unpack with -o: without
-# it unzip asks about replacing the second one and dies in a non-interactive
-# shell, which looked like "download unavailable" and silently downgraded this
-# to the CI-log check below.
-if gh release download "$TAG" -R "$REPO" -p "*macos.zip" -D "$WORK" --clobber 2>/dev/null; then
-  if (cd "$WORK" && unzip -oq ./*macos.zip 2>/dev/null); then
+# 1) Preferred: inspect the published zip. Download the stable-named archive —
+# every release carries it (the Homebrew cask points at it) and it is byte
+# identical to the versioned one, so this is a single 16MB transfer instead of
+# two. GitHub times out intermittently from some networks, and one timeout used
+# to look like "download unavailable", so retry before giving up.
+download() {
+  local dir="$1" i
+  for i in 1 2 3; do
+    if gh release download "$TAG" -R "$REPO" -p "lmux-macos.zip" -D "$dir" --clobber 2>/dev/null; then
+      return 0
+    fi
+    echo "download attempt $i failed, retrying"
+    sleep 10
+  done
+  return 1
+}
+
+if download "$WORK"; then
+  if (cd "$WORK" && unzip -oq lmux-macos.zip 2>/dev/null); then
     if bash "$CHECK" "$WORK/lmux.app"; then
       echo "PASS: the published app loads its bundles"
       exit 0
