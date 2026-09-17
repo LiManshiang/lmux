@@ -67,18 +67,21 @@ MACOS_MIN_TARGET = -Xswiftc -target -Xswiftc $(HOST_ARCH)-apple-macosx12.0
 ST_APP_NAME = lmux-st.app
 ST_APP_DIR = .build-st/$(ST_APP_NAME)
 ST_ICON_PNG = Resources/lmux-icon-st.png
-# Ask SwiftPM where the products are instead of assuming a path: swiftbuild
-# writes <scratch>/out/Products/Debug and the deprecated native build system
-# <scratch>/<triple>/debug, and `.build/debug` — the symlink the Makefile used
-# to rely on — was missing right after a successful swiftbuild build on CI.
-# --show-bin-path answers for the toolchain, scratch path and architecture in
-# use. These are expanded lazily, so only the packaging targets pay for it.
-BIN_DIR = $(shell swift build --skip-update --show-bin-path 2>/dev/null)
-BIN_DIR_ST = $(shell swift build --skip-update --scratch-path .build-st --show-bin-path 2>/dev/null)
-BIN_DIR_X86 = $(shell swift build --skip-update --arch x86_64 --scratch-path .build --show-bin-path 2>/dev/null)
-BINARY = $(BIN_DIR)/lmux
-BINARY_ST = $(BIN_DIR_ST)/lmux
-BINARY_X86 = $(BIN_DIR_X86)/lmux
+# Where the frontend binary landed. No single answer is trustworthy: swiftbuild
+# writes <scratch>/out/Products/Debug, the deprecated native build system
+# <scratch>/<triple>/debug, and <scratch>/debug is a symlink that may exist for
+# either. On CI that symlink was absent after a swiftbuild build, and
+# `swift build --show-bin-path` answered with the native path
+# (.build/arm64-apple-macosx/debug) while the products actually went to
+# out/Products/Debug. Probe the candidates, most specific first: the per-triple
+# directory keeps the architectures apart, so it is the only one that cannot
+# hand the x86_64 build a stale arm64 binary.
+# $(1) = scratch path, $(2) = target triple.
+find_frontend = $(firstword $(wildcard $(1)/$(2)/debug/lmux) $(wildcard $(1)/out/Products/Debug/lmux) $(wildcard $(1)/debug/lmux))
+
+BINARY = $(call find_frontend,.build,$(HOST_ARCH)-apple-macosx)
+BINARY_ST = $(call find_frontend,.build-st,$(HOST_ARCH)-apple-macosx)
+BINARY_X86 = $(call find_frontend,.build,x86_64-apple-macosx)
 # st variant is a distinct bundle (isolated UserDefaults / launch services).
 ST_BUNDLE_ID = com.manshiangli.lmux-st
 
@@ -148,11 +151,11 @@ build-x86:
 # comment — and check-app-bundles.sh below fails the packaging if the frontend
 # was built the other way.
 define assemble_bundle
-	@test -x $(2) || { \
-		echo "ERROR: frontend binary not found at '$(2)'"; \
-		echo "       swift build --show-bin-path says '$$(swift build --skip-update --show-bin-path 2>/dev/null)'"; \
+	@if [ -z "$(2)" ] || [ ! -x "$(2)" ]; then \
+		echo "ERROR: frontend binary not found (path was '$(2)')"; \
+		echo "       looked for out/Products/Debug/lmux, debug/lmux and <triple>/debug/lmux under the scratch path"; \
 		exit 1; \
-	}
+	fi
 	@rm -rf $(1)
 	@mkdir -p $(1)/Contents/MacOS
 	@mkdir -p $(1)/Contents/Resources
@@ -160,6 +163,7 @@ define assemble_bundle
 	@cp $(BACKEND_BIN) $(1)/Contents/MacOS/lmux-backend
 	@cp $(INFO_PLIST) $(1)/Contents/Info.plist
 	@cp lmux.entitlements $(1)/Contents/Resources/
+	@echo "Frontend: $(2)"
 	@bundles="$$(ls -d $(dir $(2))*.bundle 2>/dev/null)"; \
 	if [ -z "$$bundles" ]; then \
 		echo "ERROR: no SwiftPM resource bundles in $(dir $(2)) (Rebuild, or check swift build)"; \
