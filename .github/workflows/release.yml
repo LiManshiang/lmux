@@ -84,26 +84,16 @@ jobs:
       # missing (see the assemble_bundle comment in lmux-app/Makefile). Releases
       # shipped broken for months because nothing verified this; fail the build
       # here instead of handing users a crash on launch.
+      #
+      # The check asserts both `Bundle.module` probe locations — Contents/
+      # Resources (swiftbuild) and the app root (legacy SwiftPM) — because the
+      # toolchain CI uses decides which one the shipped accessor probes, and the
+      # "a *.bundle exists" version of this check passed on the broken 1.0.279.
       - name: Verify packaged resource bundles
         run: |
-          status=0
-          for app in lmux-app/.build/lmux.app lmux-app/.build/lmux-st.app; do
-            [ -d "$app" ] || continue
-            bundles=$(ls -d "$app"/Contents/Resources/*.bundle 2>/dev/null || true)
-            if [ -z "$bundles" ]; then
-              echo "::error::$app ships no SwiftPM resource bundles (it would crash on first connect)"
-              status=1
-            else
-              echo "$app: $(basename -a $bundles | tr '\n' ' ')"
-            fi
-            # Deliberately not asserting on baked-in build paths. libghostty is
-            # a prebuilt xcframework that always embeds its own build path, and
-            # that is harmless: Bundle.module looks inside Bundle.main first,
-            # which is Contents/Resources, and only falls back to the baked path
-            # when it finds nothing. The presence check above is what decides
-            # whether the app runs.
-          done
-          exit $status
+          bash lmux-app/tools/check-app-bundles.sh \
+            lmux-app/.build/lmux.app \
+            lmux-app/.build/lmux-st.app
 
       - name: Package zip
         run: |

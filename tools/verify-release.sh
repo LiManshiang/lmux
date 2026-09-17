@@ -4,9 +4,11 @@
 #
 # Why this exists: releases shipped for months without them, and the app traps
 # with fatalError on its first terminal session when they are missing (see the
-# assemble_bundle comment in lmux-app/Makefile). CI now asserts this before
-# packaging; this script checks the published artifact — or, when the network
-# blocks the download, the CI log that produced it.
+# assemble_bundle comment in lmux-app/Makefile). 1.0.279 then shipped with the
+# bundles present but only in Contents/Resources, which the accessor that CI's
+# toolchain generates never probes — so the check has to assert the layout, not
+# just that a *.bundle directory exists. Both checks live in
+# lmux-app/tools/check-app-bundles.sh, shared with `make verify-bundles` and CI.
 #
 # usage: tools/verify-release.sh v1.0.274
 set -euo pipefail
@@ -14,6 +16,7 @@ set -euo pipefail
 TAG="${1:?usage: verify-release.sh <tag>   e.g. v1.0.274}"
 REPO="LiManshiang/lmux"
 WORK="$(mktemp -d)"
+CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lmux-app/tools/check-app-bundles.sh"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "Verifying $TAG"
@@ -21,13 +24,12 @@ echo "Verifying $TAG"
 # 1) Preferred: inspect the published zip.
 if gh release download "$TAG" -R "$REPO" -p "*macos.zip" -D "$WORK" --clobber 2>/dev/null; then
   if (cd "$WORK" && unzip -q ./*macos.zip 2>/dev/null); then
-    bundles=$(ls -d "$WORK"/lmux.app/Contents/Resources/*.bundle 2>/dev/null || true)
-    if [ -z "$bundles" ]; then
-      echo "FAIL: the published app carries no .bundle — it crashes on first connect"
-      exit 1
+    if bash "$CHECK" "$WORK/lmux.app"; then
+      echo "PASS: the published app loads its bundles"
+      exit 0
     fi
-    echo "PASS: $(basename -a $bundles | tr '\n' ' ')"
-    exit 0
+    echo "FAIL: the published app traps on its first connect"
+    exit 1
   fi
 fi
 
