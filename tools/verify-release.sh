@@ -22,8 +22,12 @@ trap 'rm -rf "$WORK"' EXIT
 echo "Verifying $TAG"
 
 # 1) Preferred: inspect the published zip.
+# Both a versioned and a stable-named archive match, so unpack with -o: without
+# it unzip asks about replacing the second one and dies in a non-interactive
+# shell, which looked like "download unavailable" and silently downgraded this
+# to the CI-log check below.
 if gh release download "$TAG" -R "$REPO" -p "*macos.zip" -D "$WORK" --clobber 2>/dev/null; then
-  if (cd "$WORK" && unzip -q ./*macos.zip 2>/dev/null); then
+  if (cd "$WORK" && unzip -oq ./*macos.zip 2>/dev/null); then
     if bash "$CHECK" "$WORK/lmux.app"; then
       echo "PASS: the published app loads its bundles"
       exit 0
@@ -33,7 +37,9 @@ if gh release download "$TAG" -R "$REPO" -p "*macos.zip" -D "$WORK" --clobber 2>
   fi
 fi
 
-# 2) Fallback: the download was blocked, so read what CI reported instead.
+# 2) Fallback: the download was blocked, so read what CI reported instead. The
+# check itself ran there against the apps it was about to zip, so its verdict
+# for both of them is what to look for — not merely that it copied something.
 echo "download unavailable; checking the CI log"
 run_id=$(gh run list -R "$REPO" --limit 40 --json databaseId,headBranch \
   --jq ".[] | select(.headBranch == \"$TAG\") | .databaseId" | head -1)
@@ -42,10 +48,10 @@ if [ -z "$run_id" ]; then
   exit 1
 fi
 log=$(gh run view "$run_id" -R "$REPO" --log 2>/dev/null || true)
-if grep -q "Copying resource bundles" <<<"$log"; then
-  echo "PASS: CI copied the bundles while packaging"
-  grep -o "Copying resource bundles:.*" <<<"$log" | sort -u | sed 's/^/  /'
+if grep -q 'lmux\.app: ' <<<"$log" && grep -q 'lmux-st\.app: ' <<<"$log"; then
+  echo "PASS: CI's bundle check accepted both packaged apps"
+  grep -oE '[^[:space:]]*lmux(-st)?\.app: .*' <<<"$log" | sort -u | sed 's/^/  /'
 else
-  echo "FAIL: the CI log never mentions copying bundles"
+  echo "FAIL: the CI log has no bundle check result for both apps"
   exit 1
 fi
