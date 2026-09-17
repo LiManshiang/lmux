@@ -72,18 +72,13 @@ build-st:
 verify: build-st build-x86 test verify-bundles
 	@echo "Verified: both architectures build for macOS 12, tests pass, and the app carries its resource bundles."
 
-# The app must ship its SwiftPM resource bundles or it traps on the first
-# terminal session (see the assemble_bundle comment). assemble_bundle enforces
-# this while packaging; this checks an app that has already been built.
+# The app must ship its SwiftPM resource bundles in both places the two
+# `Bundle.module` accessors probe, or it traps on the first terminal session
+# (see the assemble_bundle comment). assemble_bundle enforces this while
+# packaging; this checks an app that has already been built. CI and
+# tools/verify-release.sh run the same script against the app they ship.
 verify-bundles: app
-	@bundles="$$(ls -d $(APP_DIR)/Contents/Resources/*.bundle 2>/dev/null)"; \
-	if [ -z "$$bundles" ]; then \
-		echo "ERROR: $(APP_DIR) ships no SwiftPM resource bundles - it would crash on first connect"; \
-		exit 1; \
-	fi; \
-	echo "Bundles present: $$(basename -a $$bundles | tr '\n' ' ')"
-	@# No assertion on baked-in build paths: libghostty always embeds its own,
-	@# harmlessly, because Bundle.module checks Bundle.main first.
+	@bash tools/check-app-bundles.sh $(APP_DIR)
 
 # Cross-compile Swift frontend for x86_64 (Intel target), macOS 12 enforced.
 build-x86:
@@ -96,17 +91,25 @@ build-x86:
 # $(3)=icon png, $(4)=minimum OS, $(5)=bundle id.
 #
 # The SwiftPM resource bundles that sit next to the frontend binary are copied
-# into Contents/Resources. They are not optional: GhosttyTerminal calls
-# `Bundle.module` (via GhosttyRuntimeResources) before ghostty_init, and its
-# generated accessor probes Bundle.main.resourceURL — where a packaged .app is
-# expected to keep SwiftPM bundles — then traps with fatalError when it finds
-# nothing. SwiftTerm's metallib lookup goes through the same location.
+# into Contents/Resources and to the top level of the .app. Both copies are
+# load-bearing, because SwiftPM generates two shapes of `Bundle.module` accessor
+# and they probe different locations:
 #
-# An absolute build-products path used to be baked into the accessor, which
-# masked the missing copy on the machine that built the app; the swiftbuild
-# toolchain (Xcode 27) no longer emits one, so the copy is what makes the app
-# work anywhere. The check below fails the build rather than shipping an app
-# that crashes on its first terminal session.
+#   * swiftbuild (Xcode 26+)     Bundle.main.resourceURL  → Contents/Resources
+#   * legacy SwiftPM (Xcode 16)  Bundle.main.bundleURL    → the .app itself,
+#     then a build-time absolute path that only exists on the build machine.
+#
+# Either accessor calls fatalError when no candidate resolves, and it runs
+# before ghostty_init (it is reached from GhosttyRuntimeResources.directoryURL):
+# a bundle the app cannot see is a SIGTRAP on the first terminal session.
+# 1.0.279 shipped exactly that way — every bundle was present in
+# Contents/Resources, but the release came off CI's legacy toolchain, which only
+# looks in the app root, so it crashed for every user. SwiftTerm's metallib
+# lookup goes through the same accessor.
+#
+# The copy at the app root looks redundant and is not: it is the only location
+# the legacy accessor probes. check-app-bundles.sh asserts both, so the build
+# fails rather than shipping an app that traps on its first terminal session.
 define assemble_bundle
 	@rm -rf $(1)
 	@mkdir -p $(1)/Contents/MacOS
@@ -121,7 +124,8 @@ define assemble_bundle
 		exit 1; \
 	fi; \
 	echo "Copying resource bundles: $$(basename -a $$bundles | tr '\n' ' ')"; \
-	cp -R $$bundles $(1)/Contents/Resources/
+	cp -R $$bundles $(1)/Contents/Resources/; \
+	cp -R $$bundles $(1)/
 	@if [ -n "$(4)" ]; then /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $(4)" $(1)/Contents/Info.plist; fi
 	@if [ -n "$(5)" ]; then /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(5)" $(1)/Contents/Info.plist; fi
 	@echo "Generating AppIcon.icns from $(3)..."
