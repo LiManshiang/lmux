@@ -15,13 +15,14 @@ permissions:
 
 jobs:
   build:
-    # macos-14 only carries Xcode 16, whose `swift build` drives the deprecated
-    # native build system. That toolchain generates a `Bundle.module` accessor
-    # which probes Bundle.main.bundleURL — the .app root — instead of
-    # Contents/Resources, so it could not see the bundles assemble_bundle had
-    # just copied and 1.0.279 trapped on every user's first terminal session.
-    # macos-26 ships Xcode 26, which builds with swiftbuild, the same accessor
-    # this machine's Xcode 27 emits (see lmux-app/Makefile, assemble_bundle).
+    # macos-14 only carries Xcode 16 (Swift 5.10), which has no `--build-system
+    # swiftbuild`: its SwiftPM can only drive the deprecated native build system,
+    # whose Bundle.module accessor probes the .app root instead of
+    # Contents/Resources. That is the toolchain that shipped 1.0.279, which
+    # trapped on every user's first terminal session. macos-26 carries Xcode 26
+    # (Swift 6.2/6.3), where swiftbuild is available — the Makefile passes it
+    # explicitly because those versions still default to native. See the
+    # swift_build comment in lmux-app/Makefile.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
@@ -108,9 +109,10 @@ jobs:
       # shipped broken for months because nothing verified this; fail the build
       # here instead of handing users a crash on launch.
       #
-      # The check asserts both `Bundle.module` probe locations — Contents/
-      # Resources (swiftbuild) and the app root (legacy SwiftPM) — because the
-      # toolchain CI uses decides which one the shipped accessor probes, and the
+      # The check asserts what "shippable" actually means: both bundles in
+      # Contents/Resources with their payload, and a frontend built by
+      # swiftbuild rather than the deprecated native system, whose accessor
+      # probes the .app root — where codesign forbids the bundles. The old
       # "a *.bundle exists" version of this check passed on the broken 1.0.279.
       - name: Verify packaged resource bundles
         run: |
