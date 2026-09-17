@@ -370,12 +370,7 @@ private struct SessionStatusView: View {
     /// row keeps its width from the moment the process starts.
     private var cpuLabel: String {
         guard let cpu = manager.cpuPercent else { return "CPU —" }
-        // Under one percent, show a decimal ("CPU 0.3%"): it says the agent is
-        // alive and ticking, where a rounded "0%" reads like a stall. At or
-        // above one percent the integer is enough and stops the row jittering.
-        return cpu < 1
-            ? String(format: "CPU %.1f%%", cpu)
-            : String(format: "CPU %.0f%%", cpu)
+        return "CPU " + TerminalManager.cpuText(cpu)
     }
 
     private var memoryLabel: String {
@@ -400,7 +395,10 @@ private struct SessionStatusView: View {
                 Text(cpuLabel)
                     .font(.system(size: 9))
                     .monospacedDigit()
-                    .foregroundColor((manager.cpuPercent ?? 0) > 80 ? .orange : .secondary)
+                    // The figure sums the agent's whole process tree, so on a multi-core
+                    // machine it can pass 100. One full core is the point where
+                    // "busy" is worth colouring.
+                    .foregroundColor((manager.cpuPercent ?? 0) >= 100 ? .orange : .secondary)
                 Text(memoryLabel)
                     .font(.system(size: 9))
                     .monospacedDigit()
