@@ -44,8 +44,19 @@ brew install --cask lmux
 
 **手动下载**：从最新的 [Release](https://github.com/LiManshiang/lmux/releases)
 下载 `lmux-macos.zip`（Apple Silicon）或 `lmux-macos-intel.zip`（Intel），
-解压后把 `lmux.app` 拖入 `/Applications`。构建为 ad-hoc 签名 —— 首次打开请
-右键应用并选择**打开**。
+解压后把 `lmux.app` 拖入 `/Applications`。构建为 ad-hoc 签名 —— 首次打开需要放行，见下。
+
+### 首次打开
+
+本应用是 ad-hoc 签名、**未做公证**，所以 macOS 会拦住第一次启动。双击会弹出
+「Apple 无法验证 lmux」——而这个弹窗只有「完成」和「移到废纸篓」，没有放行的入口。
+正确做法：
+
+1. 打开 **系统设置 → 隐私与安全性**
+2. 找到 **安全性** 一栏里写着「已阻止"lmux"以保护 Mac」的那行
+3. 点 **仍要打开**，再确认一次
+
+右键应用选「打开」在部分 macOS 版本上也有效，但上面这条路径在所有版本都可用。只需做一次。
 
 **从源码构建**（macOS 13+、Xcode CLT、Go 1.26+）：
 

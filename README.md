@@ -48,8 +48,20 @@ right build automatically.
 
 **Manual**: download `lmux-macos.zip` (Apple Silicon) or `lmux-macos-intel.zip`
 (Intel) from the latest [Release](https://github.com/LiManshiang/lmux/releases),
-unzip, and drag `lmux.app` into `/Applications`. The build is ad-hoc signed — on
-first launch, right-click the app and choose **Open**.
+unzip, and drag `lmux.app` into `/Applications`.
+
+### First launch
+
+The build is ad-hoc signed rather than notarized, so macOS blocks the first
+launch. Double-clicking shows *"Apple could not verify lmux"* — and that dialog
+offers only **Done** and **Move to Trash**, with no way through. Instead:
+
+1. Open **System Settings → Privacy & Security**
+2. Scroll to **Security**, find the line saying *"lmux" was blocked*
+3. Click **Open Anyway**, then confirm
+
+Right-clicking the app and choosing **Open** also works on some macOS versions,
+but the Settings route above works on all of them. You only do this once.
 
 **From source** (macOS 13+, Xcode CLT, Go 1.26+):
 
