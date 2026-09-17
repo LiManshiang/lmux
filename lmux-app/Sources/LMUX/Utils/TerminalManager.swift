@@ -374,6 +374,17 @@ class TerminalManager: ObservableObject {
     /// root alone therefore read 0.0% precisely when the machine was busy. Memory
     /// stays on the root process, because summing RSS over a tree counts shared
     /// pages once per member and overstates it.
+    /// The percentage shown wherever CPU is displayed — no "CPU" prefix, so
+    /// callers can put it in a labelled field or prepend their own.
+    ///
+    /// One decimal under 1% ("0.3%"): it says the agent is ticking, where a
+    /// rounded "0%" reads like a stall. Shared so the sidebar and the usage
+    /// panel cannot drift apart on the threshold or the wording — they had
+    /// already drifted once.
+    nonisolated static func cpuText(_ cpu: Double) -> String {
+        cpu < 1 ? String(format: "%.1f%%", cpu) : String(format: "%.0f%%", cpu)
+    }
+
     nonisolated private static func queryPerf(pid: Int32) -> (Double?, Double?) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -384,8 +395,11 @@ class TerminalManager: ObservableObject {
         task.standardError = FileHandle.nullDevice
         do {
             try task.run()
-            task.waitUntilExit()
+            // Drain before waiting: `waitUntilExit()` first deadlocks once the
+            // output exceeds the 64 KB pipe buffer, and this table is long
+            // enough to reach it on a busy machine.
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
             guard let text = String(data: data, encoding: .utf8) else { return (nil, nil) }
 
             var children: [Int32: [Int32]] = [:]
