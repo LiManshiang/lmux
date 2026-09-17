@@ -370,9 +370,12 @@ private struct SessionStatusView: View {
     /// row keeps its width from the moment the process starts.
     private var cpuLabel: String {
         guard let cpu = manager.cpuPercent else { return "CPU —" }
-        // Below one percent the rounded figure would read "0%", which looks
-        // like a failure rather than an idle agent.
-        return cpu < 1 ? "CPU <1%" : String(format: "CPU %.0f%%", cpu)
+        // Under one percent, show a decimal ("CPU 0.3%"): it says the agent is
+        // alive and ticking, where a rounded "0%" reads like a stall. At or
+        // above one percent the integer is enough and stops the row jittering.
+        return cpu < 1
+            ? String(format: "CPU %.1f%%", cpu)
+            : String(format: "CPU %.0f%%", cpu)
     }
 
     private var memoryLabel: String {
