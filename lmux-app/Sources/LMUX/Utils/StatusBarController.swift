@@ -9,28 +9,42 @@ import Combine
 /// until you happened to look at the sidebar.
 @MainActor
 final class StatusBarController {
-    private let statusItem: NSStatusItem
+    /// Created on first `attach`, never in `init()`.
+    ///
+    /// `AppDelegate` holds this as a stored property, so `init()` runs during
+    /// delegate construction — while the app is still starting and has no
+    /// window-server connection yet. `NSStatusBar.statusItem` reaches straight
+    /// into that connection, and macOS 12 does not tolerate its absence:
+    /// `CGSConnectionByID` asserts and the process aborts on launch
+    /// (SIGABRT in `StatusBarController.init` → `NSStatusBar
+    /// _statusItemWithLength`). Newer macOS happens to allow the call, which
+    /// is why this only ever showed on the Intel/macOS 12 build.
+    private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private weak var viewModel: ContentViewModel?
 
-    init() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        render(count: 0)
-    }
-
-    /// Called once the view model exists (it is created by the SwiftUI App).
+    /// Called once the view model exists — i.e. from a view that is appearing,
+    /// by which point the app is connected and running.
     func attach(_ viewModel: ContentViewModel) {
         self.viewModel = viewModel
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        }
+        // `attach` can run more than once (the window can be closed and
+        // reopened); drop the previous subscription so the item is not
+        // rendered once per past appearance.
+        cancellables.removeAll()
         viewModel.$attentionSessionIds
             .receive(on: RunLoop.main)
             .sink { [weak self] ids in
                 self?.render(count: ids.count)
             }
             .store(in: &cancellables)
+        render(count: viewModel.attentionSessionIds.count)
     }
 
     private func render(count: Int) {
-        guard let button = statusItem.button else { return }
+        guard let item = statusItem, let button = item.button else { return }
         let name = count > 0 ? "bell.badge.fill" : "bell"
         let image = NSImage(systemSymbolName: name, accessibilityDescription: L("Sessions waiting for input"))
         image?.isTemplate = true
@@ -43,7 +57,7 @@ final class StatusBarController {
             ? L("%d session(s) waiting for input", count)
             : L("No sessions waiting")
         button.contentTintColor = count > 0 ? .systemOrange : nil
-        statusItem.menu = buildMenu()
+        item.menu = buildMenu()
     }
 
     private func buildMenu() -> NSMenu {
