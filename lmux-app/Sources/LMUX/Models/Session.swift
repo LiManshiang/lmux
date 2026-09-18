@@ -137,6 +137,13 @@ struct SessionExportBundle: Codable {
     var cbcSessionID: String
     let exportedAt: String?
     var content: String
+    /// How `content` is stored in the file. Absent or nil means plain text,
+    /// which is how every bundle written before compression existed reads.
+    ///
+    /// Only meaningful on disk: `fromJSON` expands the payload and clears this,
+    /// so in memory `content` is always the conversation text. See
+    /// SyncPayloadCompression.
+    var contentEncoding: String?
     /// Byte offset up to which `content` is current (file size). When the
     /// export was requested with `since`, `content` holds only the appended
     /// portion after that offset and `offset` is the new total size.
@@ -157,20 +164,43 @@ struct SessionExportBundle: Codable {
         case cbcSessionID = "cbc_session_id"
         case exportedAt = "exported_at"
         case content
+        case contentEncoding = "content_encoding"
         case offset
         case contentModifiedAt = "content_modified_at"
         case deviceId = "device_id"
     }
 
     /// Serializes the bundle to JSON data (the `.lmuxsession` file content).
+    ///
+    /// The payload is compressed here rather than by the caller so every write
+    /// path — cross-device sync and the manual export — shrinks alike, and so
+    /// the in-memory bundle keeps holding plain text: the sync merge, the path
+    /// mappings and the byte-count integrity checks all work on text.
     func toJSON() throws -> Data {
-        try JSONEncoder().encode(self)
+        var stored = self
+        let encoded = SyncPayloadCompression.encode(content)
+        stored.content = encoded.content
+        stored.contentEncoding = encoded.encoding
+        return try JSONEncoder().encode(stored)
     }
 
-    /// Decodes a `.lmuxsession` file into a bundle.
+    /// Decodes a `.lmuxsession` file into a bundle, expanding a compressed
+    /// payload back to text.
+    ///
+    /// Returns nil for anything this build cannot read — most importantly a
+    /// `content_encoding` it does not know, which must never be passed on as if
+    /// it were the conversation.
     static func fromJSON(_ url: URL) -> SessionExportBundle? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(SessionExportBundle.self, from: data)
+        guard let data = try? Data(contentsOf: url),
+              var bundle = try? JSONDecoder().decode(SessionExportBundle.self, from: data),
+              let text = SyncPayloadCompression.decode(
+                  content: bundle.content,
+                  encoding: bundle.contentEncoding)
+        else { return nil }
+        bundle.content = text
+        // In memory the payload is text; the tag describes the file only.
+        bundle.contentEncoding = nil
+        return bundle
     }
 }
 
