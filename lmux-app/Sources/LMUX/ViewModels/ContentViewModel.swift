@@ -28,6 +28,16 @@ class ContentViewModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var toastMessage: String?
     @Published var syncInProgress = false
+    /// Bumped every time the app returns to the foreground.
+    ///
+    /// Everything that reads the backend does so on a sleep measured in tens of
+    /// seconds — the shared 15s session poll, the sidebar's per-session context
+    /// meter (15–180s). Work done while lmux is in the background therefore sits
+    /// invisible behind that sleep: run `/compact` in an agent, switch back, and
+    /// the meter still shows the pre-compaction number until the timer fires.
+    /// Views key their `.task(id:)` on this counter, so regaining focus cancels
+    /// the sleep and re-reads immediately.
+    @Published private(set) var focusEpoch = 0
 
     // MARK: - Agent browser state
 
@@ -85,6 +95,13 @@ class ContentViewModel: ObservableObject {
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.terminateAllProcesses()
+        }
+        // Returning to the foreground restarts the timed reads (see focusEpoch).
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.noteAppBecameActive() }
         }
         agentStars = loadAgentStars()
     }
@@ -2027,6 +2044,22 @@ class ContentViewModel: ObservableObject {
     }
 
     // MARK: - Polling
+
+    /// The app came back to the foreground: restart the reads that were asleep
+    /// and refresh the session list once.
+    ///
+    /// The epoch always moves — the views own their own loops and only need the
+    /// signal. The list refresh is what the timer would have done next; skipping
+    /// it before polling starts (no backend to ask yet) and during a sync (the
+    /// single connection is busy with a transfer).
+    private func noteAppBecameActive() {
+        focusEpoch += 1
+        guard pollTimer != nil, !syncWaitVisible else { return }
+        Task { @MainActor in
+            await refreshSessions()
+            await detectAwaitingInput()
+        }
+    }
 
     private func startPolling() {
         pollTimer?.invalidate()
