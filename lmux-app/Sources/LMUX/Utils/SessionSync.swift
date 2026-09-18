@@ -139,8 +139,7 @@ enum SessionSync {
     /// duplicates the whole conversation. So: max(tracked, file offset).
     static func exportSinceOffset(for cbcID: String) -> Int64 {
         let tracked = exportedOffset(for: cbcID)
-        guard let url = fileURL(for: cbcID),
-              let bundle = SessionExportBundle.fromJSON(url),
+        guard let bundle = mirrorBundle(for: cbcID)?.bundle,
               let fileOffset = bundle.offset, fileOffset > tracked else {
             return tracked
         }
@@ -511,23 +510,74 @@ enum SessionSync {
         return "\(base).lmuxsession"
     }
 
-    /// Find the sync file for a conversation by scanning the directory for a
-    /// bundle whose cbc_session_id matches (file names are human-readable and
-    /// can change with renames).
-    static func fileURL(for cbcID: String) -> URL? {
+    /// Find the sync file for a conversation and hand back its decoded bundle.
+    ///
+    /// This used to decode every `.lmuxsession` in the directory to compare
+    /// `cbc_session_id`, and the caller then decoded the match a second time.
+    /// With payload compression the first pass expands the whole conversation
+    /// text of every long session into memory — a couple of hundred megabytes
+    /// per sync — to answer a question the file name already answers.
+    ///
+    /// `syncFileName` always ends the name with the conversation's first eight
+    /// id characters, so that narrows the search to one candidate; the decode
+    /// that follows doubles as the confirmation, and only a name that is not
+    /// the one we expect (renamed by hand, or written by a version with a
+    /// different naming rule) falls back to reading them all.
+    static func mirrorBundle(for cbcID: String) -> (url: URL, bundle: SessionExportBundle)? {
         guard let dir = sessionsDir() else { return nil }
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dir,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         ) else { return nil }
-        for file in files where file.pathExtension == "lmuxsession" {
-            guard let bundle = SessionExportBundle.fromJSON(file) else { continue }
-            if bundle.cbcSessionID == cbcID {
-                return file
+        let mirrors = files.filter { $0.pathExtension == "lmuxsession" }
+
+        // "<name>__<cbc8>.lmuxsession", plus the nameless form syncFileName
+        // falls back to when the session name sanitizes away.
+        let short = String(cbcID.prefix(8))
+        let named = mirrors.filter {
+            let name = $0.lastPathComponent
+            return name.hasSuffix("__\(short).lmuxsession") || name == "\(short).lmuxsession"
+        }
+        // Candidates in order, so the loop below reads each file exactly once:
+        // the name match first, then everything else for the fallback scan.
+        for file in named + mirrors.filter({ !named.contains($0) }) {
+            if let bundle = SessionExportBundle.fromJSON(file), bundle.cbcSessionID == cbcID {
+                return (file, bundle)
             }
         }
         return nil
+    }
+
+    /// The stored form of a mirror: the size on disk and the length of the text
+    /// it holds, as read from the file's attributes and the decoded bundle.
+    private struct StoredSize {
+        let fileBytes: Int64
+        let contentBytes: Int64
+    }
+
+    /// Read the two sizes `needsReencode` judges, so the caller does not stat
+    /// the same file again.
+    private static func storedSize(url: URL, bundle: SessionExportBundle) -> StoredSize? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let fileBytes = (attrs[.size] as? NSNumber)?.int64Value else { return nil }
+        return StoredSize(fileBytes: fileBytes, contentBytes: Int64(bundle.content.utf8.count))
+    }
+
+    /// True when a mirror is still stored uncompressed although its payload is
+    /// large enough to compress.
+    ///
+    /// An unchanged conversation never rewrites its mirror, so a copy written
+    /// before payload compression existed would keep its full size forever.
+    ///
+    /// The two stored forms cannot be confused by size alone. Plain, the file
+    /// is *larger* than the text it holds — JSON escaping only ever adds bytes.
+    /// Compressed, it is about an eighth. So anything at or above the text
+    /// length is plain, and everything below it is not: there is no band in
+    /// between for a payload to hide in.
+    private static func needsReencode(_ size: StoredSize) -> Bool {
+        guard size.contentBytes >= SyncPayloadCompression.minimumBytes else { return false }
+        return size.fileBytes >= size.contentBytes
     }
 
     // MARK: - Export
@@ -556,8 +606,9 @@ enum SessionSync {
         let localOffset = exportedOffset(for: cbcID)
         let newOffset = bundle.offset ?? 0
 
-        let foundURL = fileURL(for: cbcID)
-        let existing = foundURL.flatMap { SessionExportBundle.fromJSON($0) }
+        let found = mirrorBundle(for: cbcID)
+        let foundURL = found?.url
+        let existing = found?.bundle
 
         // Recover a lost tracked offset (defaults migration / reset) from the
         // mirror file: when the file is intact and ahead of our tracking,
@@ -596,6 +647,42 @@ enum SessionSync {
                 localFileOffsetMatches: existing?.offset == effectiveOffset
             ) {
             case .unchanged:
+                // Migration, not a merge: a mirror written before payload
+                // compression existed never shrinks on its own, because an
+                // unchanged conversation never rewrites the file — it would sit
+                // at its original size for as long as the session stays idle.
+                // Re-encode it once, in place, from the copy already in hand
+                // (its own metadata is the correct one here: the incoming
+                // bundle has nothing new to say about it).
+                if let foundURL, let existing,
+                   let size = storedSize(url: foundURL, bundle: existing),
+                   needsReencode(size) {
+                    // Read before the write: the content does not change, so
+                    // the modification date is put back afterwards. A newer one
+                    // reads as "the remote file changed" on the other machine
+                    // and drags it into a needless re-import (or a conflict
+                    // prompt against whatever it has locally). It re-encodes
+                    // its own copy on its own next sync.
+                    let previousDate = (try? FileManager.default
+                        .attributesOfItem(atPath: foundURL.path)[.modificationDate]) as? Date
+                    do {
+                        let encoded = try existing.toJSON()
+                        // Only take the new form when it is genuinely smaller:
+                        // a payload that compresses badly would otherwise be
+                        // rewritten on every single sync, forever.
+                        if Int64(encoded.count) >= size.fileBytes {
+                            return .unchanged
+                        }
+                        try encoded.write(to: foundURL, options: .atomic)
+                        if let previousDate {
+                            try? FileManager.default.setAttributes(
+                                [.modificationDate: previousDate], ofItemAtPath: foundURL.path)
+                        }
+                        return .updated
+                    } catch {
+                        // Leave it as it is: the mirror is intact, just large.
+                    }
+                }
                 return .unchanged
             case .needsFullExport:
                 // Local copy missing (deleted) or offsets inconsistent — resync.
