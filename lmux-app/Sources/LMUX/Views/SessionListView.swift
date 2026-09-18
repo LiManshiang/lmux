@@ -439,7 +439,11 @@ private struct ContextUsageView: View {
             }
         }
         .foregroundColor(percent >= 80 ? .orange : .secondary)
-        .task {
+        // Keyed on the focus epoch so returning to lmux restarts the loop: the
+        // sleep below is up to three minutes, and a `/compact` typed in the
+        // agent while lmux was in the background would otherwise stay invisible
+        // behind it.
+        .task(id: viewModel.focusEpoch) {
             while !Task.isCancelled {
                 var cbc = cbcSessionID
                 if cbc == nil {
