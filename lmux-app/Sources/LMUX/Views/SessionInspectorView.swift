@@ -19,6 +19,15 @@ struct SessionInspectorView: View {
     /// Same cadence as the sidebar's context readout.
     private static let refreshInterval: UInt64 = 5_000_000_000
 
+    /// Identity of the read loop: a different session, or the app coming back
+    /// to the foreground, cancels the sleep and re-reads at once. Without the
+    /// epoch a `/compact` run while lmux was in the background stayed hidden
+    /// behind the five-second sleep.
+    private struct PollKey: Equatable {
+        let sessionID: String
+        let focusEpoch: Int
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -30,7 +39,9 @@ struct SessionInspectorView: View {
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task(id: session.id) { await pollUsage() }
+        .task(id: PollKey(sessionID: session.id, focusEpoch: viewModel.focusEpoch)) {
+            await pollUsage()
+        }
     }
 
     // MARK: - Sections
