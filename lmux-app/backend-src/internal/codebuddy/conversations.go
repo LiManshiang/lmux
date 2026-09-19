@@ -3,7 +3,9 @@ package codebuddy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -331,6 +333,235 @@ func probeJSONL(path, agentName string, size int64) ConversationSummary {
 type MessageRow struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+}
+
+// ConversationLocation is where a conversation's JSONL actually is, and the
+// directory it belongs to.
+type ConversationLocation struct {
+	Path string `json:"path"`
+	// ProjectDir is a real path for the directory the conversation belongs to,
+	// or "" when the conversation's own records do not let one be derived.
+	ProjectDir string `json:"project_dir"`
+	// Matches reports whether the project directory the caller passed in is
+	// that directory. It is answered by comparison rather than by deriving a
+	// path, so it stays exact even when a path cannot be derived at all.
+	// Vacuously true when the caller passed no directory.
+	Matches bool `json:"matches"`
+}
+
+// LocateConversation reports where a conversation's file is, and whether a
+// given project directory is one the agent would find it from.
+//
+// The agent resolves `--resume <id>` inside the project folder derived from its
+// working directory, and lmux derives the same folder from a session's
+// project_dir. A session pointing anywhere else cannot resume: the agent prints
+// "No conversation found with session ID", and lmux's own export and
+// localize-cwd paths report the file as missing.
+func LocateConversation(agent, sessionID, projectDir string) (ConversationLocation, bool) {
+	path := findConversationFile(agent, sessionID)
+	if path == "" {
+		return ConversationLocation{}, false
+	}
+	folder := filepath.Base(filepath.Dir(path))
+	return ConversationLocation{
+		Path:       path,
+		ProjectDir: conversationProjectDir(path, agent, folder),
+		// Answered by looking where the agent would look, not by comparing with
+		// the copy that was found above: the same conversation can exist in
+		// more than one project folder (a session resumed from a second
+		// directory leaves a second file), and the caller's directory is
+		// correct if the file is in *its* folder — whichever copy happened to
+		// be found first is not the question.
+		Matches: projectDir == "" || isFile(AgentSessionFile(agent, projectDir, sessionID)),
+	}, true
+}
+
+// AgentSessionFile returns the path a conversation must have for the agent to
+// find it when launched in projectDir — the folder name is the project
+// directory encoded, and the encoding differs per agent. Empty when either the
+// directory or the conversation id is missing; an unknown agent is treated as
+// codebuddy, matching the rest of this package.
+func AgentSessionFile(agent, projectDir, sessionID string) string {
+	if projectDir == "" || sessionID == "" {
+		return ""
+	}
+	if agent == "claude" {
+		return ClaudeSessionFile(projectDir, sessionID)
+	}
+	return CodebuddySessionFile(projectDir, sessionID)
+}
+
+func isFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// conversationProjectDir derives a real path for the directory a conversation
+// belongs to, or "" when its records do not pin one down.
+//
+// A conversation that has lived on two machines records both paths: the old one
+// on everything written before the move and the current one after. Only the
+// path that reproduces the file's own folder name is the right answer, and the
+// earlier records are not automatically it — a conversation started under
+// /Users/old and continued under /Volumes/new keeps the old path at the front
+// of the file. Head and tail are therefore both sampled: the head holds the
+// launch directory in the ordinary case, the tail the newer path after a move.
+//
+// A candidate has to be an existing directory to be offered, since a path that
+// is not there cannot be the directory a session resumes from.
+func conversationProjectDir(path, agent, folder string) string {
+	seen := make(map[string]bool)
+	var candidates []string
+	collect := func(raw []byte) {
+		for _, m := range cwdFieldRE.FindAllSubmatch(raw, -1) {
+			c := string(m[1])
+			if c != "" && !seen[c] {
+				seen[c] = true
+				candidates = append(candidates, c)
+			}
+		}
+	}
+	collect(readEdge(path, 0))
+	collect(readEdge(path, -1))
+
+	for _, c := range candidates {
+		if encodeAgentProjectDir(agent, c) != folder {
+			continue
+		}
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+	// Nothing reproduced the folder name. One candidate is still better than
+	// nothing when it is a directory that exists — a conversation whose file
+	// was moved or renamed by hand looks like this — but a guess between
+	// several would be a coin flip, and there is no suggestion then.
+	if len(candidates) == 1 {
+		if info, err := os.Stat(candidates[0]); err == nil && info.IsDir() {
+			return candidates[0]
+		}
+	}
+	return ""
+}
+
+// readEdge returns a bounded chunk from one end of a file: from the start when
+// offset is 0, from the end when it is -1. Both ends matter here and neither
+// may be the whole file — a conversation can be hundreds of megabytes.
+func readEdge(path string, offset int64) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	const chunkSize = 64 << 10
+	if offset < 0 {
+		st, err := f.Stat()
+		if err != nil {
+			return nil
+		}
+		offset = st.Size() - chunkSize
+		if offset < 0 {
+			offset = 0
+		}
+	}
+	buf := make([]byte, chunkSize)
+	n, err := f.ReadAt(buf, offset)
+	if err != nil && err != io.EOF {
+		return nil
+	}
+	return buf[:n]
+}
+
+// ErrConversationMissing reports that no conversation file carries the id, so
+// there is nothing to move. A session can outlive its conversation (deleted, or
+// bound to an id that was never stored here), and callers need to tell that
+// apart from a move that failed.
+var ErrConversationMissing = errors.New("conversation not found on this machine")
+
+// MoveConversation relocates a conversation so the agent still finds it from a
+// new project directory, rewriting the cwd its records carry.
+//
+// A session's directory and the folder its conversation is stored in are the
+// same thing to the agent: it resolves `--resume <id>` inside the folder named
+// after the directory it was launched in. Nothing in the store records that
+// link — the folder's name *is* the link — so changing the directory a session
+// works in has to take the conversation along, or the next resume fails with
+// "No conversation found with session ID".
+//
+// The records' cwd is rewritten as well. The CLI may or may not consult it, but
+// lmux does: the Agent browser resumes a conversation using the cwd it reads
+// from the file, and the work-directory lookup answers from it, so a moved
+// conversation still claiming the old directory would be pulled back there the
+// moment either was used.
+//
+// The new copy is written in full — streamed, cwd rewritten, renamed into place
+// — before the original is touched, so any failure leaves the conversation
+// exactly where it was.
+func MoveConversation(agent, sessionID, fromDir, toDir string) (string, error) {
+	if sessionID == "" {
+		return "", fmt.Errorf("no conversation bound to this session")
+	}
+	if toDir == "" {
+		return "", fmt.Errorf("no target directory")
+	}
+	dst := AgentSessionFile(agent, toDir, sessionID)
+	if dst == "" {
+		return "", fmt.Errorf("cannot resolve the conversation path for %s", toDir)
+	}
+	src := AgentSessionFile(agent, fromDir, sessionID)
+	if !isFile(src) {
+		// The directory the session currently claims does not hold it — it may
+		// sit under another project folder (resumed from elsewhere, imported, or
+		// left behind by an earlier edit). Move the copy that is really there
+		// instead of assuming where it should be.
+		src = findConversationFile(agent, sessionID)
+	}
+	switch {
+	case src == "":
+		return "", fmt.Errorf("%s: %w", sessionID, ErrConversationMissing)
+	case src == dst:
+		return dst, nil // already where it belongs
+	case isFile(dst):
+		return "", fmt.Errorf("a different conversation with this ID is already stored for %s", toDir)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", err
+	}
+	if err := rewriteCwdFile(src, dst, toDir); err != nil {
+		return "", err
+	}
+	moveSidecar(src, dst)
+	if err := os.Remove(src); err != nil {
+		return "", fmt.Errorf("the conversation was copied to %s but the original could not be removed: %w", dst, err)
+	}
+	return dst, nil
+}
+
+// moveSidecar carries the conversation's tool-results directory — the spillover
+// its records reference when an output was too large to inline — to the new
+// project folder. Best effort: the conversation itself is already complete, and
+// a missing sidecar costs a preview, not the history.
+//
+// Runs after the new copy is complete and before the original is removed, so a
+// failure late in the move costs the stale original its sidecar rather than
+// costing the live copy anything.
+func moveSidecar(src, dst string) {
+	from := filepath.Join(filepath.Dir(src), strings.TrimSuffix(filepath.Base(src), filepath.Ext(src)))
+	to := filepath.Join(filepath.Dir(dst), strings.TrimSuffix(filepath.Base(dst), filepath.Ext(dst)))
+	if from == to {
+		return
+	}
+	if info, err := os.Stat(from); err != nil || !info.IsDir() {
+		return
+	}
+	if _, err := os.Stat(to); err == nil {
+		return // something is already there; leave both alone
+	}
+	_ = os.Rename(from, to)
 }
 
 // PreviewConversation returns the most recent plain-text user/assistant

@@ -126,9 +126,9 @@ func (s *Server) Start() error {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
-	mux.HandleFunc("/api/agent/cwd", s.auth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/agent/work-dir", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			h.AgentRecentCwd(w, r)
+			h.AgentWorkDir(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -143,6 +143,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/agent/conversation-preview", s.auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			h.AgentConversationPreview(w, r)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
+	mux.HandleFunc("/api/agent/conversation-location", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.AgentConversationLocation(w, r)
 		} else {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}

@@ -668,3 +668,67 @@ func TestLastUsageInfoFullReadsClaudeTail(t *testing.T) {
 		t.Errorf("input = %d, want 5000", u.Input)
 	}
 }
+
+func TestSessionWorkDirUsesTheFirstDirectoryWorkedIn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// A session launched in the home directory whose first Bash call unpacks
+	// something into /tmp, then moves into the project, and afterwards works
+	// from a subdirectory of it. The label has to be the project: the scratch
+	// path is a detour, and the subdirectory came later — following either
+	// would leave the session named after something it is not about.
+	lines := []string{
+		`{"type":"message","role":"user","cwd":"` + home + `","content":[{"type":"input_text","text":"go"}]}`,
+		`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd /tmp && unzip -q x.zip\"}"}`,
+		`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd /Volumes/Developer/Projects/TestinAI && make\"}"}`,
+		`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd /Volumes/Developer/Projects/TestinAI/src && ls\"}"}`,
+	}
+	writeConversation(t, home, home, "conv-1", lines, time.Now())
+
+	if got := SessionWorkDir("codebuddy", home, "conv-1"); got != "/Volumes/Developer/Projects/TestinAI" {
+		t.Errorf("work dir = %q, want the first real directory the agent worked in", got)
+	}
+
+	// No cd anywhere: the launch directory is the answer, recorded on every row.
+	launch := []string{`{"type":"message","role":"user","cwd":"` + home + `","content":[{"type":"input_text","text":"no cd"}]}`}
+	writeConversation(t, home, home, "conv-2", launch, time.Now())
+	if got := SessionWorkDir("codebuddy", home, "conv-2"); got != home {
+		t.Errorf("work dir = %q, want the launch directory %q", got, home)
+	}
+
+	// A home-relative cd is expanded: the value is opened in Finder and
+	// compared against real directories, so "~/x" would be useless as it stands.
+	tilde := []string{`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd ~/work && ls\"}"}`}
+	writeConversation(t, home, home, "conv-3", tilde, time.Now())
+	if got := SessionWorkDir("codebuddy", home, "conv-3"); got != filepath.Join(home, "work") {
+		t.Errorf("work dir = %q, want the home-relative path expanded", got)
+	}
+
+	if got := SessionWorkDir("codebuddy", home, "missing"); got != "" {
+		t.Errorf("missing conversation returned %q, want empty", got)
+	}
+}
+
+func TestExtractLeadingCdYieldsARealPath(t *testing.T) {
+	cases := []struct {
+		name, cmd, want string
+	}{
+		{"plain", "cd /Volumes/x/proj && git status", "/Volumes/x/proj"},
+		{"trailing slash", "cd /Volumes/x/proj/ && ls", "/Volumes/x/proj"},
+		// The space is escaped because it is a shell word; the name has none.
+		// Left in place the path does not exist, and every consumer of this
+		// value — Finder, directory comparison — would be wrong.
+		{"escaped space", `cd ~/Library/Mobile\ Documents/ && pwd`, "~/Library/Mobile Documents"},
+		{"quoted", `cd "/Volumes/x/my proj" && ls`, "/Volumes/x/my proj"},
+		{"semicolon", "cd /Volumes/x; ls", "/Volumes/x"},
+		{"relative", "cd sub/dir && ls", ""},
+		{"none", "git status", ""},
+		{"home only", "cd ~ && ls", "~"},
+	}
+	for _, c := range cases {
+		if got := extractLeadingCd(c.cmd); got != c.want {
+			t.Errorf("%s: extractLeadingCd(%q) = %q, want %q", c.name, c.cmd, got, c.want)
+		}
+	}
+}

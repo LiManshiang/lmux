@@ -38,6 +38,22 @@ struct AgentConversationPreview: Codable {
     let rows: [Row]
 }
 
+/// Where a conversation's file is, and whether a given project directory owns
+/// it.
+///
+/// A session's `project_dir` has to be the directory the conversation was
+/// launched in: the agent resolves `--resume <id>` inside the project folder
+/// derived from its working directory, so a session pointing anywhere else
+/// cannot resume at all — the terminal prints "No conversation found with
+/// session ID". `projectDir` is a path to offer the user, and is empty when the
+/// conversation's records do not pin one down; `matches` answers the question
+/// by comparison, so it stays exact either way.
+struct ConversationLocation: Hashable {
+    let found: Bool
+    let projectDir: String?
+    let matches: Bool
+}
+
 // MARK: - Content search
 
 /// One matching message found while searching conversation text.

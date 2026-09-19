@@ -12,6 +12,29 @@ import (
 	"lmux/cbsm/internal/codebuddy"
 )
 
+// ResolveProjectDir turns a requested directory into the absolute path a
+// session stores, or fails when it is not an existing directory.
+//
+// "~" is expanded here rather than left to the caller: the value arrives from a
+// text field in the app, where a user writes a path the way a shell takes it,
+// and a stored "~/x" would name a project folder nothing else could reproduce —
+// the conversation and its records would disagree about where they belong. Abs
+// also cleans the path, so a trailing slash is not a different directory from
+// the same path without one.
+//
+// Exported because the edit path has to know the stored value *before* it makes
+// the update: changing the directory moves the conversation to it.
+func ResolveProjectDir(dir string) (string, error) {
+	abs, err := filepath.Abs(codebuddy.ExpandHome(dir))
+	if err != nil {
+		return "", fmt.Errorf("resolve project dir: %w", err)
+	}
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("directory does not exist: %s", abs)
+	}
+	return abs, nil
+}
+
 // Manager orchestrates session lifecycle.
 type Manager struct {
 	store *Store
@@ -28,13 +51,9 @@ func (m *Manager) Create(req CreateRequest) (*Session, error) {
 		return nil, fmt.Errorf("project_dir is required")
 	}
 
-	absDir, err := filepath.Abs(req.ProjectDir)
+	absDir, err := ResolveProjectDir(req.ProjectDir)
 	if err != nil {
-		return nil, fmt.Errorf("resolve project dir: %w", err)
-	}
-
-	if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("directory does not exist: %s", absDir)
+		return nil, err
 	}
 
 	name := req.Name
@@ -135,12 +154,9 @@ func (m *Manager) Update(id string, req UpdateRequest) (*Session, error) {
 	}
 
 	if req.ProjectDir != nil {
-		absDir, err := filepath.Abs(*req.ProjectDir)
+		absDir, err := ResolveProjectDir(*req.ProjectDir)
 		if err != nil {
-			return nil, fmt.Errorf("resolve project dir: %w", err)
-		}
-		if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("directory does not exist: %s", absDir)
+			return nil, err
 		}
 		sess.ProjectDir = absDir
 		sess.GitBranch = getGitBranch(absDir)

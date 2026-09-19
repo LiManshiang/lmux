@@ -1441,11 +1441,17 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    /// Latest working directory this session's agent recorded, if any. Used to
-    /// prefill the project directory in the edit sheet.
-    func agentWorkingDir(for session: SessionSummary) async -> String? {
-        guard let cbc = session.cbcSessionID, !cbc.isEmpty else { return nil }
-        return await api.agentCwd(agent: session.agentType, projectDir: session.projectDir, sessionID: cbc)
+    /// Where a conversation's file is, and whether `projectDir` is the directory
+    /// that owns it — the edit sheet's check. Takes the values being edited
+    /// rather than the session, since they may not have been saved yet.
+    func conversationLocation(agent: AgentType, cbcSessionID: String, projectDir: String) async -> ConversationLocation? {
+        await api.locateConversation(agent: agent, sessionID: cbcSessionID, projectDir: projectDir)
+    }
+
+    /// The directory the conversation's own records say the agent worked in.
+    /// Used by the edit sheet to suggest where a session really belongs.
+    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
+        await api.sessionWorkDir(agent: agent, projectDir: projectDir, sessionID: sessionID)
     }
 
     // MARK: - Agent browser favourites

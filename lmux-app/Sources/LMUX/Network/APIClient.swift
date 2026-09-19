@@ -215,7 +215,9 @@ class APIClient: AgentSessionService {
         return (resp.tokens, resp.contextWindow, resp.model, resp.awaitingInput ?? false)
     }
 
-    func agentCwd(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
+    /// The directory a session is about (the first place its agent worked), or
+    /// nil when the conversation has no readable records.
+    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
         struct Body: Codable {
             let agent: String
             let projectDir: String
@@ -227,14 +229,51 @@ class APIClient: AgentSessionService {
             }
         }
         struct Response: Codable {
-            let cwd: String?
+            let workDir: String?
+            enum CodingKeys: String, CodingKey {
+                case workDir = "work_dir"
+            }
         }
-        guard let data = try? await post("/api/agent/cwd", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
+        guard let data = try? await post("/api/agent/work-dir", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
               let resp = try? decode(Response.self, from: data),
-              let cwd = resp.cwd, !cwd.isEmpty else {
+              let dir = resp.workDir, !dir.isEmpty else {
             return nil
         }
-        return cwd
+        return dir
+    }
+
+    /// Where a conversation's file actually is, and whether `projectDir` is the
+    /// directory that owns it. `found == false` means no file has that
+    /// conversation id.
+    func locateConversation(agent: AgentType, sessionID: String, projectDir: String) async -> ConversationLocation? {
+        struct Body: Codable {
+            let agent: String
+            let sessionID: String
+            let projectDir: String
+            enum CodingKeys: String, CodingKey {
+                case agent
+                case sessionID = "session_id"
+                case projectDir = "project_dir"
+            }
+        }
+        struct Response: Codable {
+            let found: Bool
+            let projectDir: String?
+            let matches: Bool?
+            enum CodingKeys: String, CodingKey {
+                case found, matches
+                case projectDir = "project_dir"
+            }
+        }
+        guard let data = try? await post("/api/agent/conversation-location", body: Body(agent: agent.rawValue, sessionID: sessionID, projectDir: projectDir)),
+              let resp = try? decode(Response.self, from: data) else {
+            return nil
+        }
+        return ConversationLocation(
+            found: resp.found,
+            projectDir: resp.projectDir,
+            matches: resp.matches ?? true
+        )
     }
 
     /// File-level list of every agent conversation, optionally filtered to one

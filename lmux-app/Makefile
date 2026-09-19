@@ -13,7 +13,7 @@
 # its build (trap-based restore) and uses a separate --scratch-path (.build-st)
 # so the two variants never pollute each other's build artifacts.
 
-.PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86 verify verify-bundles
+.PHONY: build test run clean app icon backend build-st app-st build-x86 app-x86 verify verify-bundles toolchain-guard
 
 APP_NAME = lmux.app
 APP_DIR = .build/$(APP_NAME)
@@ -88,24 +88,60 @@ ST_BUNDLE_ID = com.manshiangli.lmux-st
 # x86_64 cross-compiled SwiftTerm variant (Intel machines, macOS 12).
 X86_12_TARGET = -Xswiftc -target -Xswiftc x86_64-apple-macosx12.0
 
+# --- Metal toolchain guard -------------------------------------------------
+#
+# The Metal compiler ships as a separate cryptex component, mounted at a path
+# whose directory suffix is randomised at every boot:
+#
+#   /var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-<ver>.<rand>/
+#
+# Xcode records the absolute path of `metal` in its build plan. A plan cached
+# before a reboot therefore names a directory that no longer exists, and the
+# next build dies before compiling anything:
+#
+#   error: unable to spawn process '.../usr/bin/metal' (No such file or directory)
+#   error: CompileMetalFile .../SwiftTerm/Apple/Metal/Shaders.metal failed
+#
+# Only the plan is stale — the compiled objects are still valid — so dropping
+# the plan cache is enough, and rebuilding the plan is a few seconds rather
+# than the full rebuild that clearing the whole scratch path would cost. Doing
+# it here makes the failure self-healing instead of a puzzling error on the
+# first build after every restart.
+#
+# Only the plan cache is searched. The app bundles embed the same path as an
+# output (that is the hard-coded library path the release check looks for), and
+# they are orders of magnitude larger, so scanning them would cost real time to
+# find nothing.
+PLAN_CACHES = .build/out/Intermediates.noindex/XCBuildData .build-st/out/Intermediates.noindex/XCBuildData
+
+toolchain-guard:
+	@stale="$$(grep -rhao 'com\.apple\.security\.cryptexd/mnt/[^/"[:space:]]*' $(PLAN_CACHES) 2>/dev/null | sort -u \
+		| while read -r mount; do [ -d "/var/run/$$mount" ] || echo "$$mount"; done)"; \
+	if [ -n "$$stale" ]; then \
+		echo "note: the cached build plan points at a Metal toolchain that is gone:"; \
+		printf '%s\n' "$$stale" | sed 's/^/        /'; \
+		echo "note: clearing the cached build plans (the compiled objects are kept)"; \
+		rm -rf $(PLAN_CACHES); \
+	fi
+
 # Build Go backend
 backend:
 	cd $(BACKEND_SRC) && GOPROXY=https://goproxy.cn,direct go build -o ../$(BACKEND_BIN) ./cmd/cbsm
 	@echo "Backend built: $(BACKEND_BIN)"
 
 # Build Swift frontend (ghostty variant)
-build:
+build: toolchain-guard
 	@$(call swift_build,--skip-update)
 
 # Run the unit test suite. Always build/test in native arm64: in a Rosetta
 # shell the host arch is x86_64, which writes a second .build triple and then
 # fails to load the arm64 test bundle ("incompatible architecture").
-test:
+test: toolchain-guard
 	arch -arm64 swift test --skip-update
 
 # Build Swift frontend for the macOS 12 SwiftTerm variant. The manifest swap
 # is restored on exit even if the build fails (trap).
-build-st:
+build-st: toolchain-guard
 	@cp Package.swift /tmp/lmux-Package.swift.backup
 	@cp Package.st.swift Package.swift
 	@trap 'cp /tmp/lmux-Package.swift.backup Package.swift' EXIT; \
@@ -126,7 +162,7 @@ verify-bundles: app
 	@bash tools/check-app-bundles.sh $(APP_DIR)
 
 # Cross-compile Swift frontend for x86_64 (Intel target), macOS 12 enforced.
-build-x86:
+build-x86: toolchain-guard
 	@cp Package.swift /tmp/lmux-Package.swift.backup
 	@cp Package.st.swift Package.swift
 	@trap 'cp /tmp/lmux-Package.swift.backup Package.swift' EXIT; \

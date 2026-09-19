@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -219,13 +221,51 @@ func (h *Handler) UpdateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A session's directory is where its conversation lives: the agent resolves
+	// `--resume <id>` inside the folder named after the directory it is launched
+	// in, so the two cannot be allowed to disagree (that is what "No conversation
+	// found with session ID" means).
+	//
+	// The directory is resolved first, and the resolved value is what both the
+	// move and the update use: resolving it here is what keeps them using the
+	// same string. A directory that is rejected is rejected before anything
+	// moves, and a move that fails leaves the session as it was.
+	target := sess.ProjectDir
+	if req.ProjectDir != nil && *req.ProjectDir != "" {
+		resolved, err := session.ResolveProjectDir(*req.ProjectDir)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		target = resolved
+		req.ProjectDir = &resolved
+	}
+	// The move also runs when the directory is not being changed: a session can
+	// already be inconsistent (its conversation left behind by an earlier edit,
+	// or by a resume from elsewhere), and an edit is exactly when the pair gets
+	// put back in step. When they already agree this is a no-op.
+	if sess.CBCSessionID != "" && target != "" {
+		switch _, err := codebuddy.MoveConversation(sess.AgentType, sess.CBCSessionID, sess.ProjectDir, target); {
+		case err == nil:
+		case errors.Is(err, codebuddy.ErrConversationMissing):
+			// Nothing to move: the conversation is gone (deleted, or bound to an
+			// id that was never stored here). A dead binding is not this edit's
+			// business — renaming a session whose history is already lost must
+			// still work.
+		default:
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("cannot move the session to %s: %v", target, err))
+			return
+		}
+	}
+
 	updated, err := h.mgr.Update(id, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Project dir changes move the JSONL lookup location; drop cached
-	// find-session results so they don't point at the old path.
+	// The lookup paths changed; drop cached find-session results so they don't
+	// point at the old location.
 	codebuddy.ClearFindSessionCache()
 
 	writeJSON(w, http.StatusOK, updated)
@@ -335,10 +375,15 @@ func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
 }
 
-// AgentRecentCwd returns the last working directory recorded in the agent's
-// conversation — where the agent most recently reported working (it can cd
-// between turns, independent of the process's own cwd).
-func (h *Handler) AgentRecentCwd(w http.ResponseWriter, r *http.Request) {
+// AgentWorkDir returns the directory a session is about — the first place its
+// agent cd'd into, or the launch directory when it never cd'd anywhere.
+//
+// Stable by construction, which is the point: the conversation file is
+// append-only, so the first cd it records stays the first. The header and
+// "Open in Finder" both show this, and a session that drifted through a dozen
+// directories while working (a subdirectory, a build tree) keeps the label of
+// the directory it was created for.
+func (h *Handler) AgentWorkDir(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Agent      string `json:"agent"`
 		ProjectDir string `json:"project_dir"`
@@ -349,8 +394,8 @@ func (h *Handler) AgentRecentCwd(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid agent/project_dir/session_id")
 		return
 	}
-	cwd := codebuddy.RecentSessionCwd(body.Agent, body.ProjectDir, body.SessionID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"cwd": cwd})
+	dir := codebuddy.SessionWorkDir(body.Agent, body.ProjectDir, body.SessionID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"work_dir": dir})
 }
 
 // ListAgentConversations returns every conversation JSONL for an agent
@@ -381,6 +426,35 @@ func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"conversations": visible,
 		"hidden":        hidden,
+	})
+}
+
+// AgentConversationLocation reports where a conversation's file lives and
+// whether a project directory owns it, so the edit sheet can tell the user when
+// the directory they typed cannot hold that conversation. Not found is a normal
+// answer, not an error: it is how a binding whose file was removed (or one that
+// points at an id the agent has since forked away from) shows up.
+func (h *Handler) AgentConversationLocation(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Agent      string `json:"agent"`
+		SessionID  string `json:"session_id"`
+		ProjectDir string `json:"project_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.Agent == "" || body.SessionID == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent/session_id")
+		return
+	}
+
+	loc, ok := codebuddy.LocateConversation(body.Agent, body.SessionID, body.ProjectDir)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"found": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"found":       true,
+		"project_dir": loc.ProjectDir,
+		"matches":     loc.Matches,
 	})
 }
 
@@ -713,10 +787,7 @@ func (h *Handler) PinSession(w http.ResponseWriter, r *http.Request) {
 
 // sessionFileFor resolves the JSONL path for a session's conversation.
 func sessionFileFor(agentType, projectDir, cbcSessionID string) string {
-	if agentType == "claude" {
-		return codebuddy.ClaudeSessionFile(projectDir, cbcSessionID)
-	}
-	return codebuddy.CodebuddySessionFile(projectDir, cbcSessionID)
+	return codebuddy.AgentSessionFile(agentType, projectDir, cbcSessionID)
 }
 
 // ExportSession returns a self-contained export bundle for a session's
@@ -779,13 +850,17 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// `cwd` is the session's work directory (the folder it is about), and it
+	// keeps its name for bundles already on disk. The importer uses it to pick
+	// where the conversation lands on the other machine, which is exactly what
+	// the user means by the session's working directory.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"format":              "lmux-session",
 		"version":             1,
 		"name":                sess.Name,
 		"agent_type":          sess.AgentType,
 		"project_dir":         sess.ProjectDir,
-		"cwd":                 codebuddy.RecentSessionCwd(sess.AgentType, sess.ProjectDir, sess.CBCSessionID),
+		"cwd":                 codebuddy.SessionWorkDir(sess.AgentType, sess.ProjectDir, sess.CBCSessionID),
 		"cbc_session_id":      sess.CBCSessionID,
 		"exported_at":         time.Now().Format(time.RFC3339),
 		"content":             string(buf),

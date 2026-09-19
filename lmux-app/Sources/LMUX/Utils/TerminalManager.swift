@@ -205,6 +205,12 @@ class TerminalManager: ObservableObject {
                 self.endConnecting()
                 self.isConnected = false
                 self.processRunning = false
+                // The work directory is read from the running agent, so it is
+                // no longer known once the process is gone. Keeping the last
+                // reading leaves the header showing a directory nothing can
+                // correct: editing the session's project directory would not
+                // move it, because the header prefers this cached value.
+                self.currentWorkingDirectory = nil
                 self.onProcessExit?()
             }
         }
@@ -324,19 +330,13 @@ class TerminalManager: ObservableObject {
                 }
             }
 
-            // Agent sessions: the conversation JSONL records a cwd on every
-            // message, so it reflects where the agent actually works (it cd's
-            // between turns). Refresh the header from that.
-            guard let agent = self.detectedAgentType,
-                  let cbc = self.detectedCBCSessionID,
-                  let service = self.agentSessionService else { return }
-            let projectDir = self.detachProjectDir ?? NSHomeDirectory()
-            Task { @MainActor in
-                let wd = await service.agentCwd(agent: agent, projectDir: projectDir, sessionID: cbc)
-                if self.currentWorkingDirectory != wd {
-                    self.currentWorkingDirectory = wd
-                }
-            }
+            // Agent sessions deliberately do NOT set a working directory here.
+            // A session's directory is what the user set it to — where the
+            // agent's history lives — and the header falls back to it. Following
+            // whatever directory the agent cd'd into last would make the label
+            // drift to a build tree or a scratch path; that answer is only worth
+            // having as a suggestion when the two disagree, which the edit sheet
+            // asks for directly.
         }
     }
 
@@ -648,6 +648,7 @@ class TerminalManager: ObservableObject {
                 guard let self, self.processGeneration == gen else { return }
                 self.isConnected = false
                 self.processRunning = false
+                self.currentWorkingDirectory = nil
                 self.onProcessExit?()
             }
         }

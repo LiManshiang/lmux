@@ -33,22 +33,13 @@ struct SessionListView: View {
                     .disabled(viewModel.selectedSession?.id == session.id)
                     .help(L("Run this session in its own terminal window"))
                     Button(L("Finder")) {
-                        Task {
-                            let cwd: String?
-                            if let cbc = session.cbcSessionID, !cbc.isEmpty {
-                                cwd = await viewModel.api.agentCwd(
-                                    agent: session.agentType,
-                                    projectDir: session.projectDir,
-                                    sessionID: cbc)
-                            } else {
-                                cwd = nil
-                            }
-                            let dir = FinderDirectory.resolve(
-                                projectDir: session.projectDir,
-                                agentCwd: cwd)
-                            guard FileManager.default.fileExists(atPath: dir, isDirectory: nil) else { return }
-                            NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
-                        }
+                        // The session's directory, which is also where its
+                        // conversation lives — no second notion of "where the
+                        // agent wandered to" (that only ever moved the label
+                        // away from the directory the session is for).
+                        let dir = session.projectDir
+                        guard FileManager.default.fileExists(atPath: dir, isDirectory: nil) else { return }
+                        NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
                     }
                     .help(L("Open the session's working directory in Finder"))
                 }

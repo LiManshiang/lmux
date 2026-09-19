@@ -1,6 +1,7 @@
 package codebuddy
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,6 +260,97 @@ func TestFindConversationInRoot(t *testing.T) {
 	}
 }
 
+func TestLocateConversationDerivesProjectDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	resetConversationsCache()
+
+	// The launch directory has to exist for it to be offered as a suggestion.
+	live := filepath.Join(t.TempDir(), "live")
+	if err := os.MkdirAll(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ordinary case: the file sits under the encoded launch directory and every
+	// record agrees on it.
+	lines := []string{
+		`{"type":"message","role":"user","cwd":"` + live + `","content":[{"type":"input_text","text":"hi"}]}`,
+		`{"type":"message","role":"assistant","cwd":"` + live + `","content":[{"type":"output_text","text":"ok"}]}`,
+	}
+	path := writeConversation(t, home, live, "conv-1", lines, time.Now())
+	loc, ok := LocateConversation("codebuddy", "conv-1", live)
+	if !ok {
+		t.Fatal("LocateConversation did not find the conversation")
+	}
+	if loc.Path != path {
+		t.Errorf("path = %q, want %q", loc.Path, path)
+	}
+	if loc.ProjectDir != live {
+		t.Errorf("project dir = %q, want %q", loc.ProjectDir, live)
+	}
+	if !loc.Matches {
+		t.Error("the directory the caller passed is the one holding the file")
+	}
+	if other, _ := LocateConversation("codebuddy", "conv-1", "/somewhere/else"); other.Matches {
+		t.Error("an unrelated directory must not match")
+	}
+	if any, _ := LocateConversation("codebuddy", "conv-1", ""); !any.Matches {
+		t.Error("with no directory to compare there is nothing to contradict")
+	}
+
+	// A conversation moved to another machine keeps the old path at the front
+	// of the file and the current one after it. The folder the file sits in
+	// decides which is right, so the earlier answer must not win by being
+	// first.
+	moved := []string{
+		`{"type":"message","role":"user","cwd":"/Users/gone","content":[{"type":"input_text","text":"old"}]}`,
+		`{"type":"message","role":"assistant","cwd":"` + live + `","content":[{"type":"output_text","text":"new"}]}`,
+	}
+	writeConversation(t, home, live, "conv-2", moved, time.Now())
+	loc2, _ := LocateConversation("codebuddy", "conv-2", live)
+	if loc2.ProjectDir != live {
+		t.Errorf("project dir = %q, want the live path %q, not the stale one from the head", loc2.ProjectDir, live)
+	}
+
+	// Two paths, neither naming the file's folder, and neither can be offered:
+	// a suggestion would be a guess between them.
+	ambiguous := []string{
+		`{"type":"message","role":"user","cwd":"/Users/one","content":[{"type":"input_text","text":"a"}]}`,
+		`{"type":"message","role":"assistant","cwd":"/Users/two","content":[{"type":"output_text","text":"b"}]}`,
+	}
+	writeConversation(t, home, "/tmp/elsewhere", "conv-3", ambiguous, time.Now())
+	loc3, _ := LocateConversation("codebuddy", "conv-3", "/Users/one")
+	if loc3.ProjectDir != "" {
+		t.Errorf("project dir = %q, want empty when no recorded path explains the folder", loc3.ProjectDir)
+	}
+	// The caller's directory is still answered exactly: it is compared against
+	// where the agent would look, so a missing suggestion costs no accuracy.
+	if loc3.Matches {
+		t.Error("/Users/one does not hold the conversation file")
+	}
+
+	// A conversation can exist in more than one project folder (resuming it
+	// from a second directory leaves a second file). Whether a directory works
+	// is decided by the file being in *that* directory, not by which copy the
+	// lookup happened to return first.
+	second := filepath.Join(t.TempDir(), "second")
+	if err := os.MkdirAll(second, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConversation(t, home, second, "conv-4", []string{userLine("copy")}, time.Now())
+	writeConversation(t, home, live, "conv-4", []string{userLine("copy")}, time.Now())
+	for _, dir := range []string{live, second} {
+		got, _ := LocateConversation("codebuddy", "conv-4", dir)
+		if !got.Matches {
+			t.Errorf("matches = false for %q, which does hold a copy of the conversation", dir)
+		}
+	}
+
+	if _, ok := LocateConversation("codebuddy", "nope", "/tmp"); ok {
+		t.Error("an unknown id must not resolve")
+	}
+}
+
 func TestDeleteConversation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -297,5 +389,78 @@ func TestDeleteConversation(t *testing.T) {
 	}
 	if _, err := DeleteConversation("codebuddy", ""); err == nil {
 		t.Error("expected an error for an empty session id")
+	}
+}
+
+func TestMoveConversationRelocatesAndRewritesCwd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	resetConversationsCache()
+
+	from := filepath.Join(t.TempDir(), "from")
+	to := filepath.Join(t.TempDir(), "to")
+	for _, d := range []string{from, to} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lines := []string{
+		`{"type":"message","role":"user","cwd":"` + from + `","content":[{"type":"input_text","text":"hi"}]}`,
+		`{"type":"message","role":"assistant","cwd":"` + from + `","content":[{"type":"output_text","text":"ok"}]}`,
+	}
+	oldPath := writeConversation(t, home, from, "conv-1", lines, time.Now())
+	// A sidecar the records reference when an output was too large to inline.
+	sidecar := filepath.Join(filepath.Dir(oldPath), "conv-1", "tool-results")
+	if err := os.MkdirAll(sidecar, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sidecar, "out.txt"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	moved, err := MoveConversation("codebuddy", "conv-1", from, to)
+	if err != nil {
+		t.Fatalf("MoveConversation: %v", err)
+	}
+
+	// It has to land where the agent would look for it when launched in `to`.
+	if want := AgentSessionFile("codebuddy", to, "conv-1"); moved != want {
+		t.Errorf("moved to %q, want %q", moved, want)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Error("the original is still there; a move should not leave two copies")
+	}
+	body, err := os.ReadFile(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both the folder and the recorded cwd name the new directory: the folder is
+	// what the agent looks in, the cwd is what lmux reads back for the Agent
+	// browser and the work-directory lookup.
+	if bytes.Contains(body, []byte(from)) {
+		t.Errorf("records still name the old directory:\n%s", body)
+	}
+	if !bytes.Contains(body, []byte(`"cwd":"`+to+`"`)) {
+		t.Errorf("records do not name the new directory:\n%s", body)
+	}
+	if got, err := os.ReadFile(filepath.Join(filepath.Dir(moved), "conv-1", "tool-results", "out.txt")); err != nil || string(got) != "kept" {
+		t.Errorf("tool-results sidecar did not come along: %v %q", err, got)
+	}
+
+	// A second conversation already stored under the target must not be
+	// clobbered by a move.
+	writeConversation(t, home, to, "conv-2", []string{userLine("already here")}, time.Now())
+	writeConversation(t, home, from, "conv-2", []string{userLine("the one being moved")}, time.Now())
+	if _, err := MoveConversation("codebuddy", "conv-2", from, to); err == nil {
+		t.Error("expected the move to refuse rather than overwrite an existing conversation")
+	}
+	if _, err := os.Stat(AgentSessionFile("codebuddy", from, "conv-2")); err != nil {
+		t.Error("a refused move must leave the source in place")
+	}
+
+	// Moving to where it already is changes nothing and is not an error.
+	if _, err := MoveConversation("codebuddy", "conv-1", to, to); err != nil {
+		t.Errorf("moving into its own directory: %v", err)
 	}
 }

@@ -323,83 +323,99 @@ func encodeCodebuddyProjectDir(projectDir string) string {
 	return strings.ReplaceAll(s, "/", "-")
 }
 
-// RecentSessionCwd returns the last recorded working directory for a
-// conversation. Two signals, newest first:
-//  1. an explicit `cd <dir>` prefix on the most recent Bash tool call — where
-//     the agent actually ran work (it cd's between turns, independent of the
-//     process's own cwd, which for a pty-spawned agent never moves);
-//  2. the per-line "cwd" field recorded on every JSONL row (the process cwd,
-//     usually the session launch directory).
+// SessionWorkDir returns the directory a session is about: the first directory
+// the agent cd'd into, or the launch directory when it never cd'd anywhere.
 //
-// Reads only the file tail rather than the whole history. "" when none.
-func RecentSessionCwd(agent, projectDir, sessionID string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+// Deliberately not the *latest* directory the agent worked in. An agent cd's
+// between turns — into a subdirectory, a build tree, a scratch path — so
+// following the newest one makes the label drift: a session created for one
+// project ends up named after whatever the last command happened to touch. What
+// "this session's directory" means to the person reading it is where the
+// session started working, and that answer never changes afterwards: the
+// conversation file is append-only, so the first cd it records stays the first
+// cd forever.
+//
+// Reads the head only. The first cd lands on the earliest records — every
+// conversation on the machine this was written on had it inside the first
+// megabyte of it — while the file itself can be hundreds of megabytes.
+func SessionWorkDir(agent, projectDir, sessionID string) string {
+	path := AgentSessionFile(agent, projectDir, sessionID)
+	if path == "" {
 		return ""
 	}
-	var root, enc string
-	if agent == "claude" {
-		root = ".claude"
-		enc = encodeClaudeProjectDir(projectDir)
-	} else {
-		root = ".codebuddy"
-		enc = encodeCodebuddyProjectDir(projectDir)
-	}
-	path := filepath.Join(home, root, "projects", enc, sessionID+".jsonl")
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
 
-	st, err := f.Stat()
-	if err != nil {
-		return ""
-	}
-	const tailSize = 256 << 10
-	off := st.Size() - tailSize
-	if off < 0 {
-		off = 0
-	}
-	buf := make([]byte, tailSize)
-	n, err := f.ReadAt(buf, off)
-	if err != nil && n == 0 {
-		return ""
-	}
-	buf = buf[:n]
-
-	last := ""
-	lastToolCD := ""
-	start := 0
-	for i := 0; i <= len(buf); i++ {
-		if i == len(buf) || buf[i] == '\n' {
-			line := bytes.TrimSpace(buf[start:i])
-			if len(line) > 0 {
-				var row map[string]interface{}
-				if json.Unmarshal(line, &row) == nil {
-					if cwd, ok := row["cwd"].(string); ok && cwd != "" {
-						last = cwd
-					}
-					// codebuddy records each Bash tool call with an explicit
-					// `cd` prefix when it runs a command elsewhere — that is
-					// the directory the agent actually works in, and it is
-					// independent of the process cwd (which never moves).
-					if row["type"] == "function_call" && row["name"] == "Bash" {
-						if cmd := extractBashCommand(row["arguments"]); cmd != "" {
-							if dir := extractLeadingCd(cmd); dir != "" {
-								lastToolCD = dir
-							}
-						}
+	// ReadLine rather than one large read: a single record can be tens of
+	// kilobytes, and a record boundary is the only place a JSONL line can be
+	// split safely.
+	rd := bufio.NewReaderSize(f, 64<<10)
+	const maxScan = 1 << 20
+	launch := ""
+	scanned := 0
+	for scanned < maxScan {
+		line, err := rd.ReadBytes('\n')
+		scanned += len(line)
+		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+			// The launch directory is on the earliest record that has one.
+			// Cheap substring gates first: parsing every line is what made a
+			// bounded read expensive to begin with.
+			if launch == "" && bytes.Contains(trimmed, []byte(`"cwd"`)) {
+				if m := cwdFieldRE.FindSubmatch(trimmed); m != nil {
+					launch = string(m[1])
+				}
+			}
+			if bytes.Contains(trimmed, []byte(`"function_call"`)) && bytes.Contains(trimmed, []byte("cd ")) {
+				var row struct {
+					Type      string      `json:"type"`
+					Name      string      `json:"name"`
+					Arguments interface{} `json:"arguments"`
+				}
+				if json.Unmarshal(trimmed, &row) == nil && row.Type == "function_call" && row.Name == "Bash" {
+					if dir := extractLeadingCd(extractBashCommand(row.Arguments)); dir != "" && !isTransientDir(dir) {
+						return ExpandHome(dir)
 					}
 				}
 			}
-			start = i + 1
+		}
+		if err != nil {
+			break
 		}
 	}
-	if lastToolCD != "" {
-		return lastToolCD
+	return launch
+}
+
+// isTransientDir reports whether a directory is one an agent visits on the way
+// to its work rather than one a session is about. Without this the very first
+// cd of a session could be a scratch path — "cd /tmp && unzip …" before moving
+// into the project — and the label would freeze there.
+func isTransientDir(dir string) bool {
+	switch dir {
+	case "/", "/tmp", "/private/tmp", "/var/tmp", "/var/folders":
+		return true
 	}
-	return last
+	return strings.HasPrefix(dir, "/var/folders/") || strings.HasPrefix(dir, "/private/var/folders/")
+}
+
+// ExpandHome turns "~/x" into an absolute path. Anything else is returned as it
+// was written. Two callers need it: a `cd ~/x` recorded in a Bash call, and a
+// directory typed into the app, where a user writes a path the way a shell
+// takes it.
+func ExpandHome(dir string) string {
+	if dir != "~" && !strings.HasPrefix(dir, "~/") {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return dir
+	}
+	if dir == "~" {
+		return home
+	}
+	return filepath.Join(home, strings.TrimPrefix(dir, "~/"))
 }
 
 // extractBashCommand pulls the command string out of a codebuddy
@@ -425,20 +441,55 @@ func extractBashCommand(args interface{}) string {
 var cdPrefixRe = regexp.MustCompile(`^\s*cd\s+(.+?)(\s*(&&|;|$))`)
 
 // extractLeadingCd returns the directory a command explicitly cd'd into, e.g.
-// "cd /Volumes/x/proj && git status" -> "/Volumes/x/proj". Handles quoted
-// paths. Empty when the command has no leading cd.
+// "cd /Volumes/x/proj && git status" -> "/Volumes/x/proj".
+//
+// The result is a real path rather than the word as typed: "cd
+// ~/Library/Mobile\ Documents" moves into "…/Library/Mobile Documents", and the
+// backslash that escapes the space is shell syntax, not part of the name. The
+// value ends up in a Finder open and in directory comparisons, where a left-in
+// backslash simply does not exist. "~" is left alone for the caller to expand.
+//
+// Empty when the command has no leading cd, or when the target is relative —
+// the caller wants a directory it can show, not "./sub".
 func extractLeadingCd(cmd string) string {
 	m := cdPrefixRe.FindStringSubmatch(cmd)
 	if m == nil {
 		return ""
 	}
 	dir := strings.TrimSpace(m[1])
-	dir = strings.Trim(dir, `"'`)
+	if len(dir) >= 2 && (dir[0] == '"' || dir[0] == '\'') && dir[len(dir)-1] == dir[0] {
+		// Quoted: taken as written. Inside quotes a backslash is not what
+		// escapes the space, so unescaping would corrupt a name that holds one.
+		dir = dir[1 : len(dir)-1]
+	} else {
+		dir = unescapeShellPath(dir)
+	}
+	// Trailing slashes are not part of the directory's identity.
+	for len(dir) > 1 && strings.HasSuffix(dir, "/") {
+		dir = dir[:len(dir)-1]
+	}
 	// Skip relative / home-only cds that are not informative.
 	if dir == "" || strings.HasPrefix(dir, ".") || (!strings.HasPrefix(dir, "/") && !strings.HasPrefix(dir, "~")) {
 		return ""
 	}
 	return dir
+}
+
+// unescapeShellPath turns the backslash escapes of an unquoted shell word into
+// the characters they stand for: `Mobile\ Documents` -> `Mobile Documents`.
+func unescapeShellPath(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // FindRecentSessionForProjectAfter returns the most recently created codebuddy
@@ -798,16 +849,24 @@ func cwdNeedsLocalizing(path, newCwd string) (bool, error) {
 }
 
 // rewriteCwdStreaming writes a copy of path with every cwd field set to newCwd,
-// then atomically replaces the original. The temp file keeps the original's
-// permissions. Uses ReplaceAllStringFunc so a cwd containing '$' is not treated
-// as a regexp expansion.
+// then atomically replaces the original.
 func rewriteCwdStreaming(path, newCwd string) error {
-	info, err := os.Stat(path)
+	return rewriteCwdFile(path, path, newCwd)
+}
+
+// rewriteCwdFile writes src with every cwd field set to newCwd to dst, replacing
+// dst atomically and keeping src's permissions. src and dst may be the same
+// file.
+//
+// Uses ReplaceAllStringFunc so a cwd containing '$' is not treated as a regexp
+// expansion.
+func rewriteCwdFile(src, dst, newCwd string) error {
+	info, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".localize-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".cwd-*")
 	if err != nil {
 		return err
 	}
@@ -819,7 +878,7 @@ func rewriteCwdStreaming(path, newCwd string) error {
 		}
 	}()
 
-	in, err := os.Open(path)
+	in, err := os.Open(src)
 	if err != nil {
 		tmp.Close()
 		return err
@@ -856,7 +915,7 @@ func rewriteCwdStreaming(path, newCwd string) error {
 	if err := os.Chmod(tmpName, info.Mode().Perm()); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := os.Rename(tmpName, dst); err != nil {
 		return err
 	}
 	keep = true

@@ -474,13 +474,15 @@ func TestUpdateSession(t *testing.T) {
 		t.Errorf("updated session = %+v", updated)
 	}
 
-	// Update to a nonexistent directory → error.
+	// A directory that does not exist is the caller's mistake, and it is caught
+	// before anything moves: changing the directory moves the conversation, so a
+	// rejected directory must not have moved it first.
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/edit",
 		strings.NewReader(`{"project_dir":"/tmp/does-not-exist-xyz"}`))
 	w = httptest.NewRecorder()
 	h.UpdateSession(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("UpdateSession nonexistent dir status = %d, want 500", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateSession nonexistent dir status = %d, want 400", w.Code)
 	}
 
 	// Empty body → bad request.

@@ -40,11 +40,11 @@ final class MockAgentService: AgentSessionService {
         setCBCCalls.append((sessionID, cbcSessionID))
     }
 
-    /// Mock agentCwd: returns a canned working dir per session, or nil.
-    var cwdResults: [String: String] = [:]
+    /// Mock sessionWorkDir: returns a canned working dir per session, or nil.
+    var workDirResults: [String: String] = [:]
 
-    func agentCwd(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
-        cwdResults[sessionID]
+    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
+        workDirResults[sessionID]
     }
 }
 
