@@ -464,3 +464,37 @@ func TestMoveConversationRelocatesAndRewritesCwd(t *testing.T) {
 		t.Errorf("moving into its own directory: %v", err)
 	}
 }
+
+func TestCommandLineHoldsConversation(t *testing.T) {
+	const id = "01a0a887-b17b-7efa-9a03-10d1db068381"
+
+	// ps shows argv, and a shell strips quotes before a command reaches it, so
+	// the id is always bare here — quoted or not at the prompt.
+	inUse := []string{
+		"node /x/bin/codebuddy-code --permission-mode auto -y --resume " + id,
+		"/usr/bin/login -flp me /bin/bash -c exec -l node /x/bin/codebuddy-code --resume " + id,
+		"node /x/codebuddy-code --resume " + id + " --continue",
+	}
+	for _, line := range inUse {
+		if !commandLineHoldsConversation(line, id) {
+			t.Errorf("missed an agent holding the conversation:\n  %s", line)
+		}
+	}
+
+	// Merely mentioning the id is not holding it: a search, an editor, a shell
+	// history line. Nor is a longer id that starts with the same characters —
+	// these would otherwise block an edit for no reason.
+	notInUse := []string{
+		"",
+		"grep -r " + id + " /Users/x/.codebuddy",
+		"vi " + id + ".jsonl",
+		"node /x/codebuddy-code --resume " + id + "-extra",
+		"node /x/codebuddy-code --resume 01a0a887-b17b-7efa-9a03-10d1db068380",
+		"node /x/codebuddy-code --resume ",
+	}
+	for _, line := range notInUse {
+		if commandLineHoldsConversation(line, id) {
+			t.Errorf("false positive:\n  %s", line)
+		}
+	}
+}

@@ -206,6 +206,9 @@ func (h *Handler) UpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
+	// Courtesy check only: the status is never set to running, so what actually
+	// protects a live conversation is the check inside MoveConversation, which
+	// asks the process table.
 	if sess.Status == session.StatusRunning {
 		writeError(w, http.StatusBadRequest, "stop the session before editing")
 		return
@@ -735,10 +738,18 @@ func (h *Handler) LocalizeSessionCwd(w http.ResponseWriter, r *http.Request) {
 			"updated": false, "reason": "no conversation bound"})
 		return
 	}
-	// Never rewrite a conversation the agent is currently appending to.
+	// Never rewrite a conversation the agent is currently appending to. Two
+	// signals, because only the second one ever fires: the status is never set
+	// to running (nothing maintains it), while the process table knows whether
+	// an agent actually has this conversation loaded.
 	if sess.Status == session.StatusRunning {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"updated": false, "reason": "session running"})
+		return
+	}
+	if codebuddy.ConversationInUse(sess.CBCSessionID) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"updated": false, "reason": "conversation in use"})
 		return
 	}
 

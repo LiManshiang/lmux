@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -476,6 +477,51 @@ func readEdge(path string, offset int64) []byte {
 	return buf[:n]
 }
 
+// ConversationInUse reports whether a live agent has this conversation loaded —
+// a process running with `--resume <id>` or `--session-id <id>`.
+//
+// The session store cannot answer this. Nothing ever sets a session's status to
+// running, so a session whose agent is working still reads as stopped, and both
+// guards that trusted it were dead code. Nothing may rewrite or move a
+// conversation a live agent holds: the agent resolves its file from the
+// directory it was launched in, so it keeps writing where it started while the
+// history it loaded has gone somewhere else.
+//
+// A process table that cannot be read counts as "in use": refusing an edit that
+// would have been safe costs a retry, while splitting a conversation costs the
+// work.
+func ConversationInUse(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	out, err := exec.Command("ps", "-Ao", "command=").Output()
+	if err != nil {
+		return true
+	}
+	return commandLineHoldsConversation(string(out), sessionID)
+}
+
+// commandLineHoldsConversation matches the flags the CLI takes a conversation id
+// in, so a command that merely mentions the id — a grep, an editor, a shell
+// history line — is not mistaken for an agent holding it. The id has to end
+// where the flag's argument ends.
+func commandLineHoldsConversation(psOutput, sessionID string) bool {
+	for _, line := range strings.Split(psOutput, "\n") {
+		for _, flag := range []string{"--resume ", "--session-id "} {
+			needle := flag + sessionID
+			i := strings.Index(line, needle)
+			if i < 0 {
+				continue
+			}
+			switch rest := line[i+len(needle):]; {
+			case rest == "", rest[0] == ' ', rest[0] == '"', rest[0] == '\'':
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ErrConversationMissing reports that no conversation file carries the id, so
 // there is nothing to move. A session can outlive its conversation (deleted, or
 // bound to an id that was never stored here), and callers need to tell that
@@ -527,6 +573,9 @@ func MoveConversation(agent, sessionID, fromDir, toDir string) (string, error) {
 		return dst, nil // already where it belongs
 	case isFile(dst):
 		return "", fmt.Errorf("a different conversation with this ID is already stored for %s", toDir)
+	}
+	if ConversationInUse(sessionID) {
+		return "", fmt.Errorf("a running agent still has this conversation open; stop it first")
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
