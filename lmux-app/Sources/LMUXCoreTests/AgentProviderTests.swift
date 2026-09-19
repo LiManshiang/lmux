@@ -40,12 +40,7 @@ final class MockAgentService: AgentSessionService {
         setCBCCalls.append((sessionID, cbcSessionID))
     }
 
-    /// Mock sessionWorkDir: returns a canned working dir per session, or nil.
-    var workDirResults: [String: String] = [:]
 
-    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
-        workDirResults[sessionID]
-    }
 }
 
 final class CodebuddyProviderTests: XCTestCase {

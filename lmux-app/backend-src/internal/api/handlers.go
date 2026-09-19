@@ -356,29 +356,6 @@ func (h *Handler) AgentSessionValid(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
 }
 
-// AgentWorkDir returns the directory a session is about — the first place its
-// agent cd'd into, or the launch directory when it never cd'd anywhere.
-//
-// Stable by construction, which is the point: the conversation file is
-// append-only, so the first cd it records stays the first. The header and
-// "Open in Finder" both show this, and a session that drifted through a dozen
-// directories while working (a subdirectory, a build tree) keeps the label of
-// the directory it was created for.
-func (h *Handler) AgentWorkDir(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Agent      string `json:"agent"`
-		ProjectDir string `json:"project_dir"`
-		SessionID  string `json:"session_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
-		body.Agent == "" || body.ProjectDir == "" || body.SessionID == "" {
-		writeError(w, http.StatusBadRequest, "invalid agent/project_dir/session_id")
-		return
-	}
-	dir := codebuddy.SessionWorkDir(body.Agent, body.ProjectDir, body.SessionID)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"work_dir": dir})
-}
-
 // ListAgentConversations returns every conversation JSONL for an agent
 // (filesystem-level, independent of lmux session records), optionally
 // filtered to one project directory. Used by the Agent browser.
@@ -423,14 +400,10 @@ func (h *Handler) AdoptSessionWorkDir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing session id")
 		return
 	}
-	var body struct {
-		WorkDir string `json:"work_dir"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	sess, adopted, err := h.mgr.AdoptWorkDir(id, body.WorkDir)
+	// The directory is worked out from the conversation itself — the app only
+	// has to ask, so the rule (and the timestamp that makes it safe) lives in
+	// one place.
+	sess, adopted, err := h.mgr.AdoptWorkDir(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

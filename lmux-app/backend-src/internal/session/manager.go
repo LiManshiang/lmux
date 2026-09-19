@@ -35,30 +35,37 @@ func ResolveProjectDir(dir string) (string, error) {
 	return abs, nil
 }
 
-// AdoptWorkDir records the directory a session's agent went to work in, the
+// AdoptWorkDir gives a session the directory its agent went to work in, the
 // first time that is known, and reports whether it changed anything.
 //
-// A session is created somewhere — often just the home directory — and the
-// first thing its agent does is cd into the project the session is actually
-// about. That directory is what the session's directory should be, and the
-// agent's own history is the only record of it (nothing tracks the agent's
-// current directory: the process cwd never moves and the records keep the
-// launch directory).
+// A session is created somewhere — often the home directory — and the first
+// thing its agent does is cd into the project the session is really about. That
+// directory becomes the session's directory, and the agent's own history is the
+// only record of it: nothing tracks the agent's current directory (the process
+// cwd never moves, the records keep the launch directory, and the per-process
+// state file agrees with the process).
 //
-// Only the first determination counts. Once a person has set the directory by
-// hand the answer is theirs and this does nothing, which is also why the flag
-// exists: without it, re-inferring from the agent's history would eventually
-// overwrite a hand-made choice.
+// Two things stop it:
+//   - a person already chose the directory, so the answer is theirs;
+//   - the cd is older than the session. A conversation can be bound to a
+//     session long after it was written (imported, resumed elsewhere, bound by
+//     hand), and its oldest cd then names a directory from that earlier life.
 //
-// The conversation itself is not moved here. Its file follows the directory
-// when the session is next prepared for launch — the only moment nothing is
-// writing to it.
-func (m *Manager) AdoptWorkDir(id, dir string) (*Session, bool, error) {
+// Only the directory is recorded. The conversation's file follows it when the
+// session is next prepared for launch, the one moment nothing is writing to it.
+func (m *Manager) AdoptWorkDir(id string) (*Session, bool, error) {
 	sess, err := m.store.Get(id)
 	if err != nil {
 		return nil, false, err
 	}
-	if sess.DirByHand || dir == "" {
+	if sess.DirByHand || sess.CBCSessionID == "" || sess.ProjectDir == "" {
+		return sess, false, nil
+	}
+	dir, at := codebuddy.SessionWorkDirAt(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
+	if dir == "" || dir == sess.ProjectDir {
+		return sess, false, nil
+	}
+	if !at.IsZero() && at.Before(sess.CreatedAt) {
 		return sess, false, nil
 	}
 	absDir, err := ResolveProjectDir(dir)

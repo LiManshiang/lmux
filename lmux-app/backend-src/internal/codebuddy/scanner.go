@@ -339,13 +339,26 @@ func encodeCodebuddyProjectDir(projectDir string) string {
 // conversation on the machine this was written on had it inside the first
 // megabyte of it — while the file itself can be hundreds of megabytes.
 func SessionWorkDir(agent, projectDir, sessionID string) string {
+	dir, _ := SessionWorkDirAt(agent, projectDir, sessionID)
+	return dir
+}
+
+// SessionWorkDirAt is SessionWorkDir plus the moment the directory was cd'd
+// into: the timestamp of the record that carried that command.
+//
+// The caller needs it to tell a cd this session made from one that belongs to
+// the conversation's earlier life. A conversation can be handed to a session
+// long after it was written — imported, resumed elsewhere, bound by hand — and
+// its oldest cd then names a directory this session has nothing to do with.
+// Nothing in the file distinguishes them except when they happened.
+func SessionWorkDirAt(agent, projectDir, sessionID string) (string, time.Time) {
 	path := AgentSessionFile(agent, projectDir, sessionID)
 	if path == "" {
-		return ""
+		return "", time.Time{}
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", time.Time{}
 	}
 	defer f.Close()
 
@@ -373,10 +386,11 @@ func SessionWorkDir(agent, projectDir, sessionID string) string {
 					Type      string      `json:"type"`
 					Name      string      `json:"name"`
 					Arguments interface{} `json:"arguments"`
+					Timestamp int64       `json:"timestamp"`
 				}
 				if json.Unmarshal(trimmed, &row) == nil && row.Type == "function_call" && row.Name == "Bash" {
 					if dir := extractLeadingCd(extractBashCommand(row.Arguments)); dir != "" && !isTransientDir(dir) {
-						return ExpandHome(dir)
+						return ExpandHome(dir), time.UnixMilli(row.Timestamp)
 					}
 				}
 			}
@@ -385,7 +399,7 @@ func SessionWorkDir(agent, projectDir, sessionID string) string {
 			break
 		}
 	}
-	return launch
+	return launch, time.Time{}
 }
 
 // isTransientDir reports whether a directory is one an agent visits on the way

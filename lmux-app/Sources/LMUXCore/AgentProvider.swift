@@ -59,16 +59,6 @@ public protocol AgentSessionService {
     /// binding even when detection was the only path that learned the ID.
     func setCBCSessionID(sessionID: String, cbcSessionID: String) async throws
 
-    /// The directory a session's agent first worked in (the first place it cd'd
-    /// into). Offered in the edit sheet as a suggestion for a session whose
-    /// stored directory is not where its work actually happened; the header and
-    /// "Open in Finder" show the stored directory itself.
-    ///
-    /// Stable on purpose: an agent cd's between turns (a subdirectory, a build
-    /// tree), and a label that followed those would drift away from the
-    /// directory the session was created for. The first directory it recorded
-    /// working in never changes, because the conversation file is append-only.
-    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String?
 }
 
 /// Encapsulates everything that is agent-specific. Main flow (connect,

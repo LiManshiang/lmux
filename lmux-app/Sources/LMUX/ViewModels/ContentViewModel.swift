@@ -1448,12 +1448,6 @@ class ContentViewModel: ObservableObject {
         await api.locateConversation(agent: agent, sessionID: cbcSessionID, projectDir: projectDir)
     }
 
-    /// The directory the conversation's own records say the agent worked in.
-    /// Used by the edit sheet to suggest where a session really belongs.
-    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
-        await api.sessionWorkDir(agent: agent, projectDir: projectDir, sessionID: sessionID)
-    }
-
     // MARK: - Agent browser favourites
 
     private static let agentStarsKey = "agent_browser_stars"
@@ -2103,13 +2097,8 @@ class ContentViewModel: ObservableObject {
     /// is writing to it.
     private func adoptWorkDirs() async {
         for session in sessions where !session.dirByHand && isSessionActive(session.id) {
-            guard let cbc = session.cbcSessionID, !cbc.isEmpty else { continue }
-            guard let work = await api.sessionWorkDir(
-                agent: session.agentType,
-                projectDir: session.projectDir,
-                sessionID: cbc
-            ), work != session.projectDir else { continue }
-            if await api.adoptWorkDir(sessionID: session.id, workDir: work) {
+            guard session.cbcSessionID?.isEmpty == false else { continue }
+            if await api.adoptWorkDir(sessionID: session.id) {
                 // The sidebar, the header and the edit sheet all read the
                 // session's directory, so they pick this up from the refresh.
                 await refreshSessions()

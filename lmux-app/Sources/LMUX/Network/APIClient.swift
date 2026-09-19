@@ -215,67 +215,6 @@ class APIClient: AgentSessionService {
         return (resp.tokens, resp.contextWindow, resp.model, resp.awaitingInput ?? false)
     }
 
-    /// The directory a session is about (the first place its agent worked), or
-    /// nil when the conversation has no readable records.
-    func sessionWorkDir(agent: AgentType, projectDir: String, sessionID: String) async -> String? {
-        struct Body: Codable {
-            let agent: String
-            let projectDir: String
-            let sessionID: String
-            enum CodingKeys: String, CodingKey {
-                case agent
-                case projectDir = "project_dir"
-                case sessionID = "session_id"
-            }
-        }
-        struct Response: Codable {
-            let workDir: String?
-            enum CodingKeys: String, CodingKey {
-                case workDir = "work_dir"
-            }
-        }
-        guard let data = try? await post("/api/agent/work-dir", body: Body(agent: agent.rawValue, projectDir: projectDir, sessionID: sessionID)),
-              let resp = try? decode(Response.self, from: data),
-              let dir = resp.workDir, !dir.isEmpty else {
-            return nil
-        }
-        return dir
-    }
-
-    /// Where a conversation's file actually is, and whether `projectDir` is the
-    /// directory that owns it. `found == false` means no file has that
-    /// conversation id.
-    func locateConversation(agent: AgentType, sessionID: String, projectDir: String) async -> ConversationLocation? {
-        struct Body: Codable {
-            let agent: String
-            let sessionID: String
-            let projectDir: String
-            enum CodingKeys: String, CodingKey {
-                case agent
-                case sessionID = "session_id"
-                case projectDir = "project_dir"
-            }
-        }
-        struct Response: Codable {
-            let found: Bool
-            let projectDir: String?
-            let matches: Bool?
-            enum CodingKeys: String, CodingKey {
-                case found, matches
-                case projectDir = "project_dir"
-            }
-        }
-        guard let data = try? await post("/api/agent/conversation-location", body: Body(agent: agent.rawValue, sessionID: sessionID, projectDir: projectDir)),
-              let resp = try? decode(Response.self, from: data) else {
-            return nil
-        }
-        return ConversationLocation(
-            found: resp.found,
-            projectDir: resp.projectDir,
-            matches: resp.matches ?? true
-        )
-    }
-
     /// File-level list of every agent conversation, optionally filtered to one
     /// agent and/or one project directory. agent "" and projectDir "" mean all.
     /// Conversations already bound to an lmux session are excluded by the
@@ -382,18 +321,48 @@ class APIClient: AgentSessionService {
         _ = try? await post("/api/sessions/\(sessionID)/prepare-conversation", body: Optional<String>.none)
     }
 
-    /// Record the directory the session's agent went to work in, while the
-    /// session has not been given a directory by hand. The backend decides;
-    /// `adopted` says whether it took.
-    func adoptWorkDir(sessionID: String, workDir: String) async -> Bool {
-        struct Body: Codable {
-            let workDir: String
-            enum CodingKeys: String, CodingKey { case workDir = "work_dir" }
-        }
+    /// Ask the backend to give the session the directory its agent went to work
+    /// in, if it has not been given one by hand. The backend works the directory
+    /// out from the conversation and decides; `adopted` says whether it took.
+    func adoptWorkDir(sessionID: String) async -> Bool {
         struct Response: Codable { let adopted: Bool? }
-        guard let data = try? await post("/api/sessions/\(sessionID)/work-dir", body: Body(workDir: workDir)),
+        guard let data = try? await post("/api/sessions/\(sessionID)/work-dir", body: Optional<String>.none),
               let resp = try? decode(Response.self, from: data) else { return false }
         return resp.adopted ?? false
+    }
+
+    /// Where a conversation's file actually is, and whether `projectDir` is the
+    /// directory that owns it. `found == false` means no file has that
+    /// conversation id.
+    func locateConversation(agent: AgentType, sessionID: String, projectDir: String) async -> ConversationLocation? {
+        struct Body: Codable {
+            let agent: String
+            let sessionID: String
+            let projectDir: String
+            enum CodingKeys: String, CodingKey {
+                case agent
+                case sessionID = "session_id"
+                case projectDir = "project_dir"
+            }
+        }
+        struct Response: Codable {
+            let found: Bool
+            let projectDir: String?
+            let matches: Bool?
+            enum CodingKeys: String, CodingKey {
+                case found, matches
+                case projectDir = "project_dir"
+            }
+        }
+        guard let data = try? await post("/api/agent/conversation-location", body: Body(agent: agent.rawValue, sessionID: sessionID, projectDir: projectDir)),
+              let resp = try? decode(Response.self, from: data) else {
+            return nil
+        }
+        return ConversationLocation(
+            found: resp.found,
+            projectDir: resp.projectDir,
+            matches: resp.matches ?? true
+        )
     }
 
     // MARK: - Session export / import
