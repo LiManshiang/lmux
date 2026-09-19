@@ -36,7 +36,7 @@ func ResolveProjectDir(dir string) (string, error) {
 }
 
 // FollowConversation points a session at the conversation its own has moved on
-// to, when the user ran /clear or /model inside the agent, and reports whether
+// to, when the user ran /clear inside the agent, and reports whether
 // it changed anything.
 //
 // /clear starts a new conversation and freezes the old one. The frozen file is

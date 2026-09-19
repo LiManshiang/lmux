@@ -529,14 +529,19 @@ func commandLineHoldsConversation(psOutput, sessionID string) bool {
 var ErrConversationMissing = errors.New("conversation not found on this machine")
 
 // conversationSuccessorWindow bounds how soon after a conversation's last record
-// its successor has to start. /clear and /model begin the new conversation in
+// its successor has to start. /clear begins the new conversation in
 // the same instant the old one stops — milliseconds later, not seconds — so a
 // wider window would only invite taking a conversation that belongs to something
 // else in the same folder.
 const conversationSuccessorWindow = 5 * time.Second
 
 // ConversationSuccessor returns the conversation a session's conversation moved
-// on to, if the user ran /clear or /model inside the agent.
+// on to, if the user ran /clear inside the agent.
+//
+// /model is NOT one of these: it is an ordinary command recorded inside the
+// conversation, which keeps being written (verified 2026-09-19: the same file
+// grew from 9 to 17 records across a model switch). Only /clear leaves the old
+// file frozen and starts another.
 //
 // Those commands start a new conversation and freeze the old one. The frozen
 // file stays perfectly valid — it is right there, readable — which is why a

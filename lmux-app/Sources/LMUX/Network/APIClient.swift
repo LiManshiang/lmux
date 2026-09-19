@@ -318,7 +318,7 @@ class APIClient: AgentSessionService {
     /// and report which conversation that is.
     ///
     /// Three things happen in the backend, in this order: a conversation that
-    /// moved on (/clear or /model inside the agent) is followed, the file is
+    /// moved on (/clear inside the agent) is followed, the file is
     /// moved into the session's directory's folder, and the cwd recorded inside
     /// it is made to agree with that directory. The returned id is the one to
     /// resume — nil when the call could not be made, so the caller falls back to
@@ -338,8 +338,8 @@ class APIClient: AgentSessionService {
         return id
     }
 
-    /// Point the session at the conversation its own moved on to after /clear or
-    /// /model inside the agent. `followed` says whether it changed.
+    /// Point the session at the conversation its own moved on to after /clear
+    /// inside the agent. `followed` says whether it changed.
     func followConversation(sessionID: String) async -> Bool {
         struct Response: Codable { let followed: Bool? }
         guard let data = try? await post("/api/sessions/\(sessionID)/follow-conversation", body: Optional<String>.none),

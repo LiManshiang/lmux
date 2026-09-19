@@ -695,7 +695,7 @@ func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 }
 
 // FollowSessionConversation points a session at the conversation its own moved on
-// to after /clear or /model, so the meters stop reading the frozen one and the
+// to after /clear, so the meters stop reading the frozen one and the
 // next resume continues the live conversation.
 func (h *Handler) FollowSessionConversation(w http.ResponseWriter, r *http.Request) {
 	id := extractIDFromPath(r.URL.Path, "follow-conversation")
@@ -720,7 +720,7 @@ func (h *Handler) FollowSessionConversation(w http.ResponseWriter, r *http.Reque
 // Three things, in order, all of them about the moment before the agent starts —
 // the only moment nothing is writing to it:
 //
-//  1. Follow a conversation that moved on (/clear or /model inside the agent):
+//  1. Follow a conversation that moved on (/clear inside the agent):
 //     the session's own history continues in a new file, and resuming the frozen
 //     one is what makes a restart lose everything after the command.
 //  2. Move the conversation into the folder for the session's directory, which

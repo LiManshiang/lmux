@@ -1996,7 +1996,7 @@ class ContentViewModel: ObservableObject {
             : backend?.cbcSessionID
 
         // Prepared first, and for the same reason as connectToSession: the
-        // conversation may have moved on (/clear or /model), and the id the
+        // conversation may have moved on (/clear starts a new one), and the id the
         // preparation reports is the one to resume.
         let prepared = await api.prepareConversation(sessionID: entry.sessionID)
         let decision = await provider.resolveSession(
@@ -2108,8 +2108,8 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    /// Follow a conversation that moved on because the user ran /clear or /model
-    /// inside the agent.
+    /// Follow a conversation that moved on because the user ran /clear inside the
+    /// agent.
     ///
     /// The frozen conversation stays valid and readable, so without this the
     /// meters keep reporting it (the model and percentage that never move again)

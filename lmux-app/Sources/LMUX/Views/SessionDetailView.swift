@@ -230,7 +230,7 @@ struct SessionDetailView: View {
 
             Task {
                 // Prepare before deciding, not after: the session's conversation
-                // may have moved on (/clear or /model starts a new one and
+                // may have moved on (/clear starts a new one and
                 // freezes the old), and preparing is what follows it — as well as
                 // moving the file into the session's directory and repairing the
                 // cwd the CLI matches on. The id it reports is the one to resume.
