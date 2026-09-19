@@ -314,11 +314,37 @@ class APIClient: AgentSessionService {
         _ = try await post("/api/sessions/\(sessionID)/cbc-session", body: Body(cbcSessionID: cbcSessionID))
     }
 
-    /// Get the session's conversation ready to be resumed from its directory:
-    /// the file is moved into that directory's folder first (nothing is writing
-    /// to it yet), then its records' cwd is made to agree with it.
-    func prepareConversation(sessionID: String) async {
-        _ = try? await post("/api/sessions/\(sessionID)/prepare-conversation", body: Optional<String>.none)
+    /// Get the session's conversation ready to be resumed from its directory,
+    /// and report which conversation that is.
+    ///
+    /// Three things happen in the backend, in this order: a conversation that
+    /// moved on (/clear or /model inside the agent) is followed, the file is
+    /// moved into the session's directory's folder, and the cwd recorded inside
+    /// it is made to agree with that directory. The returned id is the one to
+    /// resume — nil when the call could not be made, so the caller falls back to
+    /// the id it already had.
+    func prepareConversation(sessionID: String) async -> String? {
+        struct Response: Codable {
+            let prepared: Bool?
+            let conversationID: String?
+            enum CodingKeys: String, CodingKey {
+                case prepared
+                case conversationID = "conversation_id"
+            }
+        }
+        guard let data = try? await post("/api/sessions/\(sessionID)/prepare-conversation", body: Optional<String>.none),
+              let resp = try? decode(Response.self, from: data),
+              let id = resp.conversationID, !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// Point the session at the conversation its own moved on to after /clear or
+    /// /model inside the agent. `followed` says whether it changed.
+    func followConversation(sessionID: String) async -> Bool {
+        struct Response: Codable { let followed: Bool? }
+        guard let data = try? await post("/api/sessions/\(sessionID)/follow-conversation", body: Optional<String>.none),
+              let resp = try? decode(Response.self, from: data) else { return false }
+        return resp.followed ?? false
     }
 
     /// Ask the backend to give the session the directory its agent went to work

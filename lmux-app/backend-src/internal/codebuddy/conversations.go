@@ -528,6 +528,105 @@ func commandLineHoldsConversation(psOutput, sessionID string) bool {
 // apart from a move that failed.
 var ErrConversationMissing = errors.New("conversation not found on this machine")
 
+// conversationSuccessorWindow bounds how soon after a conversation's last record
+// its successor has to start. /clear and /model begin the new conversation in
+// the same instant the old one stops — milliseconds later, not seconds — so a
+// wider window would only invite taking a conversation that belongs to something
+// else in the same folder.
+const conversationSuccessorWindow = 5 * time.Second
+
+// ConversationSuccessor returns the conversation a session's conversation moved
+// on to, if the user ran /clear or /model inside the agent.
+//
+// Those commands start a new conversation and freeze the old one. The frozen
+// file stays perfectly valid — it is right there, readable — which is why a
+// session keeps resuming pre-clear history and why the meters keep reading it.
+// Nothing records the link: not the old file (it mentions no successor), not the
+// new one in any usable way (it names the command, not where it came from), and
+// not the agent's per-process state file, which keeps naming the conversation it
+// was launched with. What is left is that the successor's first record follows
+// immediately after the predecessor's last.
+//
+// "" when the conversation is still the live one.
+func ConversationSuccessor(agent, projectDir, sessionID string) string {
+	path := AgentSessionFile(agent, projectDir, sessionID)
+	last, ok := lastRecordTime(path)
+	if !ok {
+		return ""
+	}
+	best, bestAt := "", time.Time{}
+	for _, cand := range conversationFilesIn(filepath.Dir(path)) {
+		id := strings.TrimSuffix(filepath.Base(cand), ".jsonl")
+		if id == sessionID {
+			continue
+		}
+		first, ok := firstRecordTime(cand)
+		if !ok || !first.After(last) || first.Sub(last) > conversationSuccessorWindow {
+			continue
+		}
+		if bestAt.IsZero() || first.Before(bestAt) {
+			best, bestAt = id, first
+		}
+	}
+	return best
+}
+
+// conversationFilesIn lists the conversations stored in a project folder.
+func conversationFilesIn(folder string) []string {
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			out = append(out, filepath.Join(folder, e.Name()))
+		}
+	}
+	return out
+}
+
+// firstRecordTime returns the timestamp of the first record that carries one.
+// Reads the head: records are appended, so the first one is at the front.
+func firstRecordTime(path string) (time.Time, bool) {
+	for _, line := range bytes.Split(readEdge(path, 0), []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		if at, ok := recordTime(line); ok {
+			return at, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// lastRecordTime returns the timestamp of the last record that carries one.
+// Reads the tail, then walks back to the start of the final complete line — the
+// last record can be large, so it may not fit the window whole.
+func lastRecordTime(path string) (time.Time, bool) {
+	buf := readEdge(path, -1)
+	lines := bytes.Split(buf, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		if len(bytes.TrimSpace(lines[i])) == 0 {
+			continue
+		}
+		if at, ok := recordTime(lines[i]); ok {
+			return at, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func recordTime(line []byte) (time.Time, bool) {
+	var row struct {
+		Timestamp int64 `json:"timestamp"`
+	}
+	if json.Unmarshal(line, &row) != nil || row.Timestamp <= 0 {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(row.Timestamp), true
+}
+
 // MoveConversation relocates a conversation so the agent still finds it from a
 // new project directory, rewriting the cwd its records carry.
 //

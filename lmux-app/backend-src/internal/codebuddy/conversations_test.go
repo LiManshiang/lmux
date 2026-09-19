@@ -2,6 +2,7 @@ package codebuddy
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -497,4 +498,59 @@ func TestCommandLineHoldsConversation(t *testing.T) {
 			t.Errorf("false positive:\n  %s", line)
 		}
 	}
+}
+
+func TestConversationSuccessorFollowsAClearedConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	resetConversationsCache()
+
+	dir := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 19, 21, 27, 44, 0, time.Local)
+
+	// A conversation that is still going: the successor rule must say nothing.
+	writeTimedConversation(t, home, dir, "live", []int64{base.UnixMilli(), base.UnixMilli() + 1000})
+	if got := ConversationSuccessor("codebuddy", dir, "live"); got != "" {
+		t.Errorf("a conversation with no successor returned %q", got)
+	}
+
+	// /clear: the old conversation stops and the new one begins 29 ms later,
+	// exactly as observed on this machine.
+	writeTimedConversation(t, home, dir, "old", []int64{base.UnixMilli() - 5000, base.UnixMilli()})
+	writeTimedConversation(t, home, dir, "new", []int64{base.UnixMilli() + 29, base.UnixMilli() + 4000})
+	if got := ConversationSuccessor("codebuddy", dir, "old"); got != "new" {
+		t.Errorf("successor = %q, want \"new\"", got)
+	}
+
+	// Another session's conversation that happens to be written in the same
+	// folder is not a successor: it did not begin the instant this one ended.
+	writeTimedConversation(t, home, dir, "other", []int64{base.UnixMilli() + 60_000})
+	if got := ConversationSuccessor("codebuddy", dir, "old"); got != "new" {
+		t.Errorf("a later conversation was taken as the successor: %q", got)
+	}
+	// …and a conversation that began *before* this one ended is not one either.
+	writeTimedConversation(t, home, dir, "earlier", []int64{base.UnixMilli() - 1000})
+	if got := ConversationSuccessor("codebuddy", dir, "old"); got != "new" {
+		t.Errorf("an earlier conversation was taken as the successor: %q", got)
+	}
+
+	if got := ConversationSuccessor("codebuddy", dir, "missing"); got != "" {
+		t.Errorf("an unknown conversation returned %q", got)
+	}
+}
+
+// writeTimedConversation writes a conversation whose records carry the given
+// timestamps, so the successor rule can be exercised on its real input.
+func writeTimedConversation(t *testing.T, home, projectDir, id string, stamps []int64) {
+	t.Helper()
+	lines := make([]string, 0, len(stamps))
+	for i, ts := range stamps {
+		lines = append(lines, fmt.Sprintf(
+			`{"sessionId":%q,"type":"message","role":"user","timestamp":%d,"content":[{"type":"input_text","text":"m%d"}]}`,
+			id, ts, i))
+	}
+	writeConversation(t, home, projectDir, id, lines, time.Now())
 }

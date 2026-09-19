@@ -1995,8 +1995,12 @@ class ContentViewModel: ObservableObject {
             ? entry.cbcSessionID
             : backend?.cbcSessionID
 
+        // Prepared first, and for the same reason as connectToSession: the
+        // conversation may have moved on (/clear or /model), and the id the
+        // preparation reports is the one to resume.
+        let prepared = await api.prepareConversation(sessionID: entry.sessionID)
         let decision = await provider.resolveSession(
-            cbcSessionID: effectiveCBC,
+            cbcSessionID: prepared ?? effectiveCBC,
             projectDir: entry.projectDir,
             allowHistoryLookup: isAgentMode,
             service: api
@@ -2010,9 +2014,6 @@ class ContentViewModel: ObservableObject {
             if let backend = backend, backend.cbcSessionID != sessionID {
                 try? await api.setCBCSessionID(sessionID: entry.sessionID, cbcSessionID: sessionID)
             }
-            // Same pre-resume repair as connectToSession: localize a
-            // conversation whose recorded cwd points somewhere else.
-            await api.prepareConversation(sessionID: entry.sessionID)
             mgr.connect(
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
@@ -2072,6 +2073,7 @@ class ContentViewModel: ObservableObject {
                 await self.refreshSessions()
                 await self.detectAwaitingInput()
                 await self.adoptWorkDirs()
+                await self.followClearedConversations()
             }
         }
     }
@@ -2101,6 +2103,22 @@ class ContentViewModel: ObservableObject {
             if await api.adoptWorkDir(sessionID: session.id) {
                 // The sidebar, the header and the edit sheet all read the
                 // session's directory, so they pick this up from the refresh.
+                await refreshSessions()
+            }
+        }
+    }
+
+    /// Follow a conversation that moved on because the user ran /clear or /model
+    /// inside the agent.
+    ///
+    /// The frozen conversation stays valid and readable, so without this the
+    /// meters keep reporting it (the model and percentage that never move again)
+    /// and the next resume continues pre-clear history — losing everything the
+    /// user has done since. The backend works out the successor; this asks.
+    private func followClearedConversations() async {
+        for session in sessions where isSessionActive(session.id) {
+            guard session.cbcSessionID?.isEmpty == false else { continue }
+            if await api.followConversation(sessionID: session.id) {
                 await refreshSessions()
             }
         }

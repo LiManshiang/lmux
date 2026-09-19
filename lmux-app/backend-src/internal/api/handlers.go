@@ -694,15 +694,41 @@ func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
-// LocalizeSessionCwd rewrites every cwd recorded inside a session's
-// conversation JSONL to the session's current project directory.
+// FollowSessionConversation points a session at the conversation its own moved on
+// to after /clear or /model, so the meters stop reading the frozen one and the
+// next resume continues the live conversation.
+func (h *Handler) FollowSessionConversation(w http.ResponseWriter, r *http.Request) {
+	id := extractIDFromPath(r.URL.Path, "follow-conversation")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+	sess, followed, err := h.mgr.FollowConversation(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"followed": followed,
+		"session":  sess,
+	})
+}
+
+// PrepareConversation gets a session's conversation ready to be resumed from
+// the session's directory, and reports which conversation that turned out to be.
 //
-// The CodeBuddy CLI resolves a resumable conversation by matching the cwd
-// stored inside its content against the process working directory, not by the
-// file's location. A conversation whose early history was recorded under a
-// path that no longer exists here (another Mac, a different username) fails to
-// resume and silently starts a fresh, empty conversation. Calling this before
-// a resume repairs that history in place.
+// Three things, in order, all of them about the moment before the agent starts —
+// the only moment nothing is writing to it:
+//
+//  1. Follow a conversation that moved on (/clear or /model inside the agent):
+//     the session's own history continues in a new file, and resuming the frozen
+//     one is what makes a restart lose everything after the command.
+//  2. Move the conversation into the folder for the session's directory, which
+//     is where the agent looks for it.
+//  3. Rewrite the cwd recorded inside it: the CLI matches a resumable
+//     conversation by that cwd, not by the file's location, so history recorded
+//     under a path that no longer exists here (another Mac, another username)
+//     silently starts an empty conversation instead.
 func (h *Handler) PrepareConversation(w http.ResponseWriter, r *http.Request) {
 	id := extractID(r.URL.Path, "/api/sessions/")
 	if id == "" {
@@ -719,6 +745,9 @@ func (h *Handler) PrepareConversation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"prepared": false, "reason": "no conversation bound"})
 		return
+	}
+	if followed, changed, err := h.mgr.FollowConversation(id); err == nil && changed {
+		sess = followed
 	}
 
 	// A session being started is the moment its conversation can be put where
@@ -768,7 +797,11 @@ func (h *Handler) PrepareConversation(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		codebuddy.InvalidateCache()
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"prepared": true, "localized": changed})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"prepared":        true,
+		"localized":       changed,
+		"conversation_id": sess.CBCSessionID,
+	})
 }
 func (h *Handler) PinSession(w http.ResponseWriter, r *http.Request) {
 	id := extractIDFromPath(r.URL.Path, "pin")

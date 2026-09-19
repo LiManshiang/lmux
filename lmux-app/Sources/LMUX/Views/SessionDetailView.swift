@@ -229,19 +229,20 @@ struct SessionDetailView: View {
             let isAgentSession = restoreEntry?.launchMode == .agent || mgr.detectedAgentType != nil || (effectiveCBC != nil && !effectiveCBC!.isEmpty)
 
             Task {
+                // Prepare before deciding, not after: the session's conversation
+                // may have moved on (/clear or /model starts a new one and
+                // freezes the old), and preparing is what follows it — as well as
+                // moving the file into the session's directory and repairing the
+                // cwd the CLI matches on. The id it reports is the one to resume.
+                let prepared = await viewModel.api.prepareConversation(sessionID: id)
                 let decision = await provider.resolveSession(
-                    cbcSessionID: effectiveCBC,
+                    cbcSessionID: prepared ?? effectiveCBC,
                     projectDir: dir,
                     allowHistoryLookup: isAgentSession,
                     service: viewModel.api
                 )
                 switch decision {
                 case .resume(let sessionID):
-                    // Repair conversations whose recorded cwd no longer matches
-                    // this session's project dir (history from another Mac /
-                    // username) — the CLI matches by that cwd, so without this
-                    // the resume would come up empty.
-                    await viewModel.api.prepareConversation(sessionID: id)
                     mgr.connect(
                         sessionID: id,
                         projectDir: dir,

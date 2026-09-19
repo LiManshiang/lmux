@@ -35,6 +35,33 @@ func ResolveProjectDir(dir string) (string, error) {
 	return abs, nil
 }
 
+// FollowConversation points a session at the conversation its own has moved on
+// to, when the user ran /clear or /model inside the agent, and reports whether
+// it changed anything.
+//
+// /clear starts a new conversation and freezes the old one. The frozen file is
+// still valid, so without this the session keeps resuming pre-clear history —
+// and the meters keep reading it, which is the version of this people notice
+// first (a model name and a context percentage that never move again).
+func (m *Manager) FollowConversation(id string) (*Session, bool, error) {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return nil, false, err
+	}
+	if sess.CBCSessionID == "" || sess.ProjectDir == "" {
+		return sess, false, nil
+	}
+	next := codebuddy.ConversationSuccessor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
+	if next == "" {
+		return sess, false, nil
+	}
+	sess.CBCSessionID = next
+	if err := m.store.Save(sess); err != nil {
+		return nil, false, fmt.Errorf("save session: %w", err)
+	}
+	return sess, true, nil
+}
+
 // AdoptWorkDir gives a session the directory its agent went to work in, the
 // first time that is known, and reports whether it changed anything.
 //

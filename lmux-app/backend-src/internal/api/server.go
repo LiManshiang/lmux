@@ -71,6 +71,10 @@ func (s *Server) Start() error {
 			h.SetCBCSessionID(w, r)
 			return
 		}
+		if id := extractIDFromPath(path, "follow-conversation"); id != "" && r.Method == http.MethodPost {
+			h.FollowSessionConversation(w, r)
+			return
+		}
 		if id := extractIDFromPath(path, "prepare-conversation"); id != "" && r.Method == http.MethodPost {
 			h.PrepareConversation(w, r)
 			return
