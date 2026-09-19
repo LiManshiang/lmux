@@ -2097,9 +2097,19 @@ class ContentViewModel: ObservableObject {
     /// Only the directory is recorded; the conversation's file follows it when
     /// the session is next prepared for launch, which is the one moment nothing
     /// is writing to it.
-    private func adoptWorkDirs() async {
-        for session in sessions where !session.dirByHand && isSessionActive(session.id) {
+    /// Runs `body` for every session with a live terminal and a bound
+    /// conversation — the shape the two background follow-ups share.
+    private func forActiveBoundSessions(_ body: (SessionSummary) async -> Void) async {
+        for session in sessions where isSessionActive(session.id) {
             guard session.cbcSessionID?.isEmpty == false else { continue }
+            await body(session)
+        }
+    }
+
+    private func adoptWorkDirs() async {
+        await forActiveBoundSessions { session in
+            // A directory set by hand is never inferred from the agent's cd's.
+            guard !session.dirByHand else { return }
             if await api.adoptWorkDir(sessionID: session.id) {
                 // The sidebar, the header and the edit sheet all read the
                 // session's directory, so they pick this up from the refresh.
@@ -2116,8 +2126,7 @@ class ContentViewModel: ObservableObject {
     /// and the next resume continues pre-clear history — losing everything the
     /// user has done since. The backend works out the successor; this asks.
     private func followClearedConversations() async {
-        for session in sessions where isSessionActive(session.id) {
-            guard session.cbcSessionID?.isEmpty == false else { continue }
+        await forActiveBoundSessions { session in
             if await api.followConversation(sessionID: session.id) {
                 await refreshSessions()
             }

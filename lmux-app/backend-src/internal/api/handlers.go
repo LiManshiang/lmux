@@ -746,9 +746,15 @@ func (h *Handler) PrepareConversation(w http.ResponseWriter, r *http.Request) {
 			"prepared": false, "reason": "no conversation bound"})
 		return
 	}
+	followErr := ""
 	if followed, changed, err := h.mgr.FollowConversation(id); err == nil && changed {
 		sess = followed
+	} else if err != nil {
+		// Not fatal: the conversation on record still gets moved and repaired
+		// below. But the response says so instead of quietly claiming prepared.
+		followErr = err.Error()
 	}
+	_ = followErr
 
 	// A session being started is the moment its conversation can be put where
 	// its directory says it belongs: nothing is writing to it yet, and the agent
@@ -797,11 +803,15 @@ func (h *Handler) PrepareConversation(w http.ResponseWriter, r *http.Request) {
 	if changed {
 		codebuddy.InvalidateCache()
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"prepared":        true,
 		"localized":       changed,
 		"conversation_id": sess.CBCSessionID,
-	})
+	}
+	if followErr != "" {
+		resp["follow_error"] = followErr
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 func (h *Handler) PinSession(w http.ResponseWriter, r *http.Request) {
 	id := extractIDFromPath(r.URL.Path, "pin")
@@ -895,14 +905,17 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 	// `cwd` is the session's work directory (the folder it is about), and it
 	// keeps its name for bundles already on disk. The importer uses it to pick
 	// where the conversation lands on the other machine, which is exactly what
-	// the user means by the session's working directory.
+	// the user means by the session's working directory. Empty when the
+	// conversation records no cd of its own — the importer then falls back to
+	// the project directory.
+	workDir, _ := codebuddy.SessionWorkDirAfter(sess.AgentType, sess.ProjectDir, sess.CBCSessionID, sess.CreatedAt)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"format":              "lmux-session",
 		"version":             1,
 		"name":                sess.Name,
 		"agent_type":          sess.AgentType,
 		"project_dir":         sess.ProjectDir,
-		"cwd":                 codebuddy.SessionWorkDir(sess.AgentType, sess.ProjectDir, sess.CBCSessionID),
+		"cwd":                 workDir,
 		"cbc_session_id":      sess.CBCSessionID,
 		"exported_at":         time.Now().Format(time.RFC3339),
 		"content":             string(buf),

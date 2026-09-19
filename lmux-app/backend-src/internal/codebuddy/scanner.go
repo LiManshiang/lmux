@@ -323,35 +323,27 @@ func encodeCodebuddyProjectDir(projectDir string) string {
 	return strings.ReplaceAll(s, "/", "-")
 }
 
-// SessionWorkDir returns the directory a session is about: the first directory
-// the agent cd'd into, or the launch directory when it never cd'd anywhere.
+// SessionWorkDirAfter returns the first directory the agent cd'd into at or
+// after notBefore — the directory the session's agent went to work in — with the
+// moment that cd happened. "" when there is none.
 //
-// Deliberately not the *latest* directory the agent worked in. An agent cd's
+// Deliberately not the *latest* directory the agent worked in: an agent cd's
 // between turns — into a subdirectory, a build tree, a scratch path — so
-// following the newest one makes the label drift: a session created for one
-// project ends up named after whatever the last command happened to touch. What
-// "this session's directory" means to the person reading it is where the
-// session started working, and that answer never changes afterwards: the
-// conversation file is append-only, so the first cd it records stays the first
-// cd forever.
+// following the newest one makes the label drift. And deliberately not the
+// conversation's launch directory either: for a conversation bound to a session
+// long after it was written, the launch directory belongs to an earlier life and
+// is not evidence about this session at all. Only a cd carries that evidence,
+// which is why there is no fallback here.
 //
-// Reads the head only. The first cd lands on the earliest records — every
-// conversation on the machine this was written on had it inside the first
-// megabyte of it — while the file itself can be hundreds of megabytes.
-func SessionWorkDir(agent, projectDir, sessionID string) string {
-	dir, _ := SessionWorkDirAt(agent, projectDir, sessionID)
-	return dir
-}
-
-// SessionWorkDirAt is SessionWorkDir plus the moment the directory was cd'd
-// into: the timestamp of the record that carried that command.
+// cds older than notBefore are skipped, not counted: a conversation can be bound
+// to a session long after it was written (imported, resumed elsewhere), and its
+// oldest cd then names a directory from that earlier life while the first cd
+// made *for this session* comes later.
 //
-// The caller needs it to tell a cd this session made from one that belongs to
-// the conversation's earlier life. A conversation can be handed to a session
-// long after it was written — imported, resumed elsewhere, bound by hand — and
-// its oldest cd then names a directory this session has nothing to do with.
-// Nothing in the file distinguishes them except when they happened.
-func SessionWorkDirAt(agent, projectDir, sessionID string) (string, time.Time) {
+// Reads the head only. The first qualifying cd lands on the earliest records —
+// on this machine every conversation had it inside the first megabyte — while
+// the file itself can be hundreds of megabytes.
+func SessionWorkDirAfter(agent, projectDir, sessionID string, notBefore time.Time) (string, time.Time) {
 	path := AgentSessionFile(agent, projectDir, sessionID)
 	if path == "" {
 		return "", time.Time{}
@@ -367,20 +359,13 @@ func SessionWorkDirAt(agent, projectDir, sessionID string) (string, time.Time) {
 	// split safely.
 	rd := bufio.NewReaderSize(f, 64<<10)
 	const maxScan = 1 << 20
-	launch := ""
 	scanned := 0
 	for scanned < maxScan {
 		line, err := rd.ReadBytes('\n')
 		scanned += len(line)
 		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
-			// The launch directory is on the earliest record that has one.
 			// Cheap substring gates first: parsing every line is what made a
 			// bounded read expensive to begin with.
-			if launch == "" && bytes.Contains(trimmed, []byte(`"cwd"`)) {
-				if m := cwdFieldRE.FindSubmatch(trimmed); m != nil {
-					launch = string(m[1])
-				}
-			}
 			if bytes.Contains(trimmed, []byte(`"function_call"`)) && bytes.Contains(trimmed, []byte("cd ")) {
 				var row struct {
 					Type      string      `json:"type"`
@@ -390,7 +375,11 @@ func SessionWorkDirAt(agent, projectDir, sessionID string) (string, time.Time) {
 				}
 				if json.Unmarshal(trimmed, &row) == nil && row.Type == "function_call" && row.Name == "Bash" {
 					if dir := extractLeadingCd(extractBashCommand(row.Arguments)); dir != "" && !isTransientDir(dir) {
-						return ExpandHome(dir), time.UnixMilli(row.Timestamp)
+						at := time.UnixMilli(row.Timestamp)
+						if !notBefore.IsZero() && at.Before(notBefore) {
+							continue // from the conversation's earlier life
+						}
+						return ExpandHome(dir), at
 					}
 				}
 			}
@@ -399,7 +388,7 @@ func SessionWorkDirAt(agent, projectDir, sessionID string) (string, time.Time) {
 			break
 		}
 	}
-	return launch, time.Time{}
+	return "", time.Time{}
 }
 
 // isTransientDir reports whether a directory is one an agent visits on the way

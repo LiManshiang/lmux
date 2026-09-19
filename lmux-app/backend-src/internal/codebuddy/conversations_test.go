@@ -525,6 +525,24 @@ func TestConversationSuccessorFollowsAClearedConversation(t *testing.T) {
 		t.Errorf("successor = %q, want \"new\"", got)
 	}
 
+	// The window is five seconds, pinned from both sides. Each boundary case
+	// lives in its own folder: candidates are shared within a folder, and the
+	// rule takes the earliest, so a later boundary case would never be reached.
+	at := base.Add(time.Second)
+	dir3 := filepath.Join(t.TempDir(), "proj3")
+	writeTimedConversation(t, home, dir3, "old-inside", []int64{at.UnixMilli()})
+	writeTimedConversation(t, home, dir3, "inside", []int64{at.Add(3 * time.Second).UnixMilli()})
+	if got := ConversationSuccessor("codebuddy", dir3, "old-inside"); got != "inside" {
+		t.Errorf("3s after the last record: successor = %q, want \"inside\"", got)
+	}
+
+	dir4 := filepath.Join(t.TempDir(), "proj4")
+	writeTimedConversation(t, home, dir4, "old-outside", []int64{at.UnixMilli()})
+	writeTimedConversation(t, home, dir4, "outside", []int64{at.Add(6 * time.Second).UnixMilli()})
+	if got := ConversationSuccessor("codebuddy", dir4, "old-outside"); got != "" {
+		t.Errorf("6s after the last record: successor = %q, want it refused", got)
+	}
+
 	// Another session's conversation that happens to be written in the same
 	// folder is not a successor: it did not begin the instant this one ended.
 	writeTimedConversation(t, home, dir, "other", []int64{base.UnixMilli() + 60_000})

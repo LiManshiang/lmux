@@ -88,11 +88,11 @@ func (m *Manager) AdoptWorkDir(id string) (*Session, bool, error) {
 	if sess.DirByHand || sess.CBCSessionID == "" || sess.ProjectDir == "" {
 		return sess, false, nil
 	}
-	dir, at := codebuddy.SessionWorkDirAt(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
-	if dir == "" || dir == sess.ProjectDir {
-		return sess, false, nil
-	}
-	if !at.IsZero() && at.Before(sess.CreatedAt) {
+	// Only a cd this session made counts, so the lookup skips everything before
+	// the session existed — and when no such cd exists there is no evidence and
+	// nothing is adopted.
+	dir, at := codebuddy.SessionWorkDirAfter(sess.AgentType, sess.ProjectDir, sess.CBCSessionID, sess.CreatedAt)
+	if dir == "" || at.IsZero() || dir == sess.ProjectDir {
 		return sess, false, nil
 	}
 	absDir, err := ResolveProjectDir(dir)

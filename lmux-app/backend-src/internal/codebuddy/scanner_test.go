@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -669,44 +670,77 @@ func TestLastUsageInfoFullReadsClaudeTail(t *testing.T) {
 	}
 }
 
-func TestSessionWorkDirUsesTheFirstDirectoryWorkedIn(t *testing.T) {
+func TestSessionWorkDirAfterSkipsTheConversationsEarlierLife(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	base := time.Date(2026, 9, 19, 21, 27, 44, 0, time.Local)
+	notBefore := base.Add(-time.Hour) // a session created an hour before this cd
+
+	// An imported conversation: its first cd belongs to an earlier life and
+	// points at a scratch path, while the first cd made *for this session* comes
+	// much later and names the project. Skipping — not giving up — is the whole
+	// point of notBefore.
+	lines := []string{
+		`{"sessionId":"conv","type":"function_call","name":"Bash","timestamp":` +
+			fmtInt(base.Add(-2*time.Hour).UnixMilli()) +
+			`,"arguments":"{\"command\": \"cd /tmp && unzip -q x.zip\"}"}`,
+		`{"sessionId":"conv","type":"function_call","name":"Bash","timestamp":` +
+			fmtInt(base.Add(-90*time.Minute).UnixMilli()) +
+			`,"arguments":"{\"command\": \"cd /Volumes/Projects/old-life && make\"}"}`,
+		`{"sessionId":"conv","type":"function_call","name":"Bash","timestamp":` +
+			fmtInt(base.Add(time.Minute).UnixMilli()) +
+			`,"arguments":"{\"command\": \"cd /Volumes/Projects/new-life && make\"}"}`,
+	}
+	writeConversation(t, home, home, "conv", lines, time.Now())
+
+	got, at := SessionWorkDirAfter("codebuddy", home, "conv", notBefore)
+	if want := "/Volumes/Projects/new-life"; got != want {
+		t.Fatalf("work dir = %q, want the first cd made for this session (%q)", got, want)
+	}
+	if !at.After(notBefore) {
+		t.Errorf("cd time %v is not after notBefore %v", at, notBefore)
+	}
+
+	// A conversation that never cd'd anywhere has no evidence, and there is no
+	// fallback: the launch directory belongs to the file, not to the session.
+	writeConversation(t, home, home, "plain", []string{
+		`{"sessionId":"plain","type":"message","role":"user","cwd":"` + home + `","content":[{"type":"input_text","text":"hi"}]}`,
+	}, time.Now())
+	if got, _ := SessionWorkDirAfter("codebuddy", home, "plain", time.Time{}); got != "" {
+		t.Errorf("a conversation with no cd returned %q; there is no fallback", got)
+	}
+
+	if got, _ := SessionWorkDirAfter("codebuddy", home, "missing", notBefore); got != "" {
+		t.Errorf("a missing conversation returned %q", got)
+	}
+}
+
+func fmtInt(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestSessionWorkDirAfter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// A session launched in the home directory whose first Bash call unpacks
-	// something into /tmp, then moves into the project, and afterwards works
-	// from a subdirectory of it. The label has to be the project: the scratch
-	// path is a detour, and the subdirectory came later — following either
-	// would leave the session named after something it is not about.
-	lines := []string{
-		`{"type":"message","role":"user","cwd":"` + home + `","content":[{"type":"input_text","text":"go"}]}`,
-		`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd /tmp && unzip -q x.zip\"}"}`,
-		`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd /Volumes/Developer/Projects/TestinAI && make\"}"}`,
-		`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd /Volumes/Developer/Projects/TestinAI/src && ls\"}"}`,
-	}
-	writeConversation(t, home, home, "conv-1", lines, time.Now())
-
-	if got := SessionWorkDir("codebuddy", home, "conv-1"); got != "/Volumes/Developer/Projects/TestinAI" {
-		t.Errorf("work dir = %q, want the first real directory the agent worked in", got)
+	// No cd anywhere: no evidence, and no fallback to the launch directory.
+	writeConversation(t, home, home, "conv-2", []string{
+		`{"sessionId":"conv-2","type":"message","role":"user","cwd":"` + home + `","content":[{"type":"input_text","text":"no cd"}]}`,
+	}, time.Now())
+	if got, _ := SessionWorkDirAfter("codebuddy", home, "conv-2", time.Time{}); got != "" {
+		t.Errorf("work dir = %q, want empty for a conversation without cds", got)
 	}
 
-	// No cd anywhere: the launch directory is the answer, recorded on every row.
-	launch := []string{`{"type":"message","role":"user","cwd":"` + home + `","content":[{"type":"input_text","text":"no cd"}]}`}
-	writeConversation(t, home, home, "conv-2", launch, time.Now())
-	if got := SessionWorkDir("codebuddy", home, "conv-2"); got != home {
-		t.Errorf("work dir = %q, want the launch directory %q", got, home)
-	}
-
-	// A home-relative cd is expanded: the value is opened in Finder and
+	// A home-relative cd is expanded: the result gets opened in Finder and
 	// compared against real directories, so "~/x" would be useless as it stands.
-	tilde := []string{`{"type":"function_call","name":"Bash","arguments":"{\"command\": \"cd ~/work && ls\"}"}`}
+	tilde := []string{`{"sessionId":"conv-3","type":"function_call","name":"Bash","timestamp":` +
+		fmtInt(time.Now().Add(time.Minute).UnixMilli()) +
+		`,"arguments":"{\"command\": \"cd ~/work && ls\"}"}`}
 	writeConversation(t, home, home, "conv-3", tilde, time.Now())
-	if got := SessionWorkDir("codebuddy", home, "conv-3"); got != filepath.Join(home, "work") {
+	if got, _ := SessionWorkDirAfter("codebuddy", home, "conv-3", time.Time{}); got != filepath.Join(home, "work") {
 		t.Errorf("work dir = %q, want the home-relative path expanded", got)
 	}
 
-	if got := SessionWorkDir("codebuddy", home, "missing"); got != "" {
-		t.Errorf("missing conversation returned %q, want empty", got)
+	if got, _ := SessionWorkDirAfter("codebuddy", home, "missing", time.Time{}); got != "" {
+		t.Errorf("a missing conversation returned %q", got)
 	}
 }
 
