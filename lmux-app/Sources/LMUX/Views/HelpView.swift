@@ -61,6 +61,16 @@ struct HelpView: View {
             }
 
             Group {
+                Text(L("Agent Conversations")).font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    helpRow("A session's agent keeps its work in one conversation. lmux remembers which one, so restarting the session resumes it.")
+                    helpRow("/clear starts a new conversation. lmux follows it: the sidebar reads the new one and the next restart continues it. The finished conversation is left untouched and stays in the conversation library.")
+                    helpRow("/resume switches to a different conversation that already exists. lmux cannot see that — nothing new is written — so the session keeps the one it had and a restart returns to it. To continue where you switched to, set the session's ID to that conversation in Edit Session.")
+                    helpRow("/model does not start a conversation: the switch is recorded inside the current one, so nothing changes for the session.")
+                }
+            }
+
+            Group {
                 Text(L("Backup & Migration")).font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
                     helpRow("Session → Export Sessions… packs sessions, settings and agent conversations into a tar.gz.")

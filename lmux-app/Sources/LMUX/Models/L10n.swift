@@ -122,6 +122,12 @@ enum L10n {
         "Sync Now": "立即同步",
         "Sync Directory": "同步目录",
         "Backup & Migration": "备份与迁移",
+
+        "Agent Conversations": "agent 对话（/clear、/resume、/model）",
+        "A session's agent keeps its work in one conversation. lmux remembers which one, so restarting the session resumes it.": "一个会话的 agent 把工作记在一段对话里；lmux 记住是哪一段，所以重启会话时能接着它继续。",
+        "/clear starts a new conversation. lmux follows it: the sidebar reads the new one and the next restart continues it. The finished conversation is left untouched and stays in the conversation library.": "/clear 会开启一段全新对话。lmux 会自动跟随：侧边栏读的是新那段，下次重启也接着它继续；被结束的那段原封不动，仍在对话库里可以打开。",
+        "/resume switches to a different conversation that already exists. lmux cannot see that — nothing new is written — so the session keeps the one it had and a restart returns to it. To continue where you switched to, set the session's ID to that conversation in Edit Session.": "/resume 会切到另一段**已存在**的对话。这种情况 lmux 看不到（没有任何新文件产生），所以会话仍然绑着原来那段，重启会回到它。想接着你切过去的那段，请在「编辑会话」里把 Session ID 改成那段的 ID。",
+        "/model does not start a conversation: the switch is recorded inside the current one, so nothing changes for the session.": "/model 不会另起对话：切换动作记在当前这段里面，所以对会话没有影响。",
         "Agent Conversations Sync": "Agent 对话同步",
         "Mirror all agent conversations": "镜像所有 Agent 对话",
         "Path Mappings (old machine path → this machine)": "路径映射（旧机器路径 → 本机）",
