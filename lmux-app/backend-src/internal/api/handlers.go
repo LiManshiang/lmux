@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -223,45 +222,24 @@ func (h *Handler) UpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "nothing to update")
 		return
 	}
-
-	// A session's directory is where its conversation lives: the agent resolves
-	// `--resume <id>` inside the folder named after the directory it is launched
-	// in, so the two cannot be allowed to disagree (that is what "No conversation
-	// found with session ID" means).
-	//
-	// The directory is resolved first, and the resolved value is what both the
-	// move and the update use: resolving it here is what keeps them using the
-	// same string. A directory that is rejected is rejected before anything
-	// moves, and a move that fails leaves the session as it was.
-	target := sess.ProjectDir
+	// Resolved here so a directory that cannot be a session's home is rejected
+	// as the caller's mistake, and so the value that gets stored is the same one
+	// every other path would compute from it.
 	if req.ProjectDir != nil && *req.ProjectDir != "" {
 		resolved, err := session.ResolveProjectDir(*req.ProjectDir)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		target = resolved
 		req.ProjectDir = &resolved
 	}
-	// The move also runs when the directory is not being changed: a session can
-	// already be inconsistent (its conversation left behind by an earlier edit,
-	// or by a resume from elsewhere), and an edit is exactly when the pair gets
-	// put back in step. When they already agree this is a no-op.
-	if sess.CBCSessionID != "" && target != "" {
-		switch _, err := codebuddy.MoveConversation(sess.AgentType, sess.CBCSessionID, sess.ProjectDir, target); {
-		case err == nil:
-		case errors.Is(err, codebuddy.ErrConversationMissing):
-			// Nothing to move: the conversation is gone (deleted, or bound to an
-			// id that was never stored here). A dead binding is not this edit's
-			// business — renaming a session whose history is already lost must
-			// still work.
-		default:
-			writeError(w, http.StatusBadRequest,
-				fmt.Sprintf("cannot move the session to %s: %v", target, err))
-			return
-		}
-	}
 
+	// The directory is recorded here; the conversation follows it when the
+	// session is next prepared for launch (see PrepareConversation). Moving it
+	// at this moment would be moving a conversation a live agent may be
+	// appending to; recording first and moving later is also what lets a
+	// session point at a directory before its file has moved, which is the
+	// difference between the directory and where the history happens to sit.
 	updated, err := h.mgr.Update(id, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -429,6 +407,37 @@ func (h *Handler) ListAgentConversations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"conversations": visible,
 		"hidden":        hidden,
+	})
+}
+
+// AdoptSessionWorkDir records the directory a session's agent went to work in,
+// when the session has not been given a directory by hand.
+//
+// The app calls this with the first directory the agent cd'd into: a session is
+// created somewhere (often the home directory) and its agent then moves into the
+// project the session is really about, which is what the session's directory
+// should be.
+func (h *Handler) AdoptSessionWorkDir(w http.ResponseWriter, r *http.Request) {
+	id := extractIDFromPath(r.URL.Path, "work-dir")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+	var body struct {
+		WorkDir string `json:"work_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	sess, adopted, err := h.mgr.AdoptWorkDir(id, body.WorkDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"adopted": adopted,
+		"session": sess,
 	})
 }
 
@@ -721,7 +730,7 @@ func (h *Handler) SetCBCSessionID(w http.ResponseWriter, r *http.Request) {
 // path that no longer exists here (another Mac, a different username) fails to
 // resume and silently starts a fresh, empty conversation. Calling this before
 // a resume repairs that history in place.
-func (h *Handler) LocalizeSessionCwd(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) PrepareConversation(w http.ResponseWriter, r *http.Request) {
 	id := extractID(r.URL.Path, "/api/sessions/")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing session id")
@@ -735,43 +744,59 @@ func (h *Handler) LocalizeSessionCwd(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess.CBCSessionID == "" || sess.ProjectDir == "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"updated": false, "reason": "no conversation bound"})
+			"prepared": false, "reason": "no conversation bound"})
 		return
 	}
+
+	// A session being started is the moment its conversation can be put where
+	// its directory says it belongs: nothing is writing to it yet, and the agent
+	// will look for its history inside the folder named after the directory it
+	// is launched in. The directory is recorded as soon as it is known (a cd in
+	// the agent, or a hand edit), so the file can be behind it until this runs.
+	if _, err := codebuddy.MoveConversation(sess.AgentType, sess.CBCSessionID, sess.ProjectDir, sess.ProjectDir); err != nil {
+		if errors.Is(err, codebuddy.ErrConversationMissing) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"prepared": false, "reason": "conversation not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"prepared": false, "reason": err.Error()})
+		return
+	}
+
 	// Never rewrite a conversation the agent is currently appending to. Two
-	// signals, because only the second one ever fires: the status is never set
-	// to running (nothing maintains it), while the process table knows whether
-	// an agent actually has this conversation loaded.
+	// signals, because only the process table one ever fires: the status is
+	// never set to running (nothing maintains it).
 	if sess.Status == session.StatusRunning {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"updated": false, "reason": "session running"})
+			"prepared": false, "reason": "session running"})
 		return
 	}
 	if codebuddy.ConversationInUse(sess.CBCSessionID) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"updated": false, "reason": "conversation in use"})
+			"prepared": false, "reason": "conversation in use"})
 		return
 	}
 
+	// The records' own cwd is rewritten when it disagrees with the directory the
+	// file now sits under — the CLI is known to care, and lmux reads it back for
+	// the Agent browser and the work-directory lookup.
 	path := sessionFileFor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
 	changed, err := codebuddy.LocalizeSessionCwdFile(path, sess.ProjectDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"updated": false, "reason": "conversation file not found"})
+				"prepared": false, "reason": "conversation file not found"})
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "localize conversation: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "prepare conversation: "+err.Error())
 		return
 	}
 	if changed {
 		codebuddy.InvalidateCache()
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"updated": changed})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"prepared": true, "localized": changed})
 }
-
-// PinSession toggles the pinned (starred) flag that keeps a session at the
-// top of the sidebar.
 func (h *Handler) PinSession(w http.ResponseWriter, r *http.Request) {
 	id := extractIDFromPath(r.URL.Path, "pin")
 	if id == "" {

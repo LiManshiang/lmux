@@ -35,6 +35,47 @@ func ResolveProjectDir(dir string) (string, error) {
 	return abs, nil
 }
 
+// AdoptWorkDir records the directory a session's agent went to work in, the
+// first time that is known, and reports whether it changed anything.
+//
+// A session is created somewhere — often just the home directory — and the
+// first thing its agent does is cd into the project the session is actually
+// about. That directory is what the session's directory should be, and the
+// agent's own history is the only record of it (nothing tracks the agent's
+// current directory: the process cwd never moves and the records keep the
+// launch directory).
+//
+// Only the first determination counts. Once a person has set the directory by
+// hand the answer is theirs and this does nothing, which is also why the flag
+// exists: without it, re-inferring from the agent's history would eventually
+// overwrite a hand-made choice.
+//
+// The conversation itself is not moved here. Its file follows the directory
+// when the session is next prepared for launch — the only moment nothing is
+// writing to it.
+func (m *Manager) AdoptWorkDir(id, dir string) (*Session, bool, error) {
+	sess, err := m.store.Get(id)
+	if err != nil {
+		return nil, false, err
+	}
+	if sess.DirByHand || dir == "" {
+		return sess, false, nil
+	}
+	absDir, err := ResolveProjectDir(dir)
+	if err != nil {
+		return sess, false, nil // a directory that is gone is not a home for the session
+	}
+	if absDir == sess.ProjectDir {
+		return sess, false, nil
+	}
+	sess.ProjectDir = absDir
+	sess.GitBranch = getGitBranch(absDir)
+	if err := m.store.Save(sess); err != nil {
+		return nil, false, fmt.Errorf("save session: %w", err)
+	}
+	return sess, true, nil
+}
+
 // Manager orchestrates session lifecycle.
 type Manager struct {
 	store *Store
@@ -160,6 +201,10 @@ func (m *Manager) Update(id string, req UpdateRequest) (*Session, error) {
 		}
 		sess.ProjectDir = absDir
 		sess.GitBranch = getGitBranch(absDir)
+		// A person chose this. Nothing infers the directory after that: the
+		// agent's own cd's stop counting, or the next one would quietly undo
+		// the choice.
+		sess.DirByHand = true
 	}
 
 	if req.CBCSessionID != nil {

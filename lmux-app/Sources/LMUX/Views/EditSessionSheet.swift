@@ -38,12 +38,6 @@ struct EditSessionSheet: View {
         return !location.matches
     }
 
-    /// Where the conversation's own records say the agent worked, when that is
-    /// somewhere else than the typed directory. Offered as a suggestion: it is
-    /// where the session's work actually happened, which is usually the
-    /// directory the user means.
-    @State private var suggestedWorkDir: String?
-
     /// Set when no file carries this conversation ID at all: the binding is
     /// dead (deleted, or the agent moved to a new conversation after /clear).
     private var conversationMissing: Bool {
@@ -115,22 +109,12 @@ struct EditSessionSheet: View {
                             .font(.caption)
                             .foregroundColor(.orange)
                     } else if misplacedDir {
-                        VStack(alignment: .leading, spacing: 4) {
-                            // Informational, not a warning: the conversation
-                            // travels with the directory, so this is the edit
-                            // working as intended.
-                            Text(L("Saving will move this conversation here"))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            if let suggestion = suggestedWorkDir {
-                                Button(L("It works in %@ — use that", suggestion as NSString)) {
-                                    projectDir = suggestion
-                                    validateDir(suggestion)
-                                }
-                                .font(.caption)
-                                .buttonStyle(.link)
-                            }
-                        }
+                        // Informational, not a warning: the conversation follows
+                        // the directory of its own accord, so this describes what
+                        // will happen rather than a problem to fix.
+                        Text(L("The conversation moves here when the session next starts"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -204,21 +188,6 @@ struct EditSessionSheet: View {
         guard !Task.isCancelled else { return }
         location = found
         locationInputs = query
-
-        // Where the conversation's records say the agent worked. Asked using the
-        // directory the file is actually in (not the one being typed, which by
-        // definition does not hold it yet), so the answer describes the session
-        // as it stands rather than as it is being edited.
-        suggestedWorkDir = nil
-        guard let located = found, located.found, located.matches == false,
-              let actualDir = located.projectDir, !actualDir.isEmpty else { return }
-        guard let work = await viewModel.sessionWorkDir(
-            agent: session.agentType,
-            projectDir: actualDir,
-            sessionID: query.cbcSessionID
-        ), work != query.projectDir else { return }
-        guard !Task.isCancelled else { return }
-        suggestedWorkDir = work
     }
 
     private func browseDirectory() {

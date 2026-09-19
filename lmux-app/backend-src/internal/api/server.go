@@ -71,8 +71,12 @@ func (s *Server) Start() error {
 			h.SetCBCSessionID(w, r)
 			return
 		}
-		if id := extractIDFromPath(path, "localize-cwd"); id != "" && r.Method == http.MethodPost {
-			h.LocalizeSessionCwd(w, r)
+		if id := extractIDFromPath(path, "prepare-conversation"); id != "" && r.Method == http.MethodPost {
+			h.PrepareConversation(w, r)
+			return
+		}
+		if id := extractIDFromPath(path, "work-dir"); id != "" && r.Method == http.MethodPost {
+			h.AdoptSessionWorkDir(w, r)
 			return
 		}
 		switch r.Method {

@@ -2018,7 +2018,7 @@ class ContentViewModel: ObservableObject {
             }
             // Same pre-resume repair as connectToSession: localize a
             // conversation whose recorded cwd points somewhere else.
-            await api.localizeSessionCwd(sessionID: entry.sessionID)
+            await api.prepareConversation(sessionID: entry.sessionID)
             mgr.connect(
                 sessionID: entry.sessionID,
                 projectDir: entry.projectDir,
@@ -2077,6 +2077,7 @@ class ContentViewModel: ObservableObject {
                 guard let self, !self.syncWaitVisible else { return }
                 await self.refreshSessions()
                 await self.detectAwaitingInput()
+                await self.adoptWorkDirs()
             }
         }
     }
@@ -2088,6 +2089,34 @@ class ContentViewModel: ObservableObject {
     /// never checked. It now rides the shared 15s poll instead. Only sessions
     /// with a live terminal count (the backend's session status does not track
     /// processes, so a session that has never been attached is skipped).
+    /// Let a session's directory be determined by where its agent went to work.
+    ///
+    /// A session is created somewhere — often the home directory — and the first
+    /// thing its agent does is cd into the project the session is really about.
+    /// That is the session's directory, and the agent's own history is the only
+    /// record of it. Sessions a person has given a directory to by hand are left
+    /// alone (the backend holds that flag and refuses on its own, the flag here
+    /// just saves the round trip).
+    ///
+    /// Only the directory is recorded; the conversation's file follows it when
+    /// the session is next prepared for launch, which is the one moment nothing
+    /// is writing to it.
+    private func adoptWorkDirs() async {
+        for session in sessions where !session.dirByHand && isSessionActive(session.id) {
+            guard let cbc = session.cbcSessionID, !cbc.isEmpty else { continue }
+            guard let work = await api.sessionWorkDir(
+                agent: session.agentType,
+                projectDir: session.projectDir,
+                sessionID: cbc
+            ), work != session.projectDir else { continue }
+            if await api.adoptWorkDir(sessionID: session.id, workDir: work) {
+                // The sidebar, the header and the edit sheet all read the
+                // session's directory, so they pick this up from the refresh.
+                await refreshSessions()
+            }
+        }
+    }
+
     private func detectAwaitingInput() async {
         for session in sessions where isSessionActive(session.id) {
             guard let cbc = session.cbcSessionID, !cbc.isEmpty else { continue }

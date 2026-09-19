@@ -241,7 +241,7 @@ struct SessionDetailView: View {
                     // this session's project dir (history from another Mac /
                     // username) — the CLI matches by that cwd, so without this
                     // the resume would come up empty.
-                    await viewModel.api.localizeSessionCwd(sessionID: id)
+                    await viewModel.api.prepareConversation(sessionID: id)
                     mgr.connect(
                         sessionID: id,
                         projectDir: dir,

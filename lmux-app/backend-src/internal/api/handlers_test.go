@@ -661,11 +661,11 @@ func TestLocalizeSessionCwd(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	h.LocalizeSessionCwd(w, httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/localize-cwd", nil))
+	h.PrepareConversation(w, httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/prepare-conversation", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"updated":true`) {
+	if !strings.Contains(w.Body.String(), `"localized":true`) {
 		t.Errorf("expected updated=true, got %s", w.Body.String())
 	}
 
@@ -686,13 +686,13 @@ func TestLocalizeSessionCwd(t *testing.T) {
 
 	// Idempotent: a second call reports no change.
 	w2 := httptest.NewRecorder()
-	h.LocalizeSessionCwd(w2, httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/localize-cwd", nil))
-	if strings.Contains(w2.Body.String(), `"updated":true`) {
+	h.PrepareConversation(w2, httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID+"/prepare-conversation", nil))
+	if strings.Contains(w2.Body.String(), `"localized":true`) {
 		t.Errorf("second call should be a no-op, got %s", w2.Body.String())
 	}
 }
 
-func TestLocalizeSessionCwdSkipsRunningAndUnbound(t *testing.T) {
+func TestPrepareConversationSkipsRunningAndUnbound(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	ensureProjDir(t)
@@ -704,8 +704,8 @@ func TestLocalizeSessionCwdSkipsRunningAndUnbound(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	h.LocalizeSessionCwd(w, httptest.NewRequest(http.MethodPost, "/api/sessions/"+plain.ID+"/localize-cwd", nil))
-	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"updated":true`) {
+	h.PrepareConversation(w, httptest.NewRequest(http.MethodPost, "/api/sessions/"+plain.ID+"/prepare-conversation", nil))
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"localized":true`) {
 		t.Errorf("unbound session: code=%d body=%s", w.Code, w.Body.String())
 	}
 
@@ -730,8 +730,8 @@ func TestLocalizeSessionCwdSkipsRunningAndUnbound(t *testing.T) {
 	}
 
 	w2 := httptest.NewRecorder()
-	h.LocalizeSessionCwd(w2, httptest.NewRequest(http.MethodPost, "/api/sessions/"+running.ID+"/localize-cwd", nil))
-	if strings.Contains(w2.Body.String(), `"updated":true`) {
+	h.PrepareConversation(w2, httptest.NewRequest(http.MethodPost, "/api/sessions/"+running.ID+"/prepare-conversation", nil))
+	if strings.Contains(w2.Body.String(), `"localized":true`) {
 		t.Errorf("running session must be skipped, got %s", w2.Body.String())
 	}
 	after, err := os.ReadFile(path)

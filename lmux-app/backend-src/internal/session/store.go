@@ -86,6 +86,12 @@ func migrate(db *sql.DB) error {
 		db.Exec("ALTER TABLE sessions ADD COLUMN pinned INTEGER DEFAULT 0")
 		db.Exec("PRAGMA user_version = 2")
 	}
+	// Migration: add dir_by_hand, which stops the session's directory being
+	// inferred from the agent's own cd's once a person has chosen one.
+	if version < 3 {
+		db.Exec("ALTER TABLE sessions ADD COLUMN dir_by_hand INTEGER DEFAULT 0")
+		db.Exec("PRAGMA user_version = 3")
+	}
 	return nil
 }
 
@@ -94,8 +100,8 @@ func (s *Store) Save(sess *Session) error {
 	sess.UpdatedAt = time.Now()
 	query := `
 	INSERT INTO sessions (id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		agent_type, status, ai_title, git_branch, pinned, dir_by_hand, pid, created_at, updated_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		project_dir=excluded.project_dir,
@@ -105,6 +111,7 @@ func (s *Store) Save(sess *Session) error {
 		ai_title=excluded.ai_title,
 		git_branch=excluded.git_branch,
 		pinned=excluded.pinned,
+		dir_by_hand=excluded.dir_by_hand,
 		pid=excluded.pid,
 		updated_at=excluded.updated_at
 	`
@@ -112,10 +119,14 @@ func (s *Store) Save(sess *Session) error {
 	if sess.Pinned {
 		pinned = 1
 	}
+	byHand := 0
+	if sess.DirByHand {
+		byHand = 1
+	}
 	_, err := s.db.Exec(query,
 		sess.ID, sess.Name, sess.ProjectDir, sess.CBCSessionID,
 		sess.AgentType, string(sess.Status), sess.AiTitle, sess.GitBranch,
-		pinned, sess.Pid, sess.CreatedAt, sess.UpdatedAt,
+		pinned, byHand, sess.Pid, sess.CreatedAt, sess.UpdatedAt,
 	)
 	return err
 }
@@ -146,7 +157,7 @@ func (s *Store) ClearAgentBinding(agentSessionID string) (int, error) {
 // Get retrieves a session by ID.
 func (s *Store) Get(id string) (*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, dir_by_hand, pid, created_at, updated_at
 		FROM sessions WHERE id = ?`
 	row := s.db.QueryRow(query, id)
 	return scanSession(row)
@@ -156,7 +167,7 @@ func (s *Store) Get(id string) (*Session, error) {
 // conversation ID, or an error when none exists.
 func (s *Store) FindByCBCSessionID(cbcID string) (*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, dir_by_hand, pid, created_at, updated_at
 		FROM sessions WHERE cbc_session_id = ? LIMIT 1`
 	row := s.db.QueryRow(query, cbcID)
 	return scanSession(row)
@@ -167,7 +178,7 @@ func (s *Store) FindByCBCSessionID(cbcID string) (*Session, error) {
 // reorders rows whenever any session becomes active.
 func (s *Store) List() ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, dir_by_hand, pid, created_at, updated_at
 		FROM sessions ORDER BY pinned DESC, created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -192,7 +203,7 @@ func (s *Store) List() ([]*Session, error) {
 // order so the sidebar stays stable.
 func (s *Store) ListSummaries() ([]Summary, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pinned
+		agent_type, status, ai_title, git_branch, pinned, dir_by_hand
 		FROM sessions ORDER BY pinned DESC, created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -205,9 +216,9 @@ func (s *Store) ListSummaries() ([]Summary, error) {
 		var sm Summary
 		var statusStr string
 		var cbcID, agentType, aiTitle, gitBranch sql.NullString
-		var pinned int
+		var pinned, byHand int
 		if err := rows.Scan(&sm.ID, &sm.Name, &sm.ProjectDir,
-			&cbcID, &agentType, &statusStr, &aiTitle, &gitBranch, &pinned); err != nil {
+			&cbcID, &agentType, &statusStr, &aiTitle, &gitBranch, &pinned, &byHand); err != nil {
 			return nil, err
 		}
 		sm.CBCSessionID = cbcID.String
@@ -216,6 +227,7 @@ func (s *Store) ListSummaries() ([]Summary, error) {
 		sm.AiTitle = aiTitle.String
 		sm.GitBranch = gitBranch.String
 		sm.Pinned = pinned != 0
+		sm.DirByHand = byHand != 0
 		summaries = append(summaries, sm)
 	}
 	return summaries, rows.Err()
@@ -230,7 +242,7 @@ func (s *Store) Delete(id string) error {
 // ListByStatus returns sessions filtered by status, ordered by creation time.
 func (s *Store) ListByStatus(status Status) ([]*Session, error) {
 	query := `SELECT id, name, project_dir, cbc_session_id,
-		agent_type, status, ai_title, git_branch, pinned, pid, created_at, updated_at
+		agent_type, status, ai_title, git_branch, pinned, dir_by_hand, pid, created_at, updated_at
 		FROM sessions WHERE status = ? ORDER BY created_at DESC`
 	rows, err := s.db.Query(query, string(status))
 	if err != nil {
@@ -252,33 +264,35 @@ func (s *Store) ListByStatus(status Status) ([]*Session, error) {
 func scanSession(row *sql.Row) (*Session, error) {
 	sess := &Session{}
 	var status string
-	var pinned int
+	var pinned, byHand int
 	err := row.Scan(
 		&sess.ID, &sess.Name, &sess.ProjectDir, &sess.CBCSessionID,
 		&sess.AgentType, &status, &sess.AiTitle, &sess.GitBranch,
-		&pinned, &sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
+		&pinned, &byHand, &sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	sess.Status = Status(status)
 	sess.Pinned = pinned != 0
+	sess.DirByHand = byHand != 0
 	return sess, nil
 }
 
 func scanSessionFromRows(rows *sql.Rows) (*Session, error) {
 	sess := &Session{}
 	var status string
-	var pinned int
+	var pinned, byHand int
 	err := rows.Scan(
 		&sess.ID, &sess.Name, &sess.ProjectDir, &sess.CBCSessionID,
 		&sess.AgentType, &status, &sess.AiTitle, &sess.GitBranch,
-		&pinned, &sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
+		&pinned, &byHand, &sess.Pid, &sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	sess.Status = Status(status)
 	sess.Pinned = pinned != 0
+	sess.DirByHand = byHand != 0
 	return sess, nil
 }

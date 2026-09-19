@@ -61,6 +61,9 @@ struct SessionSummary: Codable, Identifiable, Hashable {
     let aiTitle: String?
     let gitBranch: String?
     let pinned: Bool
+    /// A person chose this session's directory, so nothing infers it from where
+    /// the agent happens to work.
+    let dirByHand: Bool
     var needsAttention: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -72,6 +75,7 @@ struct SessionSummary: Codable, Identifiable, Hashable {
         case aiTitle = "ai_title"
         case gitBranch = "git_branch"
         case pinned
+        case dirByHand = "dir_by_hand"
         case needsAttention = "needs_attention"
     }
 
@@ -86,6 +90,7 @@ struct SessionSummary: Codable, Identifiable, Hashable {
         aiTitle = try container.decodeIfPresent(String.self, forKey: .aiTitle)
         gitBranch = try container.decodeIfPresent(String.self, forKey: .gitBranch)
         pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        dirByHand = try container.decodeIfPresent(Bool.self, forKey: .dirByHand) ?? false
         needsAttention = try container.decodeIfPresent(Bool.self, forKey: .needsAttention)
     }
 }

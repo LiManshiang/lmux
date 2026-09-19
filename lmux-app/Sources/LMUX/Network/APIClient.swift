@@ -375,13 +375,25 @@ class APIClient: AgentSessionService {
         _ = try await post("/api/sessions/\(sessionID)/cbc-session", body: Body(cbcSessionID: cbcSessionID))
     }
 
-    /// Rewrites the cwd recorded inside a conversation to the session's project
-    /// directory. The CodeBuddy CLI resolves a resumable conversation by that
-    /// recorded cwd, so history originally recorded on another Mac or under
-    /// another username makes resume start an empty conversation instead.
-    /// Best-effort: failures are ignored (the resume simply behaves as before).
-    func localizeSessionCwd(sessionID: String) async {
-        _ = try? await post("/api/sessions/\(sessionID)/localize-cwd", body: Optional<String>.none)
+    /// Get the session's conversation ready to be resumed from its directory:
+    /// the file is moved into that directory's folder first (nothing is writing
+    /// to it yet), then its records' cwd is made to agree with it.
+    func prepareConversation(sessionID: String) async {
+        _ = try? await post("/api/sessions/\(sessionID)/prepare-conversation", body: Optional<String>.none)
+    }
+
+    /// Record the directory the session's agent went to work in, while the
+    /// session has not been given a directory by hand. The backend decides;
+    /// `adopted` says whether it took.
+    func adoptWorkDir(sessionID: String, workDir: String) async -> Bool {
+        struct Body: Codable {
+            let workDir: String
+            enum CodingKeys: String, CodingKey { case workDir = "work_dir" }
+        }
+        struct Response: Codable { let adopted: Bool? }
+        guard let data = try? await post("/api/sessions/\(sessionID)/work-dir", body: Body(workDir: workDir)),
+              let resp = try? decode(Response.self, from: data) else { return false }
+        return resp.adopted ?? false
     }
 
     // MARK: - Session export / import
