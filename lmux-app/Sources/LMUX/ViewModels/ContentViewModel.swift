@@ -88,8 +88,8 @@ class ContentViewModel: ObservableObject {
     let api = APIClient()
 
     init() {
-        // Ensure agent/shell processes are terminated when the app quits, so
-        // no orphaned codebuddy/claude processes are left behind.
+        // Ensure everything this app started is terminated when it quits, so no
+        // orphaned codebuddy/claude agents — or backend — are left behind.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
@@ -106,7 +106,8 @@ class ContentViewModel: ObservableObject {
         agentStars = loadAgentStars()
     }
 
-    /// Terminate every running terminal/agent process and clear restore state.
+    /// Terminate every process this app started — the terminals and the agents
+    /// running in them, and the backend — and clear restore state.
     func terminateAllProcesses() {
         for mgr in terminalManagers.values {
             mgr.disconnect()
@@ -121,6 +122,26 @@ class ContentViewModel: ObservableObject {
         attentionSessionIds.removeAll()
         notifiedAwaitingInput.removeAll()
         awaitingInputIds.removeAll()
+        stopBackend()
+    }
+
+    /// Ask the backend to stop.
+    ///
+    /// It is a child of this app, and nothing else stops it: a child outlives
+    /// the process that spawned it, so left alone the backend keeps running and
+    /// keeps the port until the next launch kills it (killExistingBackend,
+    /// which only exists because of exactly this). What is left "running in the
+    /// background" after a quit is that process.
+    ///
+    /// The pipe's read end is closed first: terminating the backend closes the
+    /// write end, and a DispatchIO still reading it hits a vanished descriptor.
+    private func stopBackend() {
+        closeBackendIO()
+        if backendProcess?.isRunning == true {
+            backendProcess?.terminate()
+        }
+        backendProcess = nil
+        backendRunning = false
     }
 
     /// Show a transient non-blocking toast (auto-dismisses after ~2.5s).
