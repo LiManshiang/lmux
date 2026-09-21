@@ -260,6 +260,45 @@ final class SyncIncrementTests: XCTestCase {
             newSize: 18_026_499))
     }
 
+    // MARK: - A copy that outlives its file
+
+    func testCopyReachingPastTheEndOfTheFileIsRebuilt() {
+        // Real case: compaction-point sync pruned an 83 MB conversation to
+        // 18 MB, which reset this Mac's tracked offset to 0 but left the old
+        // 83 MB copy on disk. Every later request then asked from the copy's own
+        // offset (83,072,193), the backend clamped that to the end of the file
+        // and returned nothing, and an empty increment meant "nothing to do" —
+        // so the copy was never rewritten and sync appeared to do nothing, on
+        // every pass, for good.
+        //
+        // The copy is internally consistent (its content matches its offset), and
+        // the tracked offset is 0, so neither the corruption rule nor the
+        // rewritten-shorter rule fires. Only comparing the copy's reach against
+        // the file catches it.
+        XCTAssertEqual(
+            plan(owned: true, mirrorOffset: 83_072_193, mirrorContentBytes: 83_072_193,
+                 knownBase: 0, tracked: 0,
+                 incomingBase: 0, incomingContentStart: 18_288_158,
+                 incomingBytes: 0, newOffset: 18_288_158),
+            .needsFullExport)
+
+        // The re-export that follows covers the whole file, so it replaces.
+        XCTAssertEqual(
+            plan(owned: true, mirrorOffset: 83_072_193, mirrorContentBytes: 83_072_193,
+                 knownBase: 0, tracked: 0,
+                 incomingBase: 0, incomingContentStart: 0,
+                 incomingBytes: 18_288_158, newOffset: 18_288_158),
+            .replace)
+
+        // And once rewritten to the file's real length, appending resumes.
+        XCTAssertEqual(
+            plan(owned: true, mirrorOffset: 18_288_158, mirrorContentBytes: 18_288_158,
+                 knownBase: 0, tracked: 18_288_158,
+                 incomingBase: 0, incomingContentStart: 18_288_158,
+                 incomingBytes: 40, newOffset: 18_288_198),
+            .append)
+    }
+
     // MARK: - Requested since offset
 
     func testRequestSinceUsesOurTrackingByDefault() {

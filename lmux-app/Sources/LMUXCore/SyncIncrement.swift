@@ -97,6 +97,22 @@ public enum SyncIncrement {
         // session stays idle — which is exactly the case worth fixing.
         if hasMirror, incomingBase != knownBase { return rebuild() }
 
+        // The copy claims to reach past the end of the file — it describes a
+        // longer conversation than the one on disk. Nothing can be appended to
+        // it, and its own numbers stay internally consistent, so no other rule
+        // here notices. The case that produced this: compaction-point sync
+        // pruned the file from 83 MB to 18 MB, which reset the tracked offset to
+        // 0 while leaving the old copy untouched on disk. Every request then
+        // asked from the copy's offset, the backend clamped that to the end of
+        // the file and answered with nothing, and the empty-increment rule below
+        // read that as "nothing to do" — so the copy was never rewritten and
+        // sync looked dead, on every pass, permanently.
+        //
+        // Checked before that rule, and answered with rebuild() rather than a
+        // bare needsFullExport: the second pass (a full export) has to be allowed
+        // to replace the copy, or the two rules would deadlock.
+        if hasMirror, mirrorOffset > newOffset { return rebuild() }
+
         // An empty increment is otherwise never a reason to write: when the copy
         // is not empty, writing it would erase the conversation.
         guard incomingBytes > 0 else { return .unchanged }

@@ -80,7 +80,13 @@ enum SessionSync {
                 || legacy.string(forKey: deviceIDKey) != nil
                 || legacy.dictionary(forKey: offsetsKey) != nil
             guard hasConfig else { continue }
-            for key in [enabledKey, syncDirKey, mappingsKey, deviceIDKey, offsetsKey, importedMtimesKey, agentMirrorEnabledKey, agentExportFpKey, agentImportedFpKey] {
+            // Every key, including the two added since: a list that lags the state
+            // it migrates drops the newest setting on the floor, and the user
+            // finds the compaction-point mode switched off again in the other
+            // build.
+            for key in [enabledKey, syncDirKey, mappingsKey, deviceIDKey, offsetsKey,
+                        basesKey, importedMtimesKey, compactionOnlyKey, agentMirrorEnabledKey,
+                        agentExportFpKey, agentImportedFpKey] {
                 if let value = legacy.object(forKey: key) {
                     shared.set(value, forKey: key)
                 }
@@ -232,7 +238,17 @@ enum SessionSync {
     /// would only refresh, but skipping is still cheaper and quieter).
     private static var lastImportedFileMtime: [String: TimeInterval] {
         get {
-            defaults.dictionary(forKey: importedMtimesKey) as? [String: TimeInterval] ?? [:]
+            guard let raw = defaults.dictionary(forKey: importedMtimesKey) else { return [:] }
+            // Read value by value rather than `as? [String: TimeInterval]`: one
+            // entry stored as a string — an older build wrote one that way, and it
+            // is still in this Mac's defaults — makes that cast fail for the WHOLE
+            // dictionary, which silently turns off the "already seen this file"
+            // skip for every conversation at once.
+            return raw.compactMapValues { value in
+                if let number = value as? TimeInterval { return number }
+                if let text = value as? String { return TimeInterval(text) }
+                return nil
+            }
         }
         set {
             defaults.set(newValue, forKey: importedMtimesKey)
