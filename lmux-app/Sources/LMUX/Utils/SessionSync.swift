@@ -34,6 +34,9 @@ enum SessionSync {
     /// rather than extended.
     private static let basesKey = "lmux_sync_bases"
     private static let importedMtimesKey = "lmux_sync_imported_mtimes"
+    /// Whether sync stores sessions from their last compaction point, and trims
+    /// this Mac's conversation to match.
+    private static let compactionOnlyKey = "lmux_sync_compaction_only"
     private static let agentMirrorEnabledKey = "lmux_agent_mirror_enabled"
     /// relpath -> "size,mtime" of the local JSONL last pushed to the mirror.
     private static let agentExportFpKey = "lmux_agent_export_fp"
@@ -89,6 +92,26 @@ enum SessionSync {
     static var isEnabled: Bool {
         get { defaults.bool(forKey: enabledKey) }
         set { defaults.set(newValue, forKey: enabledKey) }
+    }
+
+    /// Whether sync keeps sessions from their last compaction point onward, and
+    /// trims this Mac's conversation file to match.
+    ///
+    /// Off by default, and the default is the safe half: a full sync leaves every
+    /// local file exactly as the agent wrote it. Turning it on lets this Mac
+    /// discard the records before each conversation's last compaction boundary —
+    /// records the CLI has already stopped reading (it slices them out of every
+    /// model request) and stopped displaying (it trims its in-memory history at
+    /// the same boundary). They are most of the weight: 79% of an 83 MB
+    /// conversation on this machine.
+    ///
+    /// The deletion is permanent and there is no backup. What makes it safe is
+    /// not a copy but a check: the backend refuses unless the agent is stopped and
+    /// the rewrite is verified to begin at a parseable boundary record and to end
+    /// where the conversation ends.
+    static var compactionOnly: Bool {
+        get { defaults.bool(forKey: compactionOnlyKey) }
+        set { defaults.set(newValue, forKey: compactionOnlyKey) }
     }
 
     static var syncDir: String? {
@@ -772,6 +795,48 @@ enum SessionSync {
         }
     }
 
+    /// Point the local sync copy at the conversation file a prune just produced.
+    ///
+    /// Compaction-point sync means the copy already holds exactly the pruned
+    /// content, so only its recorded offsets are wrong. Rewriting those without
+    /// touching the content — and without moving the modification date — keeps
+    /// the other machine from re-importing a file whose bytes did not change.
+    ///
+    /// When the copy is not this file (another device's, or stale), its offsets
+    /// are cleared instead and the next export rebuilds it from the base.
+    static func realignMirrorAfterPrune(cbcID: String, newSize: Int64) {
+        guard let found = mirrorBundle(for: cbcID),
+              SyncIncrement.mirrorMatchesPrunedFile(
+                  mirrorOwnedByThisDevice: found.bundle.deviceId == deviceID,
+                  mirrorContentBytes: Int64(found.bundle.content.utf8.count),
+                  newSize: newSize) else {
+            resetExportedOffset(for: cbcID)
+            recordSyncBase(0, for: cbcID)
+            return
+        }
+
+        var bundle = found.bundle
+        bundle.offset = newSize
+        bundle.contentStart = 0
+        bundle.base = 0
+
+        let previousDate = (try? FileManager.default
+            .attributesOfItem(atPath: found.url.path)[.modificationDate]) as? Date
+        do {
+            try bundle.toJSON().write(to: found.url, options: .atomic)
+            if let previousDate {
+                try? FileManager.default.setAttributes(
+                    [.modificationDate: previousDate], ofItemAtPath: found.url.path)
+            }
+        } catch {
+            // The copy is intact, just describing the old file. Clearing the
+            // tracking makes the next export rebuild it.
+            resetExportedOffset(for: cbcID)
+        }
+        recordExportedOffset(newSize, for: cbcID)
+        recordSyncBase(0, for: cbcID)
+    }
+
     /// Remove the sync copy of a session that is no longer pinned. Deleting is
     /// NOT propagated across devices (per design); this only clears local
     /// tracking state.
@@ -992,7 +1057,13 @@ enum SessionSync {
                 // conversation, which has its own tracking.
                 if mode != "new" {
                     recordExportedOffset(landed.byteCount, for: cbcID)
-                    recordSyncBase(landed.base, for: cbcID)
+                    // The base the copy must be tracked against is the one the
+                    // next export will report, and that depends on the mode: in
+                    // full mode the copy holds the whole file regardless of where
+                    // the conversation's boundary sits, and recording the real
+                    // boundary would make the next export rebuild a copy that is
+                    // already correct.
+                    recordSyncBase(compactionOnly ? landed.base : 0, for: cbcID)
                 }
                 lastImportedFileMtime[cbcID] = mtime.timeIntervalSince1970
                 imported.append(cbcID)

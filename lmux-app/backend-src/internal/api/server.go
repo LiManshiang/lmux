@@ -83,6 +83,10 @@ func (s *Server) Start() error {
 			h.AdoptSessionWorkDir(w, r)
 			return
 		}
+		if id := extractIDFromPath(path, "prune-conversation"); id != "" && r.Method == http.MethodPost {
+			h.PruneSessionConversation(w, r)
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			h.GetSession(w, r)

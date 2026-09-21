@@ -844,12 +844,19 @@ func sessionFileFor(agentType, projectDir, cbcSessionID string) string {
 
 // ExportSession returns a self-contained export bundle for a session's
 // conversation, including the agent type, project directory, conversation ID,
-// and the full raw JSONL conversation content.
+// and the raw JSONL conversation content.
 //
 // The optional `since` query param (byte offset) enables incremental export:
 // only the JSONL bytes after `since` are returned in `content`, and the
 // response carries the new total `offset` (current file size). The sync layer
 // uses this to transfer only the appended lines of a growing conversation.
+//
+// `content_start` is always the source offset `content` begins at, and `offset`
+// is always the file's size. `base` is the offset the exported content's lineage
+// begins at: the conversation's last compaction boundary when `compaction_only=1`
+// asked for it, and 0 otherwise. A caller decides between appending and
+// rebuilding a stored copy by comparing `content_start` against `base`, so those
+// two numbers — not the mode — carry the meaning.
 func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 	id := extractID(r.URL.Path, "/api/sessions/")
 	if id == "" {
@@ -888,19 +895,25 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 			since = parsed
 		}
 	}
-	// The live history starts at the last compaction boundary. The CLI slices
-	// everything before that boundary out of every model request, so a sync copy
-	// has no reason to carry it either. Raising `since` to the base is what makes
-	// a full export (no `since`) return the compacted tail instead of the whole
-	// file; on a conversation that was never compacted the base is 0 and nothing
-	// changes. A scan failure falls back to 0 — sending too much is recoverable,
-	// refusing to export is not.
-	base, baseErr := codebuddy.CompactionBase(sess.AgentType, path)
-	if baseErr != nil {
-		base = 0
+	// `compaction_only` is what asks for the conversation from its last
+	// compaction boundary. The CLI slices everything before that boundary out of
+	// every model request (HistoryUtils.filterBeforeCompactedMessage), so a sync
+	// copy gains nothing by carrying it. Without this parameter the export is the
+	// whole conversation, which is the safe default: it is also what a caller who
+	// has not opted in expects, and reporting `base: 0` below keeps every
+	// downstream decision on the same footing in both modes.
+	compactionOnly := r.URL.Query().Get("compaction_only") == "1"
+	boundary, boundaryErr := codebuddy.CompactionBase(sess.AgentType, path)
+	if boundaryErr != nil {
+		// Sending too much is recoverable; refusing to export is not.
+		boundary = 0
 	}
-	if since < base {
-		since = base
+	var base int64
+	if compactionOnly {
+		base = boundary
+		if since < base {
+			since = base
+		}
 	}
 	// Clamp: a since offset larger than the file means no new content.
 	if since > total {
@@ -937,6 +950,66 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 		"base":                base,
 		"content_start":       since,
 		"content_modified_at": info.ModTime().Unix(),
+	})
+}
+
+// PruneSessionConversation rewrites a session's conversation so that it starts
+// at its last compaction boundary, discarding the records before it.
+//
+// Those records are ones the CLI has already stopped reading and stopped
+// showing, so the conversation keeps its meaning while the file loses the weight
+// (on this machine, 79% of an 83 MB conversation). Irreversible, and offered
+// only because a user asked for it: the sync settings spell out the trade-off.
+//
+// A refusal is not an error. "Never compacted", "already trimmed", "an agent has
+// it open" and "no such conversation" are the normal answers for most sessions,
+// and the caller carries on syncing the full file — reporting them as 200 with
+// `pruned: false` keeps that path quiet. A failure to produce a verified result
+// is a 500, because that one is worth seeing.
+func (h *Handler) PruneSessionConversation(w http.ResponseWriter, r *http.Request) {
+	id := extractID(r.URL.Path, "/api/sessions/")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing session id")
+		return
+	}
+	sess, err := h.mgr.Get(id)
+	if err != nil || sess == nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if sess.CBCSessionID == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pruned": false, "reason": "no conversation bound"})
+		return
+	}
+
+	path := sessionFileFor(sess.AgentType, sess.ProjectDir, sess.CBCSessionID)
+	outcome, err := codebuddy.PruneToCompactionBase(sess.AgentType, path, sess.CBCSessionID)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pruned": false, "reason": "conversation not found"})
+		return
+	case errors.Is(err, codebuddy.ErrConversationInUse):
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pruned": false, "reason": err.Error()})
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !outcome.Pruned {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pruned": false, "reason": "nothing before the last compaction point"})
+		return
+	}
+
+	codebuddy.ClearFindSessionCache()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pruned":        true,
+		"base":          outcome.Base,
+		"removed_bytes": outcome.RemovedBytes,
+		"size":          outcome.Size,
 	})
 }
 

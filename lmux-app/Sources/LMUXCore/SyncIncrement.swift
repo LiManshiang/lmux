@@ -122,6 +122,24 @@ public enum SyncIncrement {
         return rebuild()
     }
 
+    /// Whether a sync copy already holds exactly the file a prune produced.
+    ///
+    /// Compaction-point sync keeps the copy at `source[base:]`, which is what
+    /// pruning turns the file into, so after a prune the copy's content is
+    /// already right and only its recorded offsets are stale. Deciding that here
+    /// keeps the caller from rewriting content it does not need to touch — and
+    /// from moving a modification date the other machine reads as a change.
+    ///
+    /// Only true for a copy this device wrote: another device's copy counts bytes
+    /// of its own file, and the two agree only by coincidence.
+    public static func mirrorMatchesPrunedFile(
+        mirrorOwnedByThisDevice: Bool,
+        mirrorContentBytes: Int64,
+        newSize: Int64
+    ) -> Bool {
+        mirrorOwnedByThisDevice && mirrorContentBytes == newSize
+    }
+
     /// The `since` offset to request for the next export.
     ///
     /// The persisted tracking can be lost or lag behind (defaults migration,

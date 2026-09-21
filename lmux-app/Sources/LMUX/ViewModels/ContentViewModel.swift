@@ -197,7 +197,12 @@ class ContentViewModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
             do {
-                let bundle = try await api.exportSession(sessionID: session.id)
+                // A manual export of one session honours the same mode as sync,
+                // so a file handed to another machine matches what syncing would
+                // have sent. This does not prune anything itself: a full export
+                // stays a full export.
+                let bundle = try await api.exportSession(
+                    sessionID: session.id, compactionOnly: SessionSync.compactionOnly)
                 try bundle.toJSON().write(to: url, options: [.atomic])
                 showToast("Exported \(url.lastPathComponent)")
             } catch {
@@ -1715,6 +1720,48 @@ class ContentViewModel: ObservableObject {
 
     // MARK: - Cross-device sync
 
+    /// Export one pinned session's conversation to the sync directory.
+    ///
+    /// With compaction-point sync on, this Mac's conversation is trimmed to its
+    /// last compaction boundary first, so the copy taken below — and every copy
+    /// taken later — carries only the half that is still live. A refusal is the
+    /// normal answer (never compacted, or an agent has the file open) and the
+    /// export simply proceeds on the full conversation.
+    ///
+    /// Returns whether anything was written. Throws only for failures the caller
+    /// should treat as "nothing to export".
+    @discardableResult
+    private func exportPinnedSession(_ session: SessionSummary, cbcID: String) async throws -> Bool {
+        if SessionSync.compactionOnly,
+           let pruned = try? await api.pruneConversation(sessionID: session.id),
+           pruned.pruned {
+            SessionSync.realignMirrorAfterPrune(cbcID: cbcID, newSize: pruned.size ?? 0)
+        }
+
+        let since = SessionSync.exportSinceOffset(for: cbcID)
+        let mode = SessionSync.compactionOnly
+        let applied = SessionSync.applyIncrementalExport(
+            try await api.exportSession(sessionID: session.id, since: since, compactionOnly: mode))
+        if applied == .needsFullExport {
+            // The copy is missing or cannot be extended: drop the tracked offset
+            // and resend everything from the base.
+            SessionSync.resetExportedOffset(for: cbcID)
+            let full = try await api.exportSession(sessionID: session.id, compactionOnly: mode)
+            let fullResult = SessionSync.applyIncrementalExport(full)
+            // A full export covers the whole range the copy holds, so tracking can
+            // start from its end even when the copy turned out not to need
+            // rewriting. Without this the tracking stays at the zero the reset
+            // left, and every later import reads as a local change that was never
+            // published — a conflict prompt about a conversation nothing is in
+            // conflict about.
+            if fullResult == .unchanged {
+                SessionSync.recordExportedOffset(Int64(full.content.utf8.count), for: cbcID)
+            }
+            return true
+        }
+        return applied == .updated
+    }
+
     /// Manual sync pass: export changed pinned sessions to the sync directory
     /// and import newer remote files. No longer called automatically by the
     /// polling timer — sync is explicit ("Sync Now", or prompted on quit).
@@ -1727,16 +1774,7 @@ class ContentViewModel: ObservableObject {
         for session in sessions where session.pinned && !(session.cbcSessionID ?? "").isEmpty {
             guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
             do {
-                let since = SessionSync.exportSinceOffset(for: cbcID)
-                let bundle = try await api.exportSession(sessionID: session.id, since: since)
-                let result = SessionSync.applyIncrementalExport(bundle)
-                if result == .needsFullExport {
-                    // Local copy missing or out of sync: drop the tracked
-                    // offset and resend the full conversation.
-                    SessionSync.resetExportedOffset(for: cbcID)
-                    let full = try await api.exportSession(sessionID: session.id)
-                    _ = SessionSync.applyIncrementalExport(full)
-                }
+                try await exportPinnedSession(session, cbcID: cbcID)
             } catch {
                 // Session may not have a conversation yet; ignore.
                 continue
@@ -1865,24 +1903,7 @@ class ContentViewModel: ObservableObject {
             }
             syncPhase = .exporting(current: idx + 1, total: pinned.count)
             do {
-                let since = SessionSync.exportSinceOffset(for: cbcID)
-                let bundle = try await api.exportSession(sessionID: session.id, since: since)
-                let export = SessionSync.applyIncrementalExport(bundle)
-                if export == .needsFullExport {
-                    SessionSync.resetExportedOffset(for: cbcID)
-                    let full = try await api.exportSession(sessionID: session.id)
-                    let applied = SessionSync.applyIncrementalExport(full)
-                    // A full export is the whole conversation, so tracking can
-                    // start from its end even when the mirror turned out not to
-                    // need rewriting. Without this the tracking stays at the
-                    // zero the reset left, and every later import reads as a
-                    // local change that was never published — a conflict prompt
-                    // about a conversation nothing is in conflict about.
-                    if applied == .unchanged {
-                        SessionSync.recordExportedOffset(Int64(full.content.utf8.count), for: cbcID)
-                    }
-                    result.exportedSessions += 1
-                } else if export == .updated {
+                if try await exportPinnedSession(session, cbcID: cbcID) {
                     result.exportedSessions += 1
                 }
             } catch {

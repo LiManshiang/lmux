@@ -9,6 +9,7 @@ struct SyncSettingsView: View {
     @State private var syncDir = SessionSync.syncDir ?? ""
     @State private var mappings = SessionSync.pathMappings
     @State private var agentMirrorEnabled = SessionSync.agentMirrorEnabled
+    @State private var compactionOnly = SessionSync.compactionOnly
 
     var body: some View {
         Form {
@@ -17,6 +18,14 @@ struct SyncSettingsView: View {
                     .toggleStyle(.switch)
 
                 Text(L("Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+
+                Toggle(L("Sync only from the last compaction point"), isOn: $compactionOnly)
+                    .toggleStyle(.switch)
+                    .disabled(!syncEnabled)
+
+                Text(L("Full sync carries this Mac's conversation before its last compaction point. The agent no longer reads that part, and it is most of the size. Syncing from the compaction point instead rewrites this Mac's conversation file — that earlier content is lost for good — and frees the space it held."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
 
@@ -103,6 +112,7 @@ struct SyncSettingsView: View {
         .onChange(of: syncDir) { _ in persistSyncSettings() }
         .onChange(of: mappings) { _ in persistSyncSettings() }
         .onChange(of: agentMirrorEnabled) { _ in persistSyncSettings() }
+        .onChange(of: compactionOnly) { _ in persistSyncSettings() }
     }
 
     private func persistSyncSettings() {
@@ -110,5 +120,6 @@ struct SyncSettingsView: View {
         SessionSync.syncDir = syncDir.isEmpty ? nil : syncDir
         SessionSync.pathMappings = mappings.filter { !$0.from.isEmpty && !$0.to.isEmpty }
         SessionSync.agentMirrorEnabled = agentMirrorEnabled
+        SessionSync.compactionOnly = compactionOnly
     }
 }

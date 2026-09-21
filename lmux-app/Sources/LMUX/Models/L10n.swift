@@ -136,6 +136,8 @@ enum L10n {
         "Remove mapping": "移除映射",
         "Remove path mapping": "移除路径映射",
         "Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate.": "只有置顶（星标）的会话会同步。同步是手动的：用“立即同步”，或在退出时若存在置顶会话再确认。双向：本地改动导出，远端改动导入。冲突会生成副本。删除不会传播。",
+        "Sync only from the last compaction point": "只同步压缩点之后的内容",
+        "Full sync carries this Mac's conversation before its last compaction point. The agent no longer reads that part, and it is most of the size. Syncing from the compaction point instead rewrites this Mac's conversation file — that earlier content is lost for good — and frees the space it held.": "全量同步会带上本机会话里压缩点之前的内容：agent 已经不再读它，它却占了大部分体积。改从压缩点同步会改写本机的会话文件，那部分内容将永久丢失，从而释放它占用的空间。",
         "Raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects is mirrored to <sync dir>/agents and pulled back on other machines, so the Agent browser can find and resume every conversation. Only .jsonl files up to 50 MB sync; two-way changes keep the local copy.": "~/.codebuddy/projects 和 ~/.claude/projects 下的原始 Agent JSONL 会镜像到 <同步目录>/agents，并在其他机器上拉回，这样 Agent 浏览器能找到并恢复每个对话。只有 50 MB 以内的 .jsonl 会同步；双向改动保留本地副本。",
         "Agent Conversation Conflicts": "Agent 对话冲突",
         "Local": "本地",

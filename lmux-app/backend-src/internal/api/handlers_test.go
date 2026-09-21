@@ -313,7 +313,57 @@ func TestExportSessionIncremental(t *testing.T) {
 	}
 }
 
-// A compacted conversation exports from its compaction boundary: the CLI drops
+// compactedExportFixture builds a session whose conversation has a compaction
+// boundary in the middle, and returns the session id plus the three pieces the
+// assertions compare against.
+func compactedExportFixture(t *testing.T, h *Handler) (sessionID, pre, boundary, tail string) {
+	t.Helper()
+	home := os.Getenv("HOME")
+	body := `{"project_dir":"/tmp/proj","name":"s1","agent_type":"codebuddy","cbc_session_id":"conv1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateSession status = %d", w.Code)
+	}
+	sessionID = idOf(w)
+
+	projDir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pre = `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}` + "\n"
+	boundary = `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"<conversation_history_summary>…</conversation_history_summary>"}],"providerData":{"compactType":"manual","isCompactInternal":true,"isCompacted":true,"isSummary":true},"timestamp":2}` + "\n"
+	tail = `{"sessionId":"conv1","type":"message","role":"assistant","content":"after","timestamp":3}` + "\n"
+	if err := os.WriteFile(filepath.Join(projDir, "conv1.jsonl"), []byte(pre+boundary+tail), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return sessionID, pre, boundary, tail
+}
+
+type exportResp struct {
+	Content      string `json:"content"`
+	Offset       int64  `json:"offset"`
+	Base         int64  `json:"base"`
+	ContentStart int64  `json:"content_start"`
+}
+
+func doExport(t *testing.T, h *Handler, sessionID, query string) exportResp {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/export"+query, nil)
+	w := httptest.NewRecorder()
+	h.ExportSession(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ExportSession%s status = %d: %s", query, w.Code, w.Body.String())
+	}
+	var resp exportResp
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// compaction_only=1 exports from the last compaction boundary: the CLI drops
 // everything before it from every model request, so the sync layer has no reason
 // to carry it. `offset` still reports the whole file, which is what keeps the
 // incremental protocol's coordinates intact.
@@ -322,52 +372,12 @@ func TestExportSessionStartsAtCompactionBase(t *testing.T) {
 	t.Setenv("HOME", home)
 	ensureProjDir(t)
 	h := newTestHandler(t)
-
-	body := `{"project_dir":"/tmp/proj","name":"s1","agent_type":"codebuddy","cbc_session_id":"conv1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.CreateSession(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateSession status = %d", w.Code)
-	}
-	sessionID := idOf(w)
-
-	projDir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
-	if err := os.MkdirAll(projDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	pre := `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}` + "\n"
-	boundary := `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"<conversation_history_summary>…</conversation_history_summary>"}],"providerData":{"compactType":"manual","isCompactInternal":true,"isCompacted":true,"isSummary":true},"timestamp":2}` + "\n"
-	tail := `{"sessionId":"conv1","type":"message","role":"assistant","content":"after","timestamp":3}` + "\n"
-	whole := pre + boundary + tail
-	if err := os.WriteFile(filepath.Join(projDir, "conv1.jsonl"), []byte(whole), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	sessionID, pre, boundary, tail := compactedExportFixture(t, h)
 	base := int64(len(pre))
-
-	type exportResp struct {
-		Content      string `json:"content"`
-		Offset       int64  `json:"offset"`
-		Base         int64  `json:"base"`
-		ContentStart int64  `json:"content_start"`
-	}
-	get := func(query string) exportResp {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/export"+query, nil)
-		w := httptest.NewRecorder()
-		h.ExportSession(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("ExportSession%s status = %d: %s", query, w.Code, w.Body.String())
-		}
-		var resp exportResp
-		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-			t.Fatal(err)
-		}
-		return resp
-	}
+	whole := pre + boundary + tail
 
 	// Full export (no `since`) is raised to the base, not to zero.
-	full := get("")
+	full := doExport(t, h, sessionID, "?compaction_only=1")
 	if full.Content != boundary+tail {
 		t.Errorf("full content starts before the boundary:\n got %q\nwant %q", full.Content, boundary+tail)
 	}
@@ -379,20 +389,67 @@ func TestExportSessionStartsAtCompactionBase(t *testing.T) {
 	}
 
 	// An explicit since=0 is the same thing.
-	if zero := get("?since=0"); zero.Content != full.Content || zero.ContentStart != full.ContentStart {
+	if zero := doExport(t, h, sessionID, "?since=0&compaction_only=1"); zero.Content != full.Content || zero.ContentStart != full.ContentStart {
 		t.Errorf("since=0 content_start = %d, want %d", zero.ContentStart, full.ContentStart)
 	}
 
 	// A since before the base is raised to it, never below.
-	if raised := get("?since=1"); raised.ContentStart != base {
+	if raised := doExport(t, h, sessionID, "?since=1&compaction_only=1"); raised.ContentStart != base {
 		t.Errorf("since=1 content_start = %d, want %d", raised.ContentStart, base)
 	}
 
-	// A since at or after the base stays a plain increment.
-	if inc := get("?since=" + strconv.FormatInt(base+int64(len(boundary)), 10)); inc.Content != tail {
+	// A since at or after the base stays a plain increment, and keeps reporting
+	// the real boundary as `base`: that is what tells the merge logic this
+	// increment cannot stand in for the whole [base:] range.
+	incQuery := "?since=" + strconv.FormatInt(base+int64(len(boundary)), 10) + "&compaction_only=1"
+	if inc := doExport(t, h, sessionID, incQuery); inc.Content != tail {
 		t.Errorf("incremental content = %q, want %q", inc.Content, tail)
 	} else if inc.ContentStart != base+int64(len(boundary)) {
 		t.Errorf("incremental content_start = %d, want %d", inc.ContentStart, base+int64(len(boundary)))
+	} else if inc.Base != base {
+		t.Errorf("incremental base = %d, want the real boundary %d", inc.Base, base)
+	}
+}
+
+// Without compaction_only the export is the whole conversation and `base` is 0,
+// so a caller that never opted in — and any caller comparing content_start
+// against base — sees exactly the pre-compaction behaviour.
+func TestExportSessionWithoutCompactionOnlyIsWholeConversation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+	sessionID, pre, boundary, tail := compactedExportFixture(t, h)
+	whole := pre + boundary + tail
+
+	full := doExport(t, h, sessionID, "")
+	if full.Content != whole {
+		t.Errorf("content = %q, want the whole conversation", full.Content)
+	}
+	if full.Base != 0 || full.ContentStart != 0 {
+		t.Errorf("base/content_start = %d/%d, want 0/0", full.Base, full.ContentStart)
+	}
+	if full.Offset != int64(len(whole)) {
+		t.Errorf("offset = %d, want %d", full.Offset, len(whole))
+	}
+
+	// The incremental path is unchanged in this mode, and still reports base 0
+	// so the merge logic treats content_start == base as "the whole file".
+	inc := doExport(t, h, sessionID, "?since="+strconv.Itoa(len(pre)))
+	if inc.Content != boundary+tail {
+		t.Errorf("incremental content = %q, want %q", inc.Content, boundary+tail)
+	}
+	if inc.Base != 0 {
+		t.Errorf("incremental base = %d, want 0 without compaction_only", inc.Base)
+	}
+	if inc.ContentStart != int64(len(pre)) {
+		t.Errorf("incremental content_start = %d, want %d", inc.ContentStart, len(pre))
+	}
+
+	// compaction_only=0 is explicitly off, not a synonym for on.
+	off := doExport(t, h, sessionID, "?compaction_only=0")
+	if off.Base != 0 || off.Content != whole {
+		t.Errorf("compaction_only=0 gave base=%d, want 0", off.Base)
 	}
 }
 

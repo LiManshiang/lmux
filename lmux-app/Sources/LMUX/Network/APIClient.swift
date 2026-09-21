@@ -397,13 +397,51 @@ class APIClient: AgentSessionService {
     /// Pass `since` (byte offset) to fetch only the appended JSONL portion —
     /// the bundle's `content` then holds the increment and `offset` the new
     /// total size.
-    func exportSession(sessionID: String, since: Int64 = 0) async throws -> SessionExportBundle {
+    /// Exports a session's conversation. `since` asks for only the bytes after
+    /// that offset; `compactionOnly` asks for the conversation to start at its
+    /// last compaction boundary instead of at byte zero.
+    func exportSession(sessionID: String, since: Int64 = 0, compactionOnly: Bool = false) async throws -> SessionExportBundle {
         var url = "/api/sessions/\(sessionID)/export"
-        if since > 0 {
-            url += "?since=\(since)"
-        }
+        var params: [String] = []
+        if since > 0 { params.append("since=\(since)") }
+        if compactionOnly { params.append("compaction_only=1") }
+        if !params.isEmpty { url += "?" + params.joined(separator: "&") }
         let data = try await get(url, timeout: Self.heavyTransferTimeout)
         return try decode(SessionExportBundle.self, from: data)
+    }
+
+    /// What a prune did to a conversation.
+    struct PruneResult {
+        /// False when there was nothing to do — never compacted, already starts
+        /// at its boundary, or a live agent holds the file. Not a failure.
+        let pruned: Bool
+        let reason: String?
+        let removedBytes: Int64?
+        let size: Int64?
+    }
+
+    /// Trims a session's conversation to its last compaction boundary, deleting
+    /// the records before it. Irreversible; only meaningful while
+    /// `SessionSync.compactionOnly` is on, which is where the trade-off is
+    /// explained to the user.
+    func pruneConversation(sessionID: String) async throws -> PruneResult {
+        struct Response: Codable {
+            let pruned: Bool
+            let reason: String?
+            let removedBytes: Int64?
+            let size: Int64?
+            enum CodingKeys: String, CodingKey {
+                case pruned, reason, size
+                case removedBytes = "removed_bytes"
+            }
+        }
+        let data = try await post(
+            "/api/sessions/\(sessionID)/prune-conversation",
+            body: Optional<String>.none,
+            timeout: Self.heavyTransferTimeout)
+        let resp = try decode(Response.self, from: data)
+        return PruneResult(pruned: resp.pruned, reason: resp.reason,
+                           removedBytes: resp.removedBytes, size: resp.size)
     }
 
     /// What an import landed: the session it created or refreshed, plus the
