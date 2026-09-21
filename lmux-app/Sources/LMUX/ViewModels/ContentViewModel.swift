@@ -1862,7 +1862,16 @@ class ContentViewModel: ObservableObject {
                 if export == .needsFullExport {
                     SessionSync.resetExportedOffset(for: cbcID)
                     let full = try await api.exportSession(sessionID: session.id)
-                    _ = SessionSync.applyIncrementalExport(full)
+                    let applied = SessionSync.applyIncrementalExport(full)
+                    // A full export is the whole conversation, so tracking can
+                    // start from its end even when the mirror turned out not to
+                    // need rewriting. Without this the tracking stays at the
+                    // zero the reset left, and every later import reads as a
+                    // local change that was never published — a conflict prompt
+                    // about a conversation nothing is in conflict about.
+                    if applied == .unchanged {
+                        SessionSync.recordExportedOffset(Int64(full.content.utf8.count), for: cbcID)
+                    }
                     result.exportedSessions += 1
                 } else if export == .updated {
                     result.exportedSessions += 1
