@@ -153,6 +153,21 @@ struct SessionExportBundle: Codable {
     /// export was requested with `since`, `content` holds only the appended
     /// portion after that offset and `offset` is the new total size.
     var offset: Int64?
+    /// Byte offset at which the conversation's live history begins: the start of
+    /// its last compaction boundary, or 0 when it was never compacted.
+    ///
+    /// /compact — and the automatic compaction that runs when the context fills
+    /// up — leaves everything before that boundary in the file, but the CLI
+    /// slices it out of every model request. An export therefore starts there
+    /// rather than at byte zero, and `content` never carries the dead prefix.
+    /// Absent on bundles written before this field existed, and absent reads as
+    /// 0: the whole conversation.
+    var base: Int64?
+    /// Byte offset in the source conversation at which `content` starts. Equal
+    /// to `base` for a full export, and to the requested `since` for an
+    /// increment. Absent reads as 0, which is only correct for an untouched
+    /// conversation — which is exactly the case an old bundle describes.
+    var contentStart: Int64?
     /// Unix seconds the underlying JSONL was last modified (sync change detection).
     let contentModifiedAt: Int64?
     /// Device that produced this export; used by cross-device sync to avoid
@@ -171,6 +186,8 @@ struct SessionExportBundle: Codable {
         case content
         case contentEncoding = "content_encoding"
         case offset
+        case base
+        case contentStart = "content_start"
         case contentModifiedAt = "content_modified_at"
         case deviceId = "device_id"
     }

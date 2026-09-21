@@ -1,197 +1,209 @@
 import XCTest
 @testable import LMUXCore
 
+/// The export plan decides what a sync copy (`.lmuxsession`) does with an
+/// incoming bundle. The defaults below describe a healthy, mid-life
+/// conversation: the copy was written here at compaction base 60 and reaches
+/// source offset 100 (40 bytes of content), and the bundle is an increment
+/// continuing from there to 120.
 final class SyncIncrementTests: XCTestCase {
-    // MARK: - First sync (no local file)
-
-    func testFirstSyncNoLocalFile() {
-        // No local copy, no prior offset → full conversation already fetched.
-        XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: false, localOffset: 0, newOffset: 100, localFileOffsetMatches: false),
-            .freshExport
+    private func plan(
+        hasMirror: Bool = true,
+        owned: Bool = true,
+        mirrorOffset: Int64 = 100,
+        mirrorContentBytes: Int64 = 40,
+        knownBase: Int64 = 60,
+        tracked: Int64 = 100,
+        incomingBase: Int64 = 60,
+        incomingContentStart: Int64 = 100,
+        incomingBytes: Int64 = 20,
+        newOffset: Int64 = 120,
+        incomingEqualsMirror: Bool = false
+    ) -> SyncIncrement.ExportPlan {
+        SyncIncrement.plan(
+            hasMirror: hasMirror,
+            mirrorOwnedByThisDevice: owned,
+            mirrorOffset: mirrorOffset,
+            mirrorContentBytes: mirrorContentBytes,
+            knownBase: knownBase,
+            trackedOffset: tracked,
+            incomingBase: incomingBase,
+            incomingContentStart: incomingContentStart,
+            incomingBytes: incomingBytes,
+            newOffset: newOffset,
+            incomingEqualsMirror: incomingEqualsMirror
         )
     }
 
-    func testFirstSyncWithLocalOffsetZeroAndFile() {
-        // File exists but offsets unknown (both zero) → nothing to append.
-        XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: 0, newOffset: 0, localFileOffsetMatches: true),
-            .unchanged
-        )
+    // MARK: - Appending
+
+    func testAppendsIncrementContinuingTheCopy() {
+        // The bundle starts exactly where the copy ends: the common case.
+        XCTAssertEqual(plan(), .append)
     }
 
-    // MARK: - Deleted local copy
-
-    func testLocalFileDeletedNeedsFullExport() {
-        // We synchronized to 100 before, but the file is gone → rebuild.
+    func testBaseZeroBehavesLikeAnUncompactedConversation() {
+        // With no compaction the copy holds the whole file, so the old
+        // invariant "content length == offset" still holds.
         XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: false, localOffset: 100, newOffset: 100, localFileOffsetMatches: false),
-            .needsFullExport
-        )
-        XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: false, localOffset: 100, newOffset: 120, localFileOffsetMatches: false),
-            .needsFullExport
-        )
+            plan(mirrorOffset: 100, mirrorContentBytes: 100, knownBase: 0,
+                 tracked: 100, incomingBase: 0, incomingContentStart: 100),
+            .append)
     }
 
-    // MARK: - Unchanged
+    // MARK: - Never writing
 
-    func testNoNewDataUnchanged() {
-        XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: 100, newOffset: 100, localFileOffsetMatches: true),
-            .unchanged
-        )
+    func testEmptyIncrementNeverWrites() {
+        // An export past the end of the file, or an idle conversation. Writing
+        // would erase the copy; not writing keeps the modification date intact.
+        XCTAssertEqual(plan(incomingBytes: 0), .unchanged)
     }
 
-    // MARK: - The source is behind the copy
-
-    func testSourceBehindTheCopyNeedsFullExport() {
-        // Not "nothing new": a conversation never shrinks, so a source shorter
-        // than what we synchronized to is a different file — rewritten shorter
-        // (a path repair rewrites the whole conversation) or covered by an
-        // offset inherited from another machine's copy of it. Appending is
-        // impossible; the copy has to be rebuilt.
+    func testIdenticalContentDoesNotRewrite() {
+        // Writing byte-identical content only moves the file's modification
+        // date, which reads as "the remote changed" on the other machine. In a
+        // loop that never settles.
         XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: 100, newOffset: 50, localFileOffsetMatches: true),
-            .needsFullExport
-        )
-
-        // An increment cannot fix it (there is no prefix to append to)…
-        XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 100, effectiveOffset: 100,
-                incomingBytes: 0, newOffset: 50),
-            .needsFullExport
-        )
-        // …a full export can: it replaces the copy and the offset with it.
-        XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 100, effectiveOffset: 100,
-                incomingBytes: 50, newOffset: 50),
-            .replaceFull
-        )
-        // The copy looking internally consistent (content == its offset) must
-        // not excuse it: a mirror written on the other machine looks consistent
-        // while describing a file this machine does not have.
-        XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 83_287_742, effectiveOffset: 83_287_742,
-                incomingBytes: 83_072_193, newOffset: 83_072_193),
-            .replaceFull
-        )
+            plan(owned: false, incomingContentStart: 60, incomingBytes: 60,
+                 newOffset: 120, incomingEqualsMirror: true),
+            .unchanged)
     }
 
-    func testNewOffsetZeroWithExistingFile() {
-        // No content (empty conversation) → unchanged.
+    // MARK: - First sync and lost copies
+
+    func testFirstSyncWritesBaseRelativeContent() {
+        // No copy yet, and the caller asked from zero: the backend answers from
+        // the compaction base, so the bundle can become the whole copy.
         XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: 0, newOffset: 0, localFileOffsetMatches: true),
-            .unchanged
-        )
+            plan(hasMirror: false, tracked: 0,
+                 incomingContentStart: 60, incomingBytes: 60, newOffset: 120),
+            .replace)
     }
 
-    // MARK: - Append increment
-
-    func testNewDataAppends() {
+    func testDeletedCopyNeedsFullExport() {
+        // The copy was deleted here while our tracking survived, so the caller
+        // asks from offset 100 — an increment that cannot stand in for
+        // source[60:]. Rebuild from the base instead.
         XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: 100, newOffset: 150, localFileOffsetMatches: true),
-            .append
-        )
+            plan(hasMirror: false, tracked: 100,
+                 incomingContentStart: 100, incomingBytes: 20, newOffset: 120),
+            .needsFullExport)
     }
 
-    // MARK: - Inconsistent local copy
-
-    func testLocalCopyOffsetMismatchNeedsFullExport() {
-        // Local file exists but its recorded offset differs from our tracked
-        // one (ahead/behind) → resync from zero.
+    func testSourceRewrittenShorterNeedsFullExport() {
+        // A cwd repair rewrites the whole conversation when the recorded
+        // directory stops matching, and importing a trimmed copy replaces it
+        // outright. Both can leave the source shorter than what we published.
+        // Checked before the empty-increment rule: an increment past the new end
+        // of the file arrives empty, and "nothing to write" would leave a copy
+        // describing more conversation than the file holds.
         XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: 100, newOffset: 150, localFileOffsetMatches: false),
-            .needsFullExport
-        )
+            plan(tracked: 140, incomingContentStart: 140, incomingBytes: 0,
+                 newOffset: 120),
+            .needsFullExport)
     }
 
-    // MARK: - effectiveOffset (lost tracked offset recovery)
+    // MARK: - The compaction base
 
-    func testEffectiveOffsetKeepsValidTracking() {
-        // File behind our tracked offset → tracking wins.
-        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 150, fileOffset: 100), 150)
-        // File offset equal → unchanged.
-        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 150, fileOffset: 150), 150)
-        // No file → tracking stays.
-        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 150, fileOffset: nil), 150)
+    func testNewCompactionBoundaryRebuildsFromTheBase() {
+        // A compaction landed at offset 90_000. Every byte the copy holds is now
+        // the dead prefix the CLI has stopped reading, so an increment from our
+        // old offset cannot extend it...
+        XCTAssertEqual(
+            plan(incomingBase: 90_000, incomingContentStart: 100,
+                 incomingBytes: 20, newOffset: 90_500),
+            .needsFullExport)
+
+        // ...while a fresh export that reaches back to the new boundary
+        // replaces the copy wholesale.
+        XCTAssertEqual(
+            plan(incomingBase: 90_000, incomingContentStart: 90_000,
+                 incomingBytes: 500, newOffset: 90_500),
+            .replace)
     }
 
-    func testEffectiveOffsetRecoversLostTrackingFromFile() {
-        // Tracking was reset to 0 (defaults migration) but the mirror file is
-        // intact at 67852855 → converge on the file so append resumes.
-        XCTAssertEqual(SyncIncrement.effectiveOffset(localOffset: 0, fileOffset: 67_852_855), 67_852_855)
-        // Converged offset lets decide() take the append path (self-heals).
-        let recovered = SyncIncrement.effectiveOffset(localOffset: 0, fileOffset: 67_852_855)
+    func testQuietCompactedConversationIsStillRebuilt() {
+        // The conversation compacted and then went quiet, so the bundle carries
+        // nothing. "Nothing to write" would keep the copy carrying the dead
+        // prefix for as long as the session stays idle — which is the case this
+        // whole feature exists to fix, so the base is checked first.
         XCTAssertEqual(
-            SyncIncrement.decide(hasLocalFile: true, localOffset: recovered, newOffset: 67_910_211, localFileOffsetMatches: true),
-            .append
-        )
+            plan(incomingBase: 90_000, incomingContentStart: 100, incomingBytes: 0,
+                 newOffset: 100),
+            .needsFullExport)
     }
 
-    // MARK: - isFullExport (full-export bundles must not be appended)
-
-    func testIsFullExport() {
-        // Full export: content bytes == offset (whole JSONL).
-        XCTAssertTrue(SyncIncrement.isFullExport(contentBytes: 67_910_211, offset: 67_910_211))
-        // A full export from a slightly-grown JSONL is >= its offset.
-        XCTAssertTrue(SyncIncrement.isFullExport(contentBytes: 68_298_139, offset: 68_298_139))
-        // Incremental bundle: only the appended tail → far shorter than offset.
-        XCTAssertFalse(SyncIncrement.isFullExport(contentBytes: 457_284, offset: 68_298_139))
-        // Degenerate zero-offset bundle is not a full export.
-        XCTAssertFalse(SyncIncrement.isFullExport(contentBytes: 0, offset: 0))
+    func testBoundaryMovingEarlierAlsoRebuilds() {
+        // A copy imported from a machine that compacted at a different point can
+        // leave the local boundary behind the one the copy was written at. The
+        // ranges no longer line up, so the copy is rebuilt rather than extended.
+        XCTAssertEqual(plan(incomingBase: 10), .needsFullExport)
+        XCTAssertEqual(
+            plan(incomingBase: 10, incomingContentStart: 10, incomingBytes: 500,
+                 newOffset: 520),
+            .replace)
     }
 
-    // MARK: - mirrorRepairDecision (corrupt mirror integrity guard)
+    // MARK: - Distrusting the copy
 
-    func testMirrorRepairProceedWhenContentMatchesOffset() {
-        // Healthy copy: content length equals the trusted offset → normal flow.
+    func testForeignCopyIsReplacedNeverExtended() {
+        // Another device's copy carries its own file's offsets. It can be
+        // replaced by a base-relative export, but never appended to.
+        XCTAssertEqual(plan(owned: false), .needsFullExport)
         XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 67_852_855,
-                effectiveOffset: 67_852_855, incomingBytes: 57_284, newOffset: 67_910_139),
-            .proceed
-        )
-        // No local file → nothing to corrupt, normal flow.
-        XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: false, localContentBytes: 0,
-                effectiveOffset: 0, incomingBytes: 68_298_139, newOffset: 68_298_139),
-            .proceed
-        )
+            plan(owned: false, incomingContentStart: 60, incomingBytes: 60,
+                 newOffset: 120),
+            .replace)
     }
 
-    func testMirrorRepairReplaceFullWhenFullExportArrives() {
-        // The field-reported corruption: local content doubled
-        // (136_150_994 = 67_852_855 + full 68_298_139) while its offset still
-        // claims 68_298_139. A full export (incoming == newOffset) replaces
-        // the copy wholesale instead of appending onto the duplicate.
+    func testCorruptCopyIsReplaced() {
+        // 80 content bytes against an offset 40 past the base: the shape a past
+        // bug produced by stacking a full export onto an intact copy.
+        XCTAssertEqual(plan(mirrorContentBytes: 80), .needsFullExport)
         XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 136_150_994,
-                effectiveOffset: 68_298_139, incomingBytes: 68_298_139, newOffset: 68_298_139),
-            .replaceFull
-        )
+            plan(mirrorContentBytes: 80, incomingContentStart: 60,
+                 incomingBytes: 60, newOffset: 120),
+            .replace)
     }
 
-    func testMirrorRepairNeedsFullExportWhenOnlyIncrementArrives() {
-        // Corrupt copy + increment-sized bundle → must re-export from zero
-        // first; appending would duplicate the overlapped bytes again.
+    func testIncrementStartingBeforeTheCopyEndNeedsFullExport() {
+        // The tracked offset ran ahead of the copy, so the increment begins
+        // inside what the copy already holds. Appending would duplicate it.
+        XCTAssertEqual(plan(incomingContentStart: 80), .needsFullExport)
+    }
+
+    // MARK: - Requested since offset
+
+    func testRequestSinceUsesOurTrackingByDefault() {
         XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 136_150_994,
-                effectiveOffset: 68_298_139, incomingBytes: 57_284, newOffset: 68_298_139),
-            .needsFullExport
-        )
-        // Degenerate: empty source with a corrupt copy → full re-export.
+            SyncIncrement.requestSinceOffset(tracked: 100, mirrorOffset: nil,
+                                             mirrorOwnedByThisDevice: false),
+            100)
+    }
+
+    func testRequestSinceRecoversFromOurOwnCopyAheadOfTracking() {
+        // Defaults migration lost the tracked offset while the copy on disk is
+        // intact and further along. Asking from zero would return bytes the copy
+        // already holds, and appending them would duplicate the conversation.
         XCTAssertEqual(
-            SyncIncrement.mirrorRepairDecision(
-                hasLocalFile: true, localContentBytes: 100,
-                effectiveOffset: 50, incomingBytes: 0, newOffset: 0),
-            .needsFullExport
-        )
+            SyncIncrement.requestSinceOffset(tracked: 0, mirrorOffset: 67_852_855,
+                                             mirrorOwnedByThisDevice: true),
+            67_852_855)
+    }
+
+    func testRequestSinceIgnoresOurOwnCopyBehindTracking() {
+        XCTAssertEqual(
+            SyncIncrement.requestSinceOffset(tracked: 150, mirrorOffset: 100,
+                                             mirrorOwnedByThisDevice: true),
+            150)
+    }
+
+    func testRequestSinceIgnoresAnotherDevicesCopy() {
+        // Its offset counts bytes of a different file; using it makes the
+        // backend answer with a slice this machine's file does not share.
+        XCTAssertEqual(
+            SyncIncrement.requestSinceOffset(tracked: 40, mirrorOffset: 67_852_855,
+                                             mirrorOwnedByThisDevice: false),
+            40)
     }
 }

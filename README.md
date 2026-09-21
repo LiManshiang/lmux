@@ -26,7 +26,9 @@ off** — even on a different Mac.
 - **Cross-Mac session sync** — pinned sessions sync incrementally to any folder
   shared between your Macs (iCloud Drive, Syncthing, …). Recorded paths are
   localized on import, and two-sided edits raise a keep-local / use-remote
-  dialog instead of silently overwriting.
+  dialog instead of silently overwriting. A session that has been compacted
+  syncs from its last `/compact` onward — the agent no longer reads anything
+  before that point — so an 83 MB history travels as 18 MB.
 - **Truly native** — SwiftUI app with a Ghostty GPU-rendered terminal; a
   SwiftTerm backend keeps macOS 12 and Intel Macs supported (`make app-x86`).
 - **Local-first** — agents run in local terminals; sessions live in your home

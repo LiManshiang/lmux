@@ -301,12 +301,24 @@ class ContentViewModel: ObservableObject {
     private func doImport(_ bundle: SessionExportBundle, into projectDir: String, mode: String) async {
         do {
             try await withTransferWait {
-                let session = try await api.importSession(bundle, projectDir: projectDir, conflictMode: mode)
-                showToast(L("Imported %@", session.name as NSString))
+                let imported = try await api.importSession(bundle, projectDir: projectDir, conflictMode: mode)
+                showToast(L("Imported %@", imported.session.name as NSString))
             }
         } catch {
             showToast("Import failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Hand the sync layer where an import landed. The backend reports the file
+    /// it wrote (path mappings and cwd localization change its length), so the
+    /// bundle's own content length is only a fallback for a backend too old to
+    /// report one.
+    private static func landedConversation(
+        _ imported: APIClient.ImportedSession, content: String
+    ) -> SessionSync.ImportedConversation {
+        SessionSync.ImportedConversation(
+            byteCount: imported.byteCount ?? Int64(content.utf8.count),
+            base: imported.base ?? 0)
     }
 
     /// Pack lmux data (sessions.db, restore.json, codebuddy/claude settings +
@@ -1742,12 +1754,9 @@ class ContentViewModel: ObservableObject {
                 mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
                 mapped.content = SessionSync.applyPathMappings(bundle.content)
 
-                do {
-                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
-                    importedAny = true
-                } catch {
-                    throw error
-                }
+                let imported = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
+                importedAny = true
+                return Self.landedConversation(imported, content: mapped.content)
             },
             onConflict: { info in
                 await Self.promptSyncConflict(info)
@@ -1890,12 +1899,9 @@ class ContentViewModel: ObservableObject {
                 var mapped = bundle
                 mapped.projectDir = SessionSync.applyPathMappings(bundle.projectDir)
                 mapped.content = SessionSync.applyPathMappings(bundle.content)
-                do {
-                    let _ = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
-                    importedAny = true
-                } catch {
-                    throw error
-                }
+                let imported = try await api.importSession(mapped, projectDir: mapped.projectDir, conflictMode: mode)
+                importedAny = true
+                return Self.landedConversation(imported, content: mapped.content)
             },
             onConflict: { info in
                 await Self.promptSyncConflict(info)

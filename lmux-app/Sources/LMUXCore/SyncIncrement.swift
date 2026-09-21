@@ -3,148 +3,143 @@ import Foundation
 /// Pure decision logic for incremental session export, extracted so it can be
 /// unit tested without touching the filesystem or UserDefaults.
 ///
-/// The cross-device sync layer exports each pinned session's conversation
-/// incrementally: the backend reports the JSONL's current size (`newOffset`),
-/// and we only need to transfer the appended bytes. This enum decides what to
-/// do with that information.
+/// A sync copy (`.lmuxsession`) holds `source[base : offset]`: the conversation
+/// from its last compaction boundary to its end. /compact — and the automatic
+/// compaction that runs when the context fills up — leaves everything before
+/// that boundary in the file, but the CLI slices it out of every model request
+/// (`HistoryUtils.filterBeforeCompactedMessage`), so a copy has no reason to
+/// carry it. Measured on this machine, an 83 MB conversation keeps 18 MB from
+/// its boundary on.
+///
+/// `base` is a byte offset into the source file, which makes it meaningful only
+/// on the machine that computed it. That is why the base is remembered locally
+/// rather than carried in the bundle, and why a copy another device wrote can
+/// never be extended — only replaced.
 public enum SyncIncrement {
-    public enum Decision: Equatable {
-        /// Local copy exists and is current — nothing to write.
+    /// What to do with an export bundle.
+    public enum ExportPlan: Equatable {
+        /// The copy already holds exactly these bytes, or the bundle carries
+        /// nothing: do not write. Rewriting would move the file's modification
+        /// date, which reads as "the remote changed" on the other machine and
+        /// drags it into a re-import it does not need.
         case unchanged
-        /// Local copy exists and is behind — merge the increment into it.
+        /// Append the bundle's content to the copy's.
         case append
-        /// Local copy is missing while we had synchronized before (deleted on
-        /// this machine), or offsets are inconsistent — re-export everything.
+        /// Write the bundle's content as the whole copy.
+        case replace
+        /// The bundle is only an increment and cannot stand in for the whole
+        /// `source[base:]` range. The caller re-exports from zero — the backend
+        /// then answers from the compaction base — and decides again.
         case needsFullExport
-        /// First sync, no local copy, no prior offset — write the full
-        /// conversation that the caller already fetched.
-        case freshExport
     }
 
-    /// Decide how to handle an incremental export.
+    /// Decide how to handle an export bundle.
     ///
     /// - Parameters:
-    ///   - hasLocalFile: whether a matching `.lmuxsession` exists on disk.
-    ///   - localOffset: byte offset we last synchronized to (persisted).
-    ///   - newOffset: current JSONL size reported by the backend.
-    ///   - localFileOffsetMatches: whether the local copy's own recorded offset
-    ///     equals `localOffset` (i.e. we can safely append to it).
-    public static func decide(
-        hasLocalFile: Bool,
-        localOffset: Int64,
+    ///   - hasMirror: whether a `.lmuxsession` copy exists on disk.
+    ///   - mirrorOwnedByThisDevice: whether that copy was written here. Another
+    ///     device's copy carries its own file's offsets, which describe nothing
+    ///     about this one.
+    ///   - mirrorOffset: the source byte offset the copy claims to reach.
+    ///   - mirrorContentBytes: the copy's actual content length.
+    ///   - knownBase: the source offset the copy's content starts at (persisted
+    ///     per conversation, updated whenever the copy is written).
+    ///   - trackedOffset: how far this conversation has been published.
+    ///   - incomingBase: the source's current compaction boundary, as reported
+    ///     by the backend.
+    ///   - incomingContentStart: where the bundle's content starts in the source.
+    ///     Equal to `incomingBase` for a fresh base-relative export, and to the
+    ///     requested offset for an increment.
+    ///   - incomingBytes: the bundle's content length.
+    ///   - newOffset: the source's total size, as reported by the backend.
+    ///   - incomingEqualsMirror: whether the bundle's content is byte-identical
+    ///     to the copy's.
+    public static func plan(
+        hasMirror: Bool,
+        mirrorOwnedByThisDevice: Bool,
+        mirrorOffset: Int64,
+        mirrorContentBytes: Int64,
+        knownBase: Int64,
+        trackedOffset: Int64,
+        incomingBase: Int64,
+        incomingContentStart: Int64,
+        incomingBytes: Int64,
         newOffset: Int64,
-        localFileOffsetMatches: Bool
-    ) -> Decision {
-        guard hasLocalFile else {
-            // No local copy. If we had synchronized before, the file was
-            // deleted on this machine and the whole conversation must be
-            // re-exported. Otherwise this is a true first sync.
-            return localOffset > 0 ? .needsFullExport : .freshExport
-        }
-
-        // Nothing new to append.
-        if newOffset == localOffset {
-            return .unchanged
-        }
-
-        // The source is behind where we synchronized to — which cannot mean
-        // "no news", because a conversation never shrinks: the file was
-        // rewritten shorter, or this offset came from another machine's copy of
-        // it (byte offsets are not portable between machines when the content
-        // holds machine-specific paths). Reporting `.unchanged` here is how a
-        // session stopped syncing for good: the offset stayed ahead of the
-        // file, every pass asked for bytes past its end, got nothing back, and
-        // wrote nothing. Rebuild from zero instead.
-        if newOffset < localOffset {
+        incomingEqualsMirror: Bool
+    ) -> ExportPlan {
+        // A conversation only grows. A source that no longer reaches as far as
+        // what we published was rewritten shorter — a cwd repair rewrites the
+        // whole file when the recorded directory stops matching, and importing a
+        // trimmed copy replaces it outright — so there is nothing to append to
+        // and the copy has to be rebuilt from the base.
+        if hasMirror, trackedOffset > newOffset {
             return .needsFullExport
         }
 
-        // Local copy is consistent with our tracked offset — append increment.
-        if localFileOffsetMatches {
-            return .append
+        // Content that reaches back to the base can stand in for the whole
+        // `source[base:]` range. An increment that starts later cannot.
+        let coversFromBase = incomingContentStart == incomingBase
+
+        func rebuild() -> ExportPlan {
+            guard coversFromBase else { return .needsFullExport }
+            return incomingEqualsMirror ? .unchanged : .replace
         }
 
-        // Local copy is ahead/behind our tracked offset — resync from zero.
-        return .needsFullExport
+        // Every byte the copy holds was taken at `knownBase`. A conversation
+        // that moved on to a later boundary leaves the copy holding exactly the
+        // dead prefix this whole exercise exists to drop; a boundary that moved
+        // *earlier* (a copy imported from a machine that compacted at a
+        // different point) invalidates it just as thoroughly.
+        //
+        // Deliberately before the empty-increment rule below. A conversation
+        // that compacted and then went quiet sends nothing new, and "nothing to
+        // write" would keep the copy carrying the dead prefix for as long as the
+        // session stays idle — which is exactly the case worth fixing.
+        if hasMirror, incomingBase != knownBase { return rebuild() }
+
+        // An empty increment is otherwise never a reason to write: when the copy
+        // is not empty, writing it would erase the conversation.
+        guard incomingBytes > 0 else { return .unchanged }
+
+        if !hasMirror { return rebuild() }
+
+        // Another device's copy cannot be extended, because appending to it
+        // would build a conversation out of two machines' offsets.
+        if !mirrorOwnedByThisDevice { return rebuild() }
+
+        // The copy must really hold `source[knownBase:mirrorOffset]`. A copy
+        // whose content length disagrees with its offset is what a past bug
+        // produced — a full export stacked onto an intact copy, doubling the
+        // conversation — and must never be appended to.
+        if mirrorContentBytes != mirrorOffset - knownBase { return rebuild() }
+
+        // The increment continues exactly where the copy ends.
+        if incomingContentStart == mirrorOffset { return .append }
+
+        // The increment starts somewhere else: the tracked offset ran ahead of
+        // the copy, or the source was rewritten. Only a base-relative export can
+        // replace the range the copy is supposed to cover.
+        return rebuild()
     }
 
-    /// Recover a lost tracked offset from the local mirror file itself.
+    /// The `since` offset to request for the next export.
     ///
-    /// The persisted per-conversation offset can be missing or reset (e.g.
-    /// the sync state moved to a shared UserDefaults suite and the migration
-    /// only copied part of it), while the mirror `.lmuxsession` on disk is
-    /// intact and actually further along than our (zero) tracking. In that
-    /// case `decide` would return `.needsFullExport` forever — every sync
-    /// pass demands a full re-export, the full export is refused again for
-    /// the same reason, and nothing is ever written. Converging on the
-    /// file's offset lets the normal append path resume and self-heal.
-    public static func effectiveOffset(localOffset: Int64, fileOffset: Int64?) -> Int64 {
-        guard let fileOffset, fileOffset > localOffset else { return localOffset }
-        return fileOffset
-    }
-
-    /// Whether an export bundle already carries the entire conversation.
+    /// The persisted tracking can be lost or lag behind (defaults migration,
+    /// resets) while the copy on disk is further along. The request must use the
+    /// same basis as the plan below, or the backend returns bytes the copy
+    /// already holds and appending them duplicates the conversation. So: the
+    /// copy's offset when it is ours and ahead, otherwise our own tracking.
     ///
-    /// A bundle fetched WITHOUT a `since` offset is a full export: its
-    /// `content` is the whole JSONL, so its UTF-8 byte length equals its
-    /// `offset`. An incremental bundle is only the appended tail and is far
-    /// shorter. Appending a full export to the mirror prefix would duplicate
-    /// the whole conversation (mirror byte size ≈ prefix + full export), so
-    /// the writer must overwrite instead of append when this is true.
-    public static func isFullExport(contentBytes: Int64, offset: Int64) -> Bool {
-        offset > 0 && contentBytes >= offset
-    }
-
-    // MARK: - Mirror integrity
-
-    /// What to do when the local mirror's actual content size disagrees with
-    /// the offset it claims (e.g. a historical bug appended a full export on
-    /// top of an intact copy, doubling the conversation).
-    public enum MirrorRepairDecision: Equatable {
-        /// Content length matches the offset — run the normal decide flow.
-        case proceed
-        /// Corrupt copy, but the incoming bundle is a full export — replace
-        /// the local content wholesale (self-heal).
-        case replaceFull
-        /// Corrupt copy and the incoming bundle is only an increment — the
-        /// caller must re-export from zero first.
-        case needsFullExport
-    }
-
-    /// Appending is only safe when the local copy's real byte length equals
-    /// the offset the merge logic believes it has. A copy whose content
-    /// outgrew its recorded offset would duplicate everything already in it.
-    ///
-    /// - Parameters:
-    ///   - hasLocalFile: whether a mirror copy exists.
-    ///   - localContentBytes: actual UTF-8 byte length of the local copy.
-    ///   - effectiveOffset: the (possibly healed) offset the merge trusts.
-    ///   - incomingBytes: UTF-8 byte length of the bundle being merged.
-    ///   - newOffset: total source size the backend reports.
-    public static func mirrorRepairDecision(
-        hasLocalFile: Bool,
-        localContentBytes: Int64,
-        effectiveOffset: Int64,
-        incomingBytes: Int64,
-        newOffset: Int64
-    ) -> MirrorRepairDecision {
-        guard hasLocalFile else { return .proceed }
-        // The source is BEHIND what the local copy already covers. A
-        // conversation only grows, so this copy is not a prefix of that file:
-        // it was rewritten shorter (a path repair rewrites the whole
-        // conversation when the recorded cwd no longer matches the directory),
-        // or the offset was inherited from another machine's copy of the same
-        // conversation — the bytes are the same conversation but not the same
-        // lengths, because path strings differ, so an offset is not portable
-        // between machines. Either way nothing can be appended, and the copy
-        // has to be rebuilt. This check must not be skipped when the copy looks
-        // internally consistent (content length == its offset): a mirror
-        // written elsewhere can look perfectly consistent and still describe a
-        // file this machine does not have.
-        if newOffset < effectiveOffset {
-            return (newOffset > 0 && incomingBytes == newOffset) ? .replaceFull : .needsFullExport
+    /// A copy another device wrote is never a basis: its offset counts bytes of
+    /// a different file.
+    public static func requestSinceOffset(
+        tracked: Int64,
+        mirrorOffset: Int64?,
+        mirrorOwnedByThisDevice: Bool
+    ) -> Int64 {
+        guard mirrorOwnedByThisDevice, let mirrorOffset, mirrorOffset > tracked else {
+            return tracked
         }
-        guard localContentBytes != effectiveOffset else { return .proceed }
-        return (newOffset > 0 && incomingBytes == newOffset) ? .replaceFull : .needsFullExport
+        return mirrorOffset
     }
 }

@@ -313,6 +313,89 @@ func TestExportSessionIncremental(t *testing.T) {
 	}
 }
 
+// A compacted conversation exports from its compaction boundary: the CLI drops
+// everything before it from every model request, so the sync layer has no reason
+// to carry it. `offset` still reports the whole file, which is what keeps the
+// incremental protocol's coordinates intact.
+func TestExportSessionStartsAtCompactionBase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	body := `{"project_dir":"/tmp/proj","name":"s1","agent_type":"codebuddy","cbc_session_id":"conv1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateSession status = %d", w.Code)
+	}
+	sessionID := idOf(w)
+
+	projDir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pre := `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}` + "\n"
+	boundary := `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"<conversation_history_summary>…</conversation_history_summary>"}],"providerData":{"compactType":"manual","isCompactInternal":true,"isCompacted":true,"isSummary":true},"timestamp":2}` + "\n"
+	tail := `{"sessionId":"conv1","type":"message","role":"assistant","content":"after","timestamp":3}` + "\n"
+	whole := pre + boundary + tail
+	if err := os.WriteFile(filepath.Join(projDir, "conv1.jsonl"), []byte(whole), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := int64(len(pre))
+
+	type exportResp struct {
+		Content      string `json:"content"`
+		Offset       int64  `json:"offset"`
+		Base         int64  `json:"base"`
+		ContentStart int64  `json:"content_start"`
+	}
+	get := func(query string) exportResp {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/export"+query, nil)
+		w := httptest.NewRecorder()
+		h.ExportSession(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("ExportSession%s status = %d: %s", query, w.Code, w.Body.String())
+		}
+		var resp exportResp
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// Full export (no `since`) is raised to the base, not to zero.
+	full := get("")
+	if full.Content != boundary+tail {
+		t.Errorf("full content starts before the boundary:\n got %q\nwant %q", full.Content, boundary+tail)
+	}
+	if full.Base != base || full.ContentStart != base {
+		t.Errorf("base/content_start = %d/%d, want %d/%d", full.Base, full.ContentStart, base, base)
+	}
+	if full.Offset != int64(len(whole)) {
+		t.Errorf("offset = %d, want the whole file (%d) so incremental coordinates keep working", full.Offset, len(whole))
+	}
+
+	// An explicit since=0 is the same thing.
+	if zero := get("?since=0"); zero.Content != full.Content || zero.ContentStart != full.ContentStart {
+		t.Errorf("since=0 content_start = %d, want %d", zero.ContentStart, full.ContentStart)
+	}
+
+	// A since before the base is raised to it, never below.
+	if raised := get("?since=1"); raised.ContentStart != base {
+		t.Errorf("since=1 content_start = %d, want %d", raised.ContentStart, base)
+	}
+
+	// A since at or after the base stays a plain increment.
+	if inc := get("?since=" + strconv.FormatInt(base+int64(len(boundary)), 10)); inc.Content != tail {
+		t.Errorf("incremental content = %q, want %q", inc.Content, tail)
+	} else if inc.ContentStart != base+int64(len(boundary)) {
+		t.Errorf("incremental content_start = %d, want %d", inc.ContentStart, base+int64(len(boundary)))
+	}
+}
+
 // idOf extracts the session id from a CreateSession response recorder body.
 func idOf(w *httptest.ResponseRecorder) string {
 	var created struct {
@@ -404,6 +487,45 @@ func TestImportSession(t *testing.T) {
 	newFile := filepath.Join(home, ".codebuddy", "projects", "tmp-proj", newSess.Session.CBCSessionID+".jsonl")
 	if _, err := os.Stat(newFile); err != nil {
 		t.Fatalf("new-copy file not written: %v", err)
+	}
+}
+
+// The import response carries the base of the file it just wrote, so the
+// receiving machine can line its sync offsets up without a second round trip.
+func TestImportSessionReportsCompactionBase(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	pre := `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}` + "\n"
+	boundary := `{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"<conversation_history_summary>…</conversation_history_summary>"}],"providerData":{"compactType":"manual","isCompacted":true,"isSummary":true},"timestamp":2}` + "\n"
+
+	reqBody, err := json.Marshal(map[string]string{
+		"name":           "imp",
+		"agent_type":     "codebuddy",
+		"project_dir":    "/tmp/proj",
+		"cbc_session_id": "conv1",
+		"content":        pre + boundary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/import", strings.NewReader(string(reqBody)))
+	w := httptest.NewRecorder()
+	h.ImportSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("ImportSession status = %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Base int64 `json:"base"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(len(pre)); resp.Base != want {
+		t.Errorf("base = %d, want %d", resp.Base, want)
 	}
 }
 

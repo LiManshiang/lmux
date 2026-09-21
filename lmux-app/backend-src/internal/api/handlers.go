@@ -888,6 +888,20 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 			since = parsed
 		}
 	}
+	// The live history starts at the last compaction boundary. The CLI slices
+	// everything before that boundary out of every model request, so a sync copy
+	// has no reason to carry it either. Raising `since` to the base is what makes
+	// a full export (no `since`) return the compacted tail instead of the whole
+	// file; on a conversation that was never compacted the base is 0 and nothing
+	// changes. A scan failure falls back to 0 — sending too much is recoverable,
+	// refusing to export is not.
+	base, baseErr := codebuddy.CompactionBase(sess.AgentType, path)
+	if baseErr != nil {
+		base = 0
+	}
+	if since < base {
+		since = base
+	}
 	// Clamp: a since offset larger than the file means no new content.
 	if since > total {
 		since = total
@@ -920,6 +934,8 @@ func (h *Handler) ExportSession(w http.ResponseWriter, r *http.Request) {
 		"exported_at":         time.Now().Format(time.RFC3339),
 		"content":             string(buf),
 		"offset":              total,
+		"base":                base,
+		"content_start":       since,
 		"content_modified_at": info.ModTime().Unix(),
 	})
 }
@@ -1038,7 +1054,21 @@ func (h *Handler) ImportSession(w http.ResponseWriter, r *http.Request) {
 	codebuddy.InvalidateCache()
 	codebuddy.ClearFindSessionCache()
 
+	// The file just written is whatever the bundle held: for a compacted
+	// conversation that starts at the boundary, so its base is 0 — but for a
+	// bundle carrying history before a boundary (an export from a conversation
+	// this machine compacted at a different point) it is not. Both numbers are
+	// reported rather than assumed, because the caller's sync offsets have to
+	// start from the file as it landed here, and rewriting its paths and cwd
+	// changed its length.
+	base, baseErr := codebuddy.CompactionBase(body.AgentType, targetPath)
+	if baseErr != nil {
+		base = 0
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"session": sess,
+		"base":    base,
+		"size":    len(writeContent),
 	})
 }

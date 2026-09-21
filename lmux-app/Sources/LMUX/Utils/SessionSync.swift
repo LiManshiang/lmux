@@ -25,6 +25,14 @@ enum SessionSync {
     private static let mappingsKey = "lmux_path_mappings"
     private static let deviceIDKey = "lmux_device_id"
     private static let offsetsKey = "lmux_sync_offsets"
+    /// cbc_session_id -> the source byte offset the local sync copy's content
+    /// starts at, i.e. the compaction base it was written against.
+    ///
+    /// Kept here rather than inside the `.lmuxsession` because it is a byte
+    /// offset into this machine's file: on another machine the same number
+    /// describes nothing, and a copy that was written elsewhere must be rebuilt
+    /// rather than extended.
+    private static let basesKey = "lmux_sync_bases"
     private static let importedMtimesKey = "lmux_sync_imported_mtimes"
     private static let agentMirrorEnabledKey = "lmux_agent_mirror_enabled"
     /// relpath -> "size,mtime" of the local JSONL last pushed to the mirror.
@@ -129,6 +137,19 @@ enum SessionSync {
         exportedOffsets[cbcID] ?? 0
     }
 
+    /// cbc_session_id -> the compaction base the local sync copy was written
+    /// against. Persisted with the offsets above, and for the same reason: both
+    /// are byte offsets into this machine's conversation file, so losing them
+    /// costs one rebuild while inventing them would corrupt the copy.
+    private static var syncBases: [String: Int64] {
+        get {
+            defaults.dictionary(forKey: basesKey) as? [String: Int64] ?? [:]
+        }
+        set {
+            defaults.set(newValue, forKey: basesKey)
+        }
+    }
+
     /// The `since` offset to request for the next incremental export.
     ///
     /// The persisted tracking can be lost or lag behind (defaults migration,
@@ -136,14 +157,33 @@ enum SessionSync {
     /// merge decision in `applyIncrementalExport` heals from the file's
     /// recorded offset — the request must use the same basis, or the server
     /// returns bytes the mirror already contains and appending them
-    /// duplicates the whole conversation. So: max(tracked, file offset).
+    /// duplicates the whole conversation. So: max(tracked, file offset) — but
+    /// only when that file is ours. Another device's copy counts bytes of a
+    /// different file, and asking from its offset makes the backend answer with
+    /// a slice this machine never wrote.
     static func exportSinceOffset(for cbcID: String) -> Int64 {
-        let tracked = exportedOffset(for: cbcID)
-        guard let bundle = mirrorBundle(for: cbcID)?.bundle,
-              let fileOffset = bundle.offset, fileOffset > tracked else {
-            return tracked
-        }
-        return fileOffset
+        // Read the copy once: decoding one asks lzfse to expand a payload that
+        // can be tens of megabytes.
+        let mirror = mirrorBundle(for: cbcID)?.bundle
+        return SyncIncrement.requestSinceOffset(
+            tracked: exportedOffset(for: cbcID),
+            mirrorOffset: mirror?.offset,
+            mirrorOwnedByThisDevice: mirror?.deviceId == deviceID)
+    }
+
+    /// The source offset the local sync copy's content begins at (its
+    /// compaction base). 0 for a copy that holds the conversation from its
+    /// first record — every copy written before compaction trimming existed,
+    /// and every conversation that was never compacted.
+    static func syncBase(for cbcID: String) -> Int64 {
+        syncBases[cbcID] ?? 0
+    }
+
+    /// Record the base of the content just written to the sync copy.
+    static func recordSyncBase(_ base: Int64, for cbcID: String) {
+        var bases = syncBases
+        bases[cbcID] = base
+        syncBases = bases
     }
 
     /// Clear the tracked offset for a conversation so the next export is a
@@ -596,12 +636,15 @@ enum SessionSync {
         case needsFullExport
     }
 
-    /// Merge an incremental export (content = appended JSONL after the last
-    /// synchronized offset, offset = new total size) into the local sync copy.
+    /// Merge an export bundle (content = the source's bytes from the requested
+    /// offset, offset = the source's total size) into the local sync copy.
     ///
-    /// Returns `.needsFullExport` when there is no matching local copy to
-    /// append to (e.g. first run or the file was removed); the caller should
-    /// re-export with `since: 0`.
+    /// The copy holds `source[base:]`, where `base` is the start of the
+    /// conversation's last compaction boundary — everything before it is text
+    /// the CLI no longer reads. Returns `.needsFullExport` when the bundle
+    /// cannot stand in for that whole range: there is no copy to append to, a
+    /// compaction moved the boundary, or the copy was written by another device.
+    /// The caller re-exports from zero, which the backend answers from the base.
     static func applyIncrementalExport(_ bundle: SessionExportBundle) -> IncrementalExportResult {
         guard let dir = sessionsDir() else { return .needsFullExport }
         do {
@@ -611,93 +654,39 @@ enum SessionSync {
         }
 
         let cbcID = bundle.cbcSessionID
-        let localOffset = exportedOffset(for: cbcID)
-        let newOffset = bundle.offset ?? 0
-
         let found = mirrorBundle(for: cbcID)
         let foundURL = found?.url
         let existing = found?.bundle
 
-        // Recover a lost tracked offset (defaults migration / reset) from the
-        // mirror file: when the file is intact and ahead of our tracking,
-        // resume appending from the file's offset instead of demanding a full
-        // re-export that can never be satisfied.
-        let effectiveOffset = SyncIncrement.effectiveOffset(
-            localOffset: localOffset,
-            fileOffset: existing?.offset)
+        // Pure decision logic (unit-tested in LMUXCore).
+        let plan = SyncIncrement.plan(
+            hasMirror: foundURL != nil,
+            mirrorOwnedByThisDevice: existing?.deviceId == deviceID,
+            mirrorOffset: existing?.offset ?? 0,
+            mirrorContentBytes: existing.map { Int64($0.content.utf8.count) } ?? 0,
+            knownBase: syncBase(for: cbcID),
+            trackedOffset: exportedOffset(for: cbcID),
+            incomingBase: bundle.base ?? 0,
+            incomingContentStart: bundle.contentStart ?? 0,
+            incomingBytes: Int64(bundle.content.utf8.count),
+            newOffset: bundle.offset ?? 0,
+            incomingEqualsMirror: existing?.content == bundle.content)
 
-        // Integrity guard (SyncIncrement.mirrorRepairDecision): a local copy
-        // whose content outgrew its recorded offset must never be appended
-        // to — that is how a full re-export got stacked onto an intact copy
-        // and duplicated the whole conversation. With a full export in hand
-        // the corrupt copy is replaced wholesale (self-heal); otherwise the
-        // caller re-exports from zero and the next pass replaces it.
-        let localBytes = existing.map { Int64($0.content.utf8.count) } ?? 0
-        let incomingBytes = Int64(bundle.content.utf8.count)
-        let repair = SyncIncrement.mirrorRepairDecision(
-            hasLocalFile: foundURL != nil,
-            localContentBytes: localBytes,
-            effectiveOffset: effectiveOffset,
-            incomingBytes: incomingBytes,
-            newOffset: newOffset)
-        if repair == .needsFullExport {
+        switch plan {
+        case .needsFullExport:
+            // Not a failure: the caller re-exports from zero and gets back a
+            // bundle covering the whole range. Logged because a conversation
+            // that lands here on every pass is exactly the stall this layer has
+            // produced before (an offset ahead of the file, a copy written
+            // elsewhere), and the numbers say which.
+            NSLog("lmux sync: %@ needs a base-relative re-export (base=%lld tracked=%lld mirror=%lld content=%lld)",
+                  cbcID, bundle.base ?? 0, exportedOffset(for: cbcID),
+                  existing?.offset ?? 0, Int64(bundle.content.utf8.count))
             return .needsFullExport
-        }
-        let replaceCorruptCopy = (repair == .replaceFull)
-
-        // Pure decision logic (unit-tested in LMUXCore). Skipped when the
-        // corrupt copy is being replaced — writing is unconditional then.
-        if !replaceCorruptCopy {
-            switch SyncIncrement.decide(
-                hasLocalFile: foundURL != nil,
-                localOffset: effectiveOffset,
-                newOffset: newOffset,
-                localFileOffsetMatches: existing?.offset == effectiveOffset
-            ) {
-            case .unchanged:
-                // Migration, not a merge: a mirror written before payload
-                // compression existed never shrinks on its own, because an
-                // unchanged conversation never rewrites the file — it would sit
-                // at its original size for as long as the session stays idle.
-                // Re-encode it once, in place, from the copy already in hand
-                // (its own metadata is the correct one here: the incoming
-                // bundle has nothing new to say about it).
-                if let foundURL, let existing,
-                   let size = storedSize(url: foundURL, bundle: existing),
-                   needsReencode(size) {
-                    // Read before the write: the content does not change, so
-                    // the modification date is put back afterwards. A newer one
-                    // reads as "the remote file changed" on the other machine
-                    // and drags it into a needless re-import (or a conflict
-                    // prompt against whatever it has locally). It re-encodes
-                    // its own copy on its own next sync.
-                    let previousDate = (try? FileManager.default
-                        .attributesOfItem(atPath: foundURL.path)[.modificationDate]) as? Date
-                    do {
-                        let encoded = try existing.toJSON()
-                        // Only take the new form when it is genuinely smaller:
-                        // a payload that compresses badly would otherwise be
-                        // rewritten on every single sync, forever.
-                        if Int64(encoded.count) >= size.fileBytes {
-                            return .unchanged
-                        }
-                        try encoded.write(to: foundURL, options: .atomic)
-                        if let previousDate {
-                            try? FileManager.default.setAttributes(
-                                [.modificationDate: previousDate], ofItemAtPath: foundURL.path)
-                        }
-                        return .updated
-                    } catch {
-                        // Leave it as it is: the mirror is intact, just large.
-                    }
-                }
-                return .unchanged
-            case .needsFullExport:
-                // Local copy missing (deleted) or offsets inconsistent — resync.
-                return .needsFullExport
-            case .append, .freshExport:
-                break // handled below
-            }
+        case .unchanged:
+            return reencodeIfStillPlain(foundURL: foundURL, existing: existing)
+        case .append, .replace:
+            break
         }
 
         let freshName = syncFileName(name: bundle.name, cbcID: cbcID)
@@ -720,31 +709,66 @@ enum SessionSync {
 
         var merged = bundle
         merged.deviceId = deviceID
-        merged.offset = newOffset
-
-        // Never append when the mirror copy is being replaced (corrupt) or
-        // the incoming bundle is itself a full export (no `since` offset,
-        // content is the whole JSONL) — either would stack the full
-        // conversation onto the existing prefix and duplicate everything.
-        let isFull = SyncIncrement.isFullExport(contentBytes: incomingBytes, offset: newOffset)
-        if !isFull, !replaceCorruptCopy, let existing, existing.offset == effectiveOffset {
-            // Append the increment to the existing local copy.
+        if plan == .append, let existing {
+            // Append the increment, keeping the original display name and the
+            // offset the copy's content already starts at.
             merged.content = existing.content + bundle.content
-            merged.name = existing.name // keep the original display name
+            merged.name = existing.name
+            merged.base = existing.base
+            merged.contentStart = existing.contentStart
         } else {
-            // Fresh export (or corrupt-copy / full-export replacement): the
-            // bundle already holds the whole conversation.
+            // A fresh, rebuilt, or other device's copy: the bundle holds the
+            // whole range the copy has to cover.
             merged.content = bundle.content
         }
 
         do {
             try merged.toJSON().write(to: url, options: .atomic)
             var offsets = exportedOffsets
-            offsets[cbcID] = newOffset
+            offsets[cbcID] = merged.offset ?? 0
             exportedOffsets = offsets
+            recordSyncBase(merged.base ?? 0, for: cbcID)
             return .updated
         } catch {
             return .needsFullExport
+        }
+    }
+
+    /// Migration, not a merge: a copy written before payload compression existed
+    /// never shrinks on its own, because an unchanged conversation never rewrites
+    /// the file — it would sit at its original size for as long as the session
+    /// stays idle. Re-encode it once, in place, from the copy already in hand
+    /// (its own metadata is the correct one here: the incoming bundle has nothing
+    /// new to say about it).
+    private static func reencodeIfStillPlain(
+        foundURL: URL?, existing: SessionExportBundle?
+    ) -> IncrementalExportResult {
+        guard let foundURL, let existing,
+              let size = storedSize(url: foundURL, bundle: existing),
+              needsReencode(size) else { return .unchanged }
+
+        // Read before the write: the content does not change, so the
+        // modification date is put back afterwards. A newer one reads as "the
+        // remote file changed" on the other machine and drags it into a needless
+        // re-import (or a conflict prompt against whatever it has locally). It
+        // re-encodes its own copy on its own next sync.
+        let previousDate = (try? FileManager.default
+            .attributesOfItem(atPath: foundURL.path)[.modificationDate]) as? Date
+        do {
+            let encoded = try existing.toJSON()
+            // Only take the new form when it is genuinely smaller: a payload that
+            // compresses badly would otherwise be rewritten on every single sync,
+            // forever.
+            if Int64(encoded.count) >= size.fileBytes { return .unchanged }
+            try encoded.write(to: foundURL, options: .atomic)
+            if let previousDate {
+                try? FileManager.default.setAttributes(
+                    [.modificationDate: previousDate], ofItemAtPath: foundURL.path)
+            }
+            return .updated
+        } catch {
+            // Leave it as it is: the copy is intact, just large.
+            return .unchanged
         }
     }
 
@@ -755,6 +779,9 @@ enum SessionSync {
         var offsets = exportedOffsets
         offsets[cbcID] = nil
         exportedOffsets = offsets
+        var bases = syncBases
+        bases[cbcID] = nil
+        syncBases = bases
         lastImportedFileMtime[cbcID] = nil
     }
 
@@ -865,15 +892,32 @@ enum SessionSync {
         return Int64(size) != offset
     }
 
+    /// What an import landed, in the coordinates of the file written here.
+    ///
+    /// Both numbers come from the backend rather than from the bundle: path
+    /// mappings and cwd localization rewrite every record on the way in, so the
+    /// file that lands is neither the same length nor necessarily the same
+    /// conversation the cloud file described.
+    struct ImportedConversation: Equatable {
+        /// The written file's byte length. Export tracking starts here — the
+        /// old code used the bundle's content length and left every import
+        /// looking like an unsynced local change.
+        let byteCount: Int64
+        /// The compaction base the written file starts its live history at. 0 in
+        /// the usual case, since a bundle's content already begins at its own
+        /// boundary.
+        let base: Int64
+    }
+
     /// Scan the sync directory and import any remote file that is newer than
     /// the last one processed. `importBundle` performs the actual backend
     /// import (mode is "overwrite", or "new" when the user chooses to keep
-    /// both versions) and returns the imported session's id (or throws).
+    /// both versions) and reports where it landed (or throws).
     /// `onConflict` is consulted when both sides changed the same
     /// conversation; returning nil lets the caller skip that file entirely.
     /// Returns the list of imported cbc ids.
     static func importIfChanged(
-        importBundle: (SessionExportBundle, String) async throws -> Void,
+        importBundle: (SessionExportBundle, String) async throws -> ImportedConversation,
         onConflict: ((SyncConflictInfo) async -> SyncConflictChoice)? = nil
     ) async -> [String] {
         guard let dir = sessionsDir() else { return [] }
@@ -939,7 +983,7 @@ enum SessionSync {
             }
 
             do {
-                try await importBundle(bundle, mode)
+                let landed = try await importBundle(bundle, mode)
                 // After an overwrite this Mac holds exactly what the cloud file
                 // holds, so export tracking starts at its end. Left alone, the
                 // offset keeps whatever it had before — often the value that
@@ -947,7 +991,8 @@ enum SessionSync {
                 // the user has just resolved. "new" creates a different
                 // conversation, which has its own tracking.
                 if mode != "new" {
-                    recordExportedOffset(Int64(bundle.content.utf8.count), for: cbcID)
+                    recordExportedOffset(landed.byteCount, for: cbcID)
+                    recordSyncBase(landed.base, for: cbcID)
                 }
                 lastImportedFileMtime[cbcID] = mtime.timeIntervalSince1970
                 imported.append(cbcID)
@@ -965,6 +1010,7 @@ enum SessionSync {
     /// Reset in-memory and persisted state (tests).
     static func resetStateForTesting() {
         defaults.removeObject(forKey: offsetsKey)
+        defaults.removeObject(forKey: basesKey)
         defaults.removeObject(forKey: importedMtimesKey)
     }
 }

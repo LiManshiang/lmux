@@ -406,11 +406,26 @@ class APIClient: AgentSessionService {
         return try decode(SessionExportBundle.self, from: data)
     }
 
+    /// What an import landed: the session it created or refreshed, plus the
+    /// numbers the sync layer needs to line its tracking up with the file.
+    struct ImportedSession {
+        let session: Session
+        /// Byte length of the conversation file written here. Not the bundle's
+        /// content length: path mappings and cwd localization rewrite every
+        /// record, so the file that lands is not the file that arrived.
+        /// Nil from a backend old enough not to report it.
+        let byteCount: Int64?
+        /// Compaction base of the written file — where its live history starts.
+        /// 0 in the usual case, because a bundle's content already begins at its
+        /// own boundary. Nil from a backend old enough not to report it.
+        let base: Int64?
+    }
+
     /// Imports a conversation bundle, optionally resolving a conflict by
     /// overwriting the existing session ("overwrite") or creating an
     /// independent copy ("new"). Throws `APIError.conflict` when a session
     /// already exists and no conflict mode is given.
-    func importSession(_ bundle: SessionExportBundle, projectDir: String, conflictMode: String?) async throws -> Session {
+    func importSession(_ bundle: SessionExportBundle, projectDir: String, conflictMode: String?) async throws -> ImportedSession {
         struct Body: Codable {
             let name: String
             let agentType: String
@@ -438,9 +453,11 @@ class APIClient: AgentSessionService {
         let data = try await post("/api/sessions/import", body: body, timeout: Self.heavyTransferTimeout)
         struct Response: Codable {
             let session: Session
+            let base: Int64?
+            let size: Int64?
         }
         let resp = try decode(Response.self, from: data)
-        return resp.session
+        return ImportedSession(session: resp.session, byteCount: resp.size, base: resp.base)
     }
 
     // MARK: - Health

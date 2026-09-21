@@ -67,6 +67,7 @@ struct HelpView: View {
                     helpRow("/clear starts a new conversation. lmux follows it: the sidebar reads the new one and the next restart continues it. The finished conversation is left untouched and stays in the conversation library.")
                     helpRow("/resume switches to a different conversation that already exists. lmux cannot see that — nothing new is written — so the session keeps the one it had and a restart returns to it. To continue where you switched to, set the session's ID to that conversation in Edit Session.")
                     helpRow("/model does not start a conversation: the switch is recorded inside the current one, so nothing changes for the session.")
+                    helpRow("/compact does not start a conversation either — and neither does the compaction the agent runs by itself when the context fills up. It summarizes the earlier part, and from then on the agent reads only what follows. Sync copies a session from that point, so a session synced to another machine arrives with the summary and everything after it, not the full scrollback. Nothing is deleted on the machine that has the full history; that only changes if it later imports a copy back.")
                 }
             }
 
