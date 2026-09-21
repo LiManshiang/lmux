@@ -801,7 +801,14 @@ enum SessionSync {
               let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
             return false
         }
-        return Int64(size) > exportedOffset(for: cbcID)
+        let offset = exportedOffset(for: cbcID)
+        // A tracked offset ahead of the file cannot describe it (the file was
+        // rewritten shorter, or the offset belongs to another machine's copy).
+        // The old check (`size > offset`) read that as "the remote already has
+        // everything" and imported with `overwrite` WITHOUT asking — a silent
+        // overwrite of a conversation this Mac cannot prove it ever sent. Ask
+        // instead: the prompt is cheap, the history is not.
+        return Int64(size) != offset
     }
 
     /// Scan the sync directory and import any remote file that is newer than

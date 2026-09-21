@@ -43,8 +43,20 @@ public enum SyncIncrement {
         }
 
         // Nothing new to append.
-        if newOffset <= localOffset {
+        if newOffset == localOffset {
             return .unchanged
+        }
+
+        // The source is behind where we synchronized to — which cannot mean
+        // "no news", because a conversation never shrinks: the file was
+        // rewritten shorter, or this offset came from another machine's copy of
+        // it (byte offsets are not portable between machines when the content
+        // holds machine-specific paths). Reporting `.unchanged` here is how a
+        // session stopped syncing for good: the offset stayed ahead of the
+        // file, every pass asked for bytes past its end, got nothing back, and
+        // wrote nothing. Rebuild from zero instead.
+        if newOffset < localOffset {
+            return .needsFullExport
         }
 
         // Local copy is consistent with our tracked offset — append increment.
@@ -116,7 +128,23 @@ public enum SyncIncrement {
         incomingBytes: Int64,
         newOffset: Int64
     ) -> MirrorRepairDecision {
-        guard hasLocalFile, localContentBytes != effectiveOffset else { return .proceed }
+        guard hasLocalFile else { return .proceed }
+        // The source is BEHIND what the local copy already covers. A
+        // conversation only grows, so this copy is not a prefix of that file:
+        // it was rewritten shorter (a path repair rewrites the whole
+        // conversation when the recorded cwd no longer matches the directory),
+        // or the offset was inherited from another machine's copy of the same
+        // conversation — the bytes are the same conversation but not the same
+        // lengths, because path strings differ, so an offset is not portable
+        // between machines. Either way nothing can be appended, and the copy
+        // has to be rebuilt. This check must not be skipped when the copy looks
+        // internally consistent (content length == its offset): a mirror
+        // written elsewhere can look perfectly consistent and still describe a
+        // file this machine does not have.
+        if newOffset < effectiveOffset {
+            return (newOffset > 0 && incomingBytes == newOffset) ? .replaceFull : .needsFullExport
+        }
+        guard localContentBytes != effectiveOffset else { return .proceed }
         return (newOffset > 0 && incomingBytes == newOffset) ? .replaceFull : .needsFullExport
     }
 }

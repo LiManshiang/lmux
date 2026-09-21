@@ -41,10 +41,43 @@ final class SyncIncrementTests: XCTestCase {
             SyncIncrement.decide(hasLocalFile: true, localOffset: 100, newOffset: 100, localFileOffsetMatches: true),
             .unchanged
         )
-        // Backend reports smaller (should not happen) → also unchanged.
+    }
+
+    // MARK: - The source is behind the copy
+
+    func testSourceBehindTheCopyNeedsFullExport() {
+        // Not "nothing new": a conversation never shrinks, so a source shorter
+        // than what we synchronized to is a different file — rewritten shorter
+        // (a path repair rewrites the whole conversation) or covered by an
+        // offset inherited from another machine's copy of it. Appending is
+        // impossible; the copy has to be rebuilt.
         XCTAssertEqual(
             SyncIncrement.decide(hasLocalFile: true, localOffset: 100, newOffset: 50, localFileOffsetMatches: true),
-            .unchanged
+            .needsFullExport
+        )
+
+        // An increment cannot fix it (there is no prefix to append to)…
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 100, effectiveOffset: 100,
+                incomingBytes: 0, newOffset: 50),
+            .needsFullExport
+        )
+        // …a full export can: it replaces the copy and the offset with it.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 100, effectiveOffset: 100,
+                incomingBytes: 50, newOffset: 50),
+            .replaceFull
+        )
+        // The copy looking internally consistent (content == its offset) must
+        // not excuse it: a mirror written on the other machine looks consistent
+        // while describing a file this machine does not have.
+        XCTAssertEqual(
+            SyncIncrement.mirrorRepairDecision(
+                hasLocalFile: true, localContentBytes: 83_287_742, effectiveOffset: 83_287_742,
+                incomingBytes: 83_072_193, newOffset: 83_072_193),
+            .replaceFull
         )
     }
 
