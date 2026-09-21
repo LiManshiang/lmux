@@ -20,14 +20,16 @@ struct SyncSettingsView: View {
                 Text(L("Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Toggle(L("Sync only from the last compaction point"), isOn: $compactionOnly)
                     .toggleStyle(.switch)
                     .disabled(!syncEnabled)
 
-                Text(L("Full sync carries this Mac's conversation before its last compaction point. The agent no longer reads that part, and it is most of the size. Syncing from the compaction point instead rewrites this Mac's conversation file — that earlier content is lost for good — and frees the space it held."))
+                Text(L("Full sync also carries the conversation before this Mac's last compaction point: content the agent no longer reads, and most of the size. Syncing from the compaction point rewrites this Mac's conversation to drop it — that content is lost for good — and frees the space."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Button {
                     Task {
@@ -72,6 +74,7 @@ struct SyncSettingsView: View {
                 Text(L("Raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects is mirrored to <sync dir>/agents and pulled back on other machines, so the Agent browser can find and resume every conversation. Only .jsonl files up to 50 MB sync; two-way changes keep the local copy."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section(L("Path Mappings (old machine path → this machine)")) {
