@@ -1843,6 +1843,17 @@ class ContentViewModel: ObservableObject {
         let pinned = sessions.filter { $0.pinned && !($0.cbcSessionID ?? "").isEmpty }
         for (idx, session) in pinned.enumerated() {
             guard let cbcID = session.cbcSessionID, !cbcID.isEmpty else { continue }
+            // The sync copy can hold history this Mac does not have — an export
+            // from the other machine publishes what it has. Publishing this
+            // Mac's copy over it would delete that history, and the other
+            // machine would publish its own back: the two would take turns
+            // shrinking the file. The import pass below is what brings that
+            // history in, so leave the file to it.
+            if SessionSync.mirrorIsAheadOfLocal(agentType: session.agentType.rawValue,
+                                                cbcID: cbcID,
+                                                projectDir: session.projectDir) {
+                continue
+            }
             syncPhase = .exporting(current: idx + 1, total: pinned.count)
             do {
                 let since = SessionSync.exportSinceOffset(for: cbcID)

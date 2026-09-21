@@ -155,6 +155,14 @@ enum SessionSync {
         exportedOffsets = offsets
     }
 
+    /// Record how far this conversation has been synchronized. Used after an
+    /// import, to line the tracking up with the content just taken.
+    static func recordExportedOffset(_ offset: Int64, for cbcID: String) {
+        var offsets = exportedOffsets
+        offsets[cbcID] = offset
+        exportedOffsets = offsets
+    }
+
     /// cbc_session_id -> last remote file mtime we imported. Persisted so a
     /// restart doesn't re-import every remote file (each import used to spawn
     /// a duplicate session under conflictMode "new"; with "overwrite" it
@@ -793,6 +801,52 @@ enum SessionSync {
         )
     }
 
+    /// True when the sync copy's records stop after this Mac's — the other
+    /// machine has history this one does not, so publishing this Mac's copy
+    /// would delete it (and the other machine would publish its own back).
+    static func mirrorIsAheadOfLocal(agentType: String, cbcID: String, projectDir: String) -> Bool {
+        guard let mirror = mirrorBundle(for: cbcID)?.bundle,
+              let url = localJSONLURL(agentType: agentType, cbcID: cbcID, projectDir: projectDir),
+              let localLast = lastTimestampInFile(url) else {
+            return false
+        }
+        return SyncImport.cloudIsAheadOfLocal(
+            localLast: localLast,
+            cloudLast: SyncImport.lastRecordTimestamp(in: mirror.content))
+    }
+
+    /// True when the cloud copy's records stop before this Mac's do — an older
+    /// copy of the same conversation, which must not be imported over it.
+    static func cloudIsBehindLocal(agentType: String, cbcID: String,
+                                   projectDir: String, incoming: String) -> Bool {
+        guard let url = localJSONLURL(agentType: agentType, cbcID: cbcID, projectDir: projectDir),
+              let localLast = lastTimestampInFile(url) else {
+            return false
+        }
+        return SyncImport.cloudIsBehindLocal(
+            localLast: localLast,
+            cloudLast: SyncImport.lastRecordTimestamp(in: incoming))
+    }
+
+    /// The newest record timestamp in a local conversation, read from its tail:
+    /// records are appended, so the newest one is at the end, and a bounded read
+    /// keeps a hundred-megabyte history cheap. Nil when the tail holds no
+    /// timestamped record (a single record larger than the window) — the caller
+    /// then has no evidence and keeps its previous behaviour.
+    private static func lastTimestampInFile(_ url: URL) -> Int64? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let window: UInt64 = 1 << 20
+        try? handle.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? handle.readToEnd() else { return nil }
+        // Lossy on purpose: a conversation carries whatever its tools printed,
+        // and one invalid byte inside a tool result would otherwise make the
+        // whole read nil — which reads as "no evidence" and silently drops the
+        // guard exactly when the history is messy.
+        return SyncImport.lastRecordTimestamp(in: String(decoding: data, as: UTF8.self))
+    }
+
     /// True when the local JSONL has grown past the offset we last pushed to
     /// the cloud — i.e. this Mac has conversation changes that the remote
     /// file cannot contain. Used to detect a two-sided edit (sync conflict).
@@ -843,6 +897,20 @@ enum SessionSync {
             // Never import our own exports (loop prevention).
             if bundle.deviceId == deviceID { continue }
 
+            // An older copy in the cloud is not an update. The file's date says
+            // only when it was written: an export from a machine whose own copy
+            // is behind rewrites it with LESS history than this Mac has (two
+            // machines whose copies had drifted apart did exactly that, and the
+            // file arrived looking brand new). Overwriting would delete the
+            // records in between, so the conversation's own records decide.
+            // Skipped rather than replaced: this Mac has the newer copy, and
+            // the export pass publishes it.
+            if cloudIsBehindLocal(agentType: bundle.agentType, cbcID: cbcID,
+                                  projectDir: bundle.projectDir, incoming: bundle.content) {
+                lastImportedFileMtime[cbcID] = mtime.timeIntervalSince1970
+                continue
+            }
+
             var mode = "overwrite"
             // Two-sided edit: the remote file changed AND this Mac has local
             // conversation changes that were never pushed. Overwriting would
@@ -872,6 +940,15 @@ enum SessionSync {
 
             do {
                 try await importBundle(bundle, mode)
+                // After an overwrite this Mac holds exactly what the cloud file
+                // holds, so export tracking starts at its end. Left alone, the
+                // offset keeps whatever it had before — often the value that
+                // made the copy look unsynced, which would ask about a conflict
+                // the user has just resolved. "new" creates a different
+                // conversation, which has its own tracking.
+                if mode != "new" {
+                    recordExportedOffset(Int64(bundle.content.utf8.count), for: cbcID)
+                }
                 lastImportedFileMtime[cbcID] = mtime.timeIntervalSince1970
                 imported.append(cbcID)
             } catch {
