@@ -310,6 +310,15 @@ final class AgentBinaryLocatorTests: XCTestCase {
         XCTAssertNil(CodebuddyProvider().extractSessionID(from: "codebuddy-code --permission-mode auto"))
     }
 
+    func testMissingAgentIsReportedAsMissing() {
+        // Nothing on this machine is called this. The locator must say so
+        // rather than hand back a plausible-looking Homebrew path — which the
+        // caller would then check, fail, and report as "not found" anyway. That
+        // fiction is what made a session started during a CLI update claim the
+        // CLI was not installed.
+        XCTAssertNil(AgentBinaryLocator.findAgentPath(name: "lmux-no-such-agent-binary"))
+    }
+
     func testDetectProcessMatches() {
         XCTAssertNotNil(CodebuddyProvider().detectProcess(cmdLine: "node codebuddy-code --resume abc"))
         XCTAssertNil(CodebuddyProvider().detectProcess(cmdLine: "claude --dangerously-skip-permissions"))

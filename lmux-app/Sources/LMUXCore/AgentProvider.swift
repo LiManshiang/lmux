@@ -181,7 +181,7 @@ public enum AgentBinaryLocator {
     /// Locate an agent executable. `preferred` marks the ideal binary (e.g.
     /// native arm64 claude); `acceptable` allows a usable fallback (e.g. an
     /// x86 claude) when no preferred one exists. Anything failing both is
-    /// skipped (broken stubs).
+    /// skipped (broken stubs). Nil when nothing on this machine has that name.
     public static func findAgentPath(
         name: String,
         preferred: @escaping (String) -> Bool = { _ in true },
@@ -275,9 +275,11 @@ public enum AgentBinaryLocator {
             return fallback
         }
 
-        let finalFallback = "/opt/homebrew/bin/\(name)"
-        cache[name] = finalFallback
-        return finalFallback
+        // Nothing on this machine has that name. Handing back a plausible
+        // location (Homebrew's bin, say) only moves the lie one step: callers
+        // check that the path is executable, fail, and report a command that
+        // was never there. Nil says the same thing without pretending.
+        return nil
     }
 
     /// claude is a symlink to .../claude.exe. A failed npm postinstall leaves

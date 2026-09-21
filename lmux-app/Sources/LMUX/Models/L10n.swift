@@ -173,6 +173,7 @@ enum L10n {
         "Backend Not Running": "后端未运行",
         "Conversations are listed by the local backend. It starts with the app; use Retry if it has stopped.": "对话列表由本地后端提供。它会随应用启动；若已停止，请点重试。",
         "Connection Failed": "连接失败",
+        "Waiting for the %@ command — the CLI may be updating itself": "正在等待 %@ 命令可用——CLI 可能正在自动更新",
         "Connecting to Backend…": "正在连接后端…",
         "Directory does not exist or is not accessible": "目录不存在或无法访问",
         "The conversation moves here when the session next starts": "这段对话会在下次启动会话时随之迁移到这里",

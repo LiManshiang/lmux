@@ -76,6 +76,14 @@ class TerminalManager: ObservableObject {
     /// Set when the last connect/connectBash attempt failed (e.g. agent
     /// binary missing). Shown in the terminal area instead of a blank view.
     @Published private(set) var connectErrorMessage: String?
+    /// A connect is waiting for the agent's executable to appear (see
+    /// scheduleWaitForAgent): the UI keeps the "starting" hint up rather than
+    /// reporting a missing command that is only briefly absent.
+    @Published private(set) var waitingForAgent = false
+    /// The launch that was asked for and has not happened yet, so it can be
+    /// performed when the executable appears.
+    private var pendingLaunch: (sessionID: String, projectDir: String, cbcSessionID: String?, agentType: AgentType)?
+    private var agentWaitTask: Task<Void, Never>?
 
     /// Service used to resolve the conversation ID for a freshly launched
     /// agent (e.g. claude without a --resume ID). Set by ContentViewModel
@@ -139,10 +147,14 @@ class TerminalManager: ObservableObject {
         connectErrorMessage = nil
         guard let agentPath = provider.findBinaryPath(),
               FileManager.default.isExecutableFile(atPath: agentPath) else {
-            let hint = agentType == .codebuddy ? " (also tried `codebuddy`)" : ""
-            let msg = "\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH.\(hint)"
-            connectErrorMessage = msg
-            onConnectError?(msg)
+            // Not reported yet: the usual reason is an update in progress. The
+            // CLI updates itself by reinstalling its global package, which
+            // removes the directory the installed command points at — so for a
+            // few seconds `codebuddy-code` resolves to nothing, and a session
+            // started in that window would otherwise be told the CLI is not
+            // installed, which is not true. Wait for it instead.
+            scheduleWaitForAgent(sessionID: sessionID, projectDir: projectDir,
+                                 cbcSessionID: cbcSessionID, agentType: agentType)
             return
         }
         var args = provider.launchArgs
@@ -485,8 +497,69 @@ class TerminalManager: ObservableObject {
         isConnecting = false
     }
 
+    /// How long a connect waits for the agent's command before calling it
+    /// missing, and how often it looks. An in-place CLI update takes a while —
+    /// the installer removes the package directory, then extracts the new one —
+    /// so the wait has to outlast that. Measured on this machine: an agent
+    /// starts, checks for a new CLI a second later, and the install that follows
+    /// rewrote the global package over ~20 seconds.
+    private static let agentWaitInterval: UInt64 = 1_000_000_000
+    private static let agentWaitAttempts = 45
+
+    /// Wait for the agent's command to resolve, then connect.
+    ///
+    /// Only reached when the command was not there at connect time. The CLI
+    /// updates itself by reinstalling its global package, and the command in
+    /// `PATH` points into that package: while it is being replaced the command
+    /// resolves to nothing. Reporting "not installed" then would be wrong about
+    /// a CLI that is installed, and would leave the session dead until someone
+    /// clicked it again.
+    private func scheduleWaitForAgent(sessionID: String, projectDir: String,
+                                      cbcSessionID: String?, agentType: AgentType) {
+        agentWaitTask?.cancel()
+        pendingLaunch = (sessionID, projectDir, cbcSessionID, agentType)
+        waitingForAgent = true
+        agentWaitTask = Task { @MainActor [weak self] in
+            for _ in 0..<Self.agentWaitAttempts {
+                do {
+                    try await Task.sleep(nanoseconds: Self.agentWaitInterval)
+                } catch {
+                    return // cancelled: a newer connect, or a disconnect
+                }
+                guard let self, let launch = self.pendingLaunch else { return }
+                let provider = launch.agentType.provider
+                guard let path = provider.findBinaryPath(),
+                      FileManager.default.isExecutableFile(atPath: path) else { continue }
+                self.pendingLaunch = nil
+                self.waitingForAgent = false
+                self.agentWaitTask = nil
+                self.connect(sessionID: launch.sessionID, projectDir: launch.projectDir,
+                             cbcSessionID: launch.cbcSessionID, agentType: launch.agentType)
+                return
+            }
+            guard let self, let launch = self.pendingLaunch else { return }
+            self.pendingLaunch = nil
+            self.waitingForAgent = false
+            self.agentWaitTask = nil
+            let msg = Self.missingAgentMessage(for: launch.agentType)
+            self.connectErrorMessage = msg
+            self.onConnectError?(msg)
+        }
+    }
+
+    /// The message for a command that is not on this machine at all. The second
+    /// answer, not the first — see scheduleWaitForAgent.
+    private static func missingAgentMessage(for agentType: AgentType) -> String {
+        let hint = agentType == .codebuddy ? " (also tried `codebuddy`)" : ""
+        return "\(agentType.displayName) executable '\(agentType.executableName)' not found. Install it or add its directory to PATH.\(hint)"
+    }
+
     func disconnect() {
         endConnecting()
+        agentWaitTask?.cancel()
+        agentWaitTask = nil
+        pendingLaunch = nil
+        waitingForAgent = false
         idleTimer?.invalidate()
         idleTimer = nil
         perfTimer?.invalidate()

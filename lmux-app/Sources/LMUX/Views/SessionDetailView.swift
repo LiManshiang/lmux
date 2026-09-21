@@ -131,11 +131,15 @@ struct SessionDetailView: View {
                     }
                     .overlay {
                         // "Starting / resuming…" hint while the agent boots
-                        // (resume parses the full conversation history).
-                        if mgr.isConnecting && !mgr.processRunning && mgr.connectErrorMessage == nil {
+                        // (resume parses the full conversation history), and
+                        // while waiting for the agent's command to come back
+                        // from an update — the CLI replaces its package in
+                        // place, so the command resolves to nothing for a
+                        // while.
+                        if (mgr.isConnecting || mgr.waitingForAgent) && !mgr.processRunning && mgr.connectErrorMessage == nil {
                             VStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
-                                Text(connectingLabel(session))
+                                Text(mgr.waitingForAgent ? waitingLabel(session) : connectingLabel(session))
                                     .font(.system(size: 11))
                                     .foregroundColor(.secondary)
                             }
@@ -275,6 +279,13 @@ struct SessionDetailView: View {
             return "Starting terminal…"
         }
         return "Starting \(session.agentType.displayName) — resuming conversation…"
+    }
+
+    /// Shown while the agent's command cannot be resolved yet. Waiting, not
+    /// failing: a CLI updating itself takes its own command away for a moment.
+    private func waitingLabel(_ session: SessionSummary) -> String {
+        L("Waiting for the %@ command — the CLI may be updating itself",
+          session.agentType.executableName as NSString)
     }
 
     /// Confirm before stopping a session's running agent process.
