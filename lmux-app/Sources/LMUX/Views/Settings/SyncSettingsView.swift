@@ -20,7 +20,13 @@ struct SyncSettingsView: View {
                 Text(L("Only pinned (starred) sessions sync. Sync is manual: use “Sync Now”, or confirm on quit when pinned sessions exist. Two-way: local changes export, remote changes import. Conflicts create a copy. Deletions do not propagate."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    // fixedSize so the row is allowed the height the text needs
+                    // (without it macOS 13+ cuts the hint to one line and ends it
+                    // with an ellipsis), plus a trailing inset so the last glyph
+                    // is not flush against the window edge, which is where the
+                    // narrower macOS 12 layout put it.
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.trailing, 14)
 
                 Toggle(L("Sync only from the last compaction point"), isOn: $compactionOnly)
                     .toggleStyle(.switch)
@@ -29,7 +35,13 @@ struct SyncSettingsView: View {
                 Text(L("Full sync also carries the conversation before this Mac's last compaction point: content the agent no longer reads, and most of the size. Syncing from the compaction point rewrites this Mac's conversation to drop it — that content is lost for good — and frees the space."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    // fixedSize so the row is allowed the height the text needs
+                    // (without it macOS 13+ cuts the hint to one line and ends it
+                    // with an ellipsis), plus a trailing inset so the last glyph
+                    // is not flush against the window edge, which is where the
+                    // narrower macOS 12 layout put it.
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.trailing, 14)
 
                 Button {
                     Task {
@@ -51,7 +63,15 @@ struct SyncSettingsView: View {
 
             Section(L("Sync Directory")) {
                 HStack(spacing: 6) {
-                    TextField("~/Library/Mobile Documents/…/lmux-sync", text: $syncDir)
+                    // The example path goes in `prompt:`, not in the title. As a
+                    // title it becomes the row's *label*, and in the Form style
+                    // macOS 12 uses (`.columns`) the label column is sized by its
+                    // widest label — so this one string stretched that column to
+                    // ~520pt of the 600pt window and pushed every row's content,
+                    // including the hints below and the Browse button, off the
+                    // right edge where the window clipped it.
+                    TextField("", text: $syncDir,
+                              prompt: Text("~/Library/Mobile Documents/…/lmux-sync"))
                         .textFieldStyle(.roundedBorder)
                     Button(L("Browse...")) {
                         let panel = NSOpenPanel()
@@ -74,18 +94,29 @@ struct SyncSettingsView: View {
                 Text(L("Raw agent JSONL under ~/.codebuddy/projects and ~/.claude/projects is mirrored to <sync dir>/agents and pulled back on other machines, so the Agent browser can find and resume every conversation. Only .jsonl files up to 50 MB sync; two-way changes keep the local copy."))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    // fixedSize so the row is allowed the height the text needs
+                    // (without it macOS 13+ cuts the hint to one line and ends it
+                    // with an ellipsis), plus a trailing inset so the last glyph
+                    // is not flush against the window edge, which is where the
+                    // narrower macOS 12 layout put it.
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.trailing, 14)
             }
 
-            Section(L("Path Mappings (old machine path → this machine)")) {
+            Section(L("Path Mappings")) {
                 ForEach($mappings) { $mapping in
                     HStack(spacing: 6) {
-                        TextField("/Users/limanshiang/proj", text: $mapping.from)
+                        // Same reason as the sync directory above: an example path
+                        // as a TextField title becomes a label, and the label
+                        // column is sized by the widest one in the whole Form.
+                        TextField("", text: $mapping.from,
+                                  prompt: Text("/Users/limanshiang/proj"))
                             .textFieldStyle(.roundedBorder)
                         Image(systemName: "arrow.right")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
-                        TextField("/Users/manshiangli/proj", text: $mapping.to)
+                        TextField("", text: $mapping.to,
+                                  prompt: Text("/Users/manshiangli/proj"))
                             .textFieldStyle(.roundedBorder)
                         Button {
                             mappings.removeAll { $0.id == mapping.id }
@@ -107,6 +138,15 @@ struct SyncSettingsView: View {
                     Text(L("Add Mapping"))
                 }
                 .buttonStyle(.plain)
+
+                // What the old, longer section title said. As a title it was cut
+                // off at the window edge on macOS 12, where a Form lays a section
+                // header out on one line.
+                Text(L("Maps a path recorded on another machine to where it lives here. Applied when a session is imported, so a session that referred to the old layout finds its directory on this one."))
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.trailing, 14)
             }
         }
         .formScrollable()
