@@ -8,27 +8,37 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 // CompactionBase returns the byte offset in a conversation's JSONL at which its
-// live history begins — the start of the last compaction boundary record, or 0
-// when the conversation has never been compacted.
+// live history begins — the start of the last compaction record — or 0 when the
+// conversation has never been compacted.
 //
-// /compact, and the automatic compaction that runs when the context fills up,
-// leave the file append-only: nothing is removed, a summary record and then a
-// user message carrying <conversation_history_summary> are written at the end.
-// The CLI resolves a conversation's real history by slicing from that last
-// boundary, both while compacting and every time it assembles a model request:
+// Compaction leaves the file append-only: nothing is removed, records are added
+// at the end. Which records, though, depends on which of the two compaction
+// paths ran, and the CLI has a separate slicer for each:
 //
-//	filterBeforeCompactedMessage(ei){for(let ea=ei.length-1;ea>=0;ea--)if(isCompactBoundaryMessage(ei[ea]))return ei.slice(ea);return ei}
-//	[Compact:PreMessage] session.history trimmed in-place: ${eu} -> ${history.length}
+//	automatic (emergency-auto, pre-message-auto)
+//	  a USER message carrying <conversation_history_summary>
+//	  filterBeforeCompactedMessage(ei){for(let ea=ei.length-1;ea>=0;ea--)if(isCompactBoundaryMessage(ei[ea]))return ei.slice(ea);return ei}
 //
-// Everything before the boundary is dead weight the CLI will not read again —
-// measured here, 79% of one 83 MB conversation. A sync copy can start there
-// instead of at byte zero.
+//	manual /compact
+//	  an ASSISTANT message carrying the summary (agent "compact",
+//	  compactType "user-command"), whose text holds the <summary> structure
+//	  getCompactHistory(ei) — see isManualCompactSummary
 //
-// The predicate mirrors the CLI's isCompactBoundaryMessage, with one deliberate
-// omission noted below. Mirroring it is the whole point: a cut EARLIER than the
+// Both run, in that order, every time the CLI assembles a model request, so the
+// live history starts at whichever of the two cuts is later. This scan records
+// the last record matching either shape, which is that same offset.
+//
+// Everything before it is dead weight the CLI will not read again — measured
+// here, 79% of one 83 MB conversation and 96% of another. A sync copy can start
+// there instead of at byte zero.
+//
+// The predicates mirror the CLI's with one deliberate omission noted on
+// isUserCompactionBoundary. Mirroring is the whole point: a cut EARLIER than the
 // CLI's keeps records the model still reads, which wastes space but is harmless,
 // while a cut LATER than the CLI's drops context. Every uncertain case therefore
 // falls back to 0 — no trimming — rather than to a guess.
@@ -70,40 +80,82 @@ func CompactionBase(agent, path string) (int64, error) {
 
 // boundaryProbe is the slice of a record that decides whether it is a
 // compaction boundary. Nothing else in the record is decoded — a tool result
-// can be megabytes of output that this scan has no use for.
+// can be megabytes of output that this scan has no use for. Content is only
+// touched for the assistant case, and only after the marker gate has already
+// rejected the line for every other reason.
 type boundaryProbe struct {
-	Type         string `json:"type"`
-	Role         string `json:"role"`
-	ProviderData struct {
-		IsCompacted         bool   `json:"isCompacted"`
-		IsSummary           bool   `json:"isSummary"`
-		IsCompactInternal   bool   `json:"isCompactInternal"`
-		IsPtlRecovery       bool   `json:"isPtlRecovery"`
-		IsMediaBodyRecovery bool   `json:"isMediaBodyRecovery"`
-		CompactType         string `json:"compactType"`
-		Agent               string `json:"agent"`
-	} `json:"providerData"`
+	Type         string               `json:"type"`
+	Role         string               `json:"role"`
+	Content      json.RawMessage      `json:"content"`
+	ProviderData boundaryProviderData `json:"providerData"`
 }
 
-// isCompactionBoundary mirrors the CLI's HistoryUtils.isCompactBoundaryMessage.
+// boundaryProviderData is the part of providerData the two boundary predicates
+// look at.
+type boundaryProviderData struct {
+	IsCompacted         bool   `json:"isCompacted"`
+	IsSummary           bool   `json:"isSummary"`
+	IsCompactInternal   bool   `json:"isCompactInternal"`
+	IsPtlRecovery       bool   `json:"isPtlRecovery"`
+	IsMediaBodyRecovery bool   `json:"isMediaBodyRecovery"`
+	CompactType         string `json:"compactType"`
+	Agent               string `json:"agent"`
+}
+
+// compactAgent is the agent name of the compaction pseudo-agent.
+const compactAgent = "compact"
+
+// isCompactionBoundary reports whether a record is a point the CLI's live
+// history can start at.
 //
-// Deliberately not implemented: the CLI's third alternative also treats a user
-// message whose text contains <cb_summary, <conversation_history_summary or
-// data-role="compact-summary" as a boundary. Recognising those would mean
-// decoding message bodies on every user record, and missing them only ever
-// leaves more history in place — the harmless direction. Their real shape is
-// covered anyway: both compaction paths set isCompacted and isSummary alongside
-// compactType (verified against codebuddy.js, and against every boundary record
-// in this machine's conversations).
+// There are TWO of these, one per compaction path, and the CLI applies both when
+// it assembles a model request:
+//
+//	ep = HistoryUtils.getActiveAgentOnlyHistory(ep, {...})
+//	ep = HistoryUtils.getCompactHistory(ep)            // the /compact path
+//	ep = HistoryUtils.filterBeforeCompactedMessage(ep) // the automatic path
+//
+// They look for different records, so a scan for one shape alone finds nothing
+// in a conversation compacted the other way:
+//
+//   - Automatic (emergency-auto, pre-message-auto) writes a user message that
+//     isCompactBoundaryMessage accepts. isUserCompactionBoundary mirrors it.
+//   - A manual /compact writes an ASSISTANT message carrying the summary, whose
+//     text has the <summary>/<conversation_history_summary> structure.
+//     getCompactHistory scans backwards for exactly that and slices from it.
+//     isManualCompactSummary mirrors it.
+//
+// Since the CLI cuts at the later of the two, returning true for either and
+// letting the caller keep the last match gives the same offset.
 func isCompactionBoundary(line []byte) bool {
 	var rec boundaryProbe
 	if json.Unmarshal(line, &rec) != nil {
 		return false
 	}
-	if rec.Type != "message" || rec.Role != "user" {
+	if rec.Type != "message" {
 		return false
 	}
-	pd := rec.ProviderData
+	switch rec.Role {
+	case "user":
+		return isUserCompactionBoundary(rec.ProviderData)
+	case "assistant":
+		return isManualCompactSummary(rec)
+	default:
+		return false
+	}
+}
+
+// isUserCompactionBoundary mirrors the CLI's HistoryUtils.isCompactBoundaryMessage.
+//
+// Deliberately not implemented: its third alternative also treats a user message
+// whose text contains <cb_summary, <conversation_history_summary or
+// data-role="compact-summary" as a boundary. Recognising those would mean
+// decoding message bodies on every user record, and missing them only ever
+// leaves more history in place — the harmless direction. Their real shape is
+// covered anyway: both compaction paths set isCompacted and isSummary alongside
+// compactType (verified against codebuddy.js, and against every user-role
+// boundary record in this machine's conversations).
+func isUserCompactionBoundary(pd boundaryProviderData) bool {
 	// Point-in-time recoveries re-send an earlier message; they are not
 	// boundaries even when they carry the same flags.
 	if pd.IsPtlRecovery || pd.IsMediaBodyRecovery {
@@ -114,7 +166,66 @@ func isCompactionBoundary(line []byte) bool {
 	}
 	// "compact" is the agent name of the compaction pseudo-agent; its own
 	// records are the compaction, not a message the user sent a boundary for.
-	return !pd.IsCompactInternal && pd.Agent != "compact" && pd.CompactType != ""
+	return !pd.IsCompactInternal && pd.Agent != compactAgent && pd.CompactType != ""
+}
+
+// isManualCompactSummary mirrors the CLI's HistoryUtils.getCompactHistory:
+//
+//	static getCompactHistory(ei){let ea=-1;
+//	  for(let es=ei.length-1;es>=0;es--){let el=ei[es];
+//	    if(el.providerData?.agent!==eu.COMPACT||"message"!==el.type||"assistant"!==el.role)continue;
+//	    let ec=SummaryUtils.extractTextFromAssistantContent(el.content);
+//	    if(ec&&this.hasCompactOutputStructure(ec)){ea=es;break}}
+//	  return ea<0?ei:ei.slice(ea)}
+//
+// No isCompacted/isSummary test here on purpose: the CLI does not make one, and
+// this predicate has to match the CLI's cut exactly rather than approximate it.
+func isManualCompactSummary(rec boundaryProbe) bool {
+	if rec.ProviderData.Agent != compactAgent {
+		return false
+	}
+	return compactOutputRe.MatchString(assistantContentText(rec.Content))
+}
+
+// compactOutputRe mirrors hasCompactOutputStructure. The `+?` is load-bearing:
+// the CLI's [\s\S]+? needs at least one character between the tags, so an empty
+// <summary></summary> is not a boundary there and must not be one here either —
+// accepting it would cut at a record the CLI reads past.
+var compactOutputRe = regexp.MustCompile(
+	`(?is)<summary>.+?</summary>|<conversation_history_summary>.+?</conversation_history_summary>`)
+
+// assistantContentText mirrors SummaryUtils.extractTextFromAssistantContent:
+// a string content is itself, and a block list contributes the text of its
+// output_text and text blocks, joined with newlines.
+func assistantContentText(content json.RawMessage) string {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if json.Unmarshal(trimmed, &s) != nil {
+			return ""
+		}
+		return s
+	}
+	if trimmed[0] != '[' {
+		return ""
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(trimmed, &blocks) != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if (b.Type == "output_text" || b.Type == "text") && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // boundaryMarkers are substrings any boundary record must contain. Parsing every
@@ -163,14 +274,14 @@ var ErrConversationInUse = fmt.Errorf("a running agent still has this conversati
 // compaction boundary, discarding everything before it.
 //
 // The discarded records are ones the CLI has already stopped reading, and
-// stopped showing: HistoryUtils.filterBeforeCompactedMessage slices from that
-// boundary both while compacting and on every model request, and the terminal
-// trims session.history in place at the same moment. Verified end to end against
-// a real CLI — a conversation rewritten this way resumes normally, answers from
-// its summary, and appends as usual, while a fact that lived only in the
-// discarded prefix stays unknowable in the untouched file too. So the file keeps
-// its meaning and loses the weight (on this machine, 79% of an 83 MB
-// conversation).
+// stopped showing: it slices its live history at the last compaction record on
+// every model request, and the terminal trims session.history in place at the
+// same moment. Verified end to end against a real CLI, for both compaction
+// shapes — a conversation rewritten this way resumes normally, answers from its
+// summary, and appends as usual, while a fact that lived only in the discarded
+// prefix stays unknowable in the untouched file too. So the file keeps its
+// meaning and loses the weight (on this machine, 79% of one 83 MB conversation
+// and 96% of another).
 //
 // Irreversible, and deliberately so — there is no backup, which is the point of
 // offering it. Two guards stand in for one: a running agent is refused outright,

@@ -20,6 +20,18 @@ const summaryBoundary = `{"id":"a1","timestamp":100,"type":"message","role":"use
 // drop the summary the model is supposed to start from.
 const continuePrompt = `{"id":"a2","logicalParentId":"a1","timestamp":101,"type":"message","role":"user","content":[{"type":"input_text","text":"Please continue with the conversation based on the summarized context above. Maintain the same level of detail and helpfulness as before the summarization."}],"providerData":{"skipRun":false,"isCompactInternal":true,"agent":"cli"},"sessionId":"s1","cwd":"/tmp/proj"}`
 
+// The manual /compact shape, copied from a real conversation: the compaction
+// pseudo-agent's ASSISTANT record carries the summary, and the CLI's second
+// slicer — getCompactHistory — cuts at a record like this rather than at a user
+// message. A scan that only knows about the user shape finds nothing here, which
+// is how a conversation that had been /compact'ed kept its whole file.
+const manualCompactSummary = `{"id":"b2","timestamp":200,"type":"message","role":"assistant","content":[{"providerData":{"annotations":[]},"type":"output_text","text":"<conversation_history_summary>\n<summary>\n1. Primary Request and Intent:\nRework the report page\n</summary>\n</conversation_history_summary>"}],"providerData":{"agent":"compact","compactType":"user-command","isCompactInternal":true,"isCompacted":true,"isSummary":true},"sessionId":"s1","cwd":"/tmp/proj"}`
+
+// The instruction the pseudo-agent is given just before it writes that summary:
+// a user message from the same agent, carrying no summary of its own. It is not
+// a boundary, and cutting at it would drop the summary right behind it.
+const manualCompactPrompt = `{"id":"b1","timestamp":199,"type":"message","role":"user","content":[{"type":"input_text","text":"**IMPORTANT CONSTRAINTS:**\n- Do NOT use any tools\n- Your ONLY output should be the <conversation_history_summary> structure"}],"providerData":{"agent":"compact"},"sessionId":"s1","cwd":"/tmp/proj"}`
+
 func TestCompactionBaseNoCompaction(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTempJSONL(t, dir, "conv.jsonl", strings.Join([]string{
@@ -62,6 +74,116 @@ func TestCompactionBaseIsLastBoundary(t *testing.T) {
 	}
 }
 
+// The manual /compact shape: the boundary is an assistant message written by the
+// compaction pseudo-agent, and the summary in its body is what the model starts
+// from. Cutting anywhere before this record is correct; cutting at it is the
+// point.
+func TestCompactionBaseManualCompact(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Join([]string{
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		`{"type":"summary","summary":"Redesigning the report page","providerData":{"source":"pre-compact"},"timestamp":2}`,
+		manualCompactPrompt,
+		manualCompactSummary,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"carry on"}],"timestamp":201}`,
+		"",
+	}, "\n")
+	path := writeTempJSONL(t, dir, "conv.jsonl", body)
+	want := int64(bytes.Index([]byte(body), []byte(manualCompactSummary)))
+
+	base, err := CompactionBase("codebuddy", path)
+	if err != nil {
+		t.Fatalf("CompactionBase: %v", err)
+	}
+	if base != want {
+		t.Errorf("base = %d, want %d (the assistant summary record)", base, want)
+	}
+
+	// The prompt record just above it must not be mistaken for the cut.
+	if promptOffset := int64(bytes.Index([]byte(body), []byte(manualCompactPrompt))); base == promptOffset {
+		t.Error("base landed on the compaction instruction; cutting there drops the summary")
+	}
+}
+
+// The CLI applies getCompactHistory and then filterBeforeCompactedMessage, so the
+// live history starts at whichever cut is later. Whichever order the two shapes
+// appear in, the base is the later record — not simply the one of a given kind.
+func TestCompactionBaseTakesTheLaterOfTheTwoCompactionShapes(t *testing.T) {
+	pre := `{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`
+	post := `{"type":"message","role":"assistant","content":"carrying on","timestamp":300}`
+
+	cases := []struct {
+		name   string
+		record []string
+		want   string
+	}{
+		{
+			name:   "a user boundary, then a manual compact",
+			record: []string{summaryBoundary, manualCompactSummary},
+			want:   manualCompactSummary,
+		},
+		{
+			name:   "a manual compact, then a user boundary",
+			record: []string{manualCompactSummary, summaryBoundary},
+			want:   summaryBoundary,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := strings.Join(append(append([]string{pre}, tc.record...), post, ""), "\n")
+			path := writeTempJSONL(t, dir, "conv.jsonl", body)
+			want := int64(bytes.Index([]byte(body), []byte(tc.want)))
+
+			base, err := CompactionBase("codebuddy", path)
+			if err != nil {
+				t.Fatalf("CompactionBase: %v", err)
+			}
+			if base != want {
+				t.Errorf("base = %d, want %d", base, want)
+			}
+		})
+	}
+}
+
+func TestPruneToCompactionBaseManualCompact(t *testing.T) {
+	dir := t.TempDir()
+	pre := `{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}` + "\n" +
+		manualCompactPrompt + "\n"
+	body := strings.Join([]string{
+		strings.TrimSuffix(pre, "\n"),
+		manualCompactSummary,
+		`{"type":"message","role":"assistant","content":"carrying on","timestamp":300}`,
+		"",
+	}, "\n")
+	path := writeTempJSONL(t, dir, "conv.jsonl", body)
+	base := int64(len(pre))
+
+	outcome, err := PruneToCompactionBase("codebuddy", path, "no-such-session")
+	if err != nil {
+		t.Fatalf("PruneToCompactionBase: %v", err)
+	}
+	if !outcome.Pruned || outcome.Base != base {
+		t.Fatalf("Pruned/base = %v/%d, want true/%d", outcome.Pruned, outcome.Base, base)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body[base:] {
+		t.Error("content mismatch after pruning a manual-compact conversation")
+	}
+	// The result starts at its own boundary, so a second pass does nothing.
+	again, err := PruneToCompactionBase("codebuddy", path, "no-such-session")
+	if err != nil {
+		t.Fatalf("second prune: %v", err)
+	}
+	if again.Pruned {
+		t.Error("the pruned file was not a fixed point")
+	}
+}
+
 // Everything here must NOT move the base. Each entry is a record that either
 // carries compaction-shaped fields or merely mentions compaction in its body.
 func TestCompactionBaseRejectsNonBoundaries(t *testing.T) {
@@ -86,9 +208,29 @@ func TestCompactionBaseRejectsNonBoundaries(t *testing.T) {
 			why:  "same, for media bodies",
 		},
 		{
-			name: "assistant message",
-			line: `{"type":"message","role":"assistant","providerData":{"isCompacted":true,"isSummary":true},"timestamp":9}`,
-			why:  "a boundary is a user message",
+			name: "assistant message without the compact agent",
+			line: `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"<summary>done</summary>"}],"providerData":{"isCompacted":true,"isSummary":true},"timestamp":9}`,
+			why:  "an assistant record is a boundary only when the compaction pseudo-agent wrote it and its body carries the summary",
+		},
+		{
+			name: "compaction instruction",
+			line: manualCompactPrompt,
+			why:  "the prompt that asks for the summary; the summary record follows it, and the CLI cuts there",
+		},
+		{
+			name: "compact agent with no summary body",
+			line: `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I have summarized the conversation above."}],"providerData":{"agent":"compact","compactType":"user-command"},"timestamp":9}`,
+			why:  "getCompactHistory requires the summary structure in the text, not just the agent name",
+		},
+		{
+			name: "empty summary structure",
+			line: `{"type":"message","role":"assistant","content":[{"type":"output_text","text":"<summary></summary>"}],"providerData":{"agent":"compact","compactType":"user-command"},"timestamp":9}`,
+			why:  "the CLI's [+?] needs content between the tags, so an empty one is not its cut",
+		},
+		{
+			name: "summary structure in a user message from the compact agent",
+			line: `{"type":"message","role":"user","content":[{"type":"input_text","text":"<summary>text</summary>"}],"providerData":{"agent":"compact"},"timestamp":9}`,
+			why:  "getCompactHistory only scans assistant records; the user predicate excludes the compact agent",
 		},
 		{
 			name: "compaction pseudo-agent",
@@ -460,5 +602,17 @@ func TestVerifyPruned(t *testing.T) {
 	longBad := writeTempJSONL(t, dir, "longbad.jsonl", longBody[longCut:len(longBody)-1]+"Z")
 	if err := verifyPruned(longBad, longOriginal); err == nil {
 		t.Error("verifyPruned accepted an over-window copy whose end differs")
+	}
+
+	// The manual /compact shape: the cut record is an assistant message, so the
+	// first-line check has to accept that shape too or the prune is refused.
+	manualLive := manualCompactSummary + "\n" +
+		`{"type":"message","role":"assistant","content":"carrying on","timestamp":300}` + "\n"
+	manualBody := `{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}` + "\n" + manualLive
+	manualOriginal := writeTempJSONL(t, dir, "manual.jsonl", manualBody)
+	manualCut := int64(len(manualBody) - len(manualLive))
+	manualGood := writeTempJSONL(t, dir, "manualgood.jsonl", manualBody[manualCut:])
+	if err := verifyPruned(manualGood, manualOriginal); err != nil {
+		t.Errorf("verifyPruned rejected a correct manual-compact cut: %v", err)
 	}
 }

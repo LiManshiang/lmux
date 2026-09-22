@@ -4,12 +4,14 @@ import Foundation
 /// unit tested without touching the filesystem or UserDefaults.
 ///
 /// A sync copy (`.lmuxsession`) holds `source[base : offset]`: the conversation
-/// from its last compaction boundary to its end. /compact — and the automatic
-/// compaction that runs when the context fills up — leaves everything before
-/// that boundary in the file, but the CLI slices it out of every model request
-/// (`HistoryUtils.filterBeforeCompactedMessage`), so a copy has no reason to
-/// carry it. Measured on this machine, an 83 MB conversation keeps 18 MB from
-/// its boundary on.
+/// from its last compaction point to its end. Compaction leaves everything
+/// before that point in the file, but the CLI slices it out of every model
+/// request, so a copy has no reason to carry it. Which record the slice starts
+/// at depends on which compaction ran — an automatic one leaves a user message
+/// that `filterBeforeCompactedMessage` cuts at, a manual `/compact` leaves an
+/// assistant summary that `getCompactHistory` cuts at — and the backend knows
+/// both. Measured on this machine: an 83 MB conversation keeps 18 MB from its
+/// boundary, and a 26 MB one keeps 1.1 MB.
 ///
 /// `base` is a byte offset into the source file, which makes it meaningful only
 /// on the machine that computed it. That is why the base is remembered locally
