@@ -12,9 +12,32 @@ import (
 	"strings"
 )
 
-// CompactionBase returns the byte offset in a conversation's JSONL at which its
-// live history begins — the start of the last compaction record — or 0 when the
-// conversation has never been compacted.
+// CompactionInfo is what a conversation's scan found: where its live history
+// begins, and whether the file shows a compaction the scan could not place.
+type CompactionInfo struct {
+	// Base is the byte offset the live history begins at, or 0 when the
+	// conversation was never compacted — or was compacted in a shape this scan
+	// does not know, which is what UnplacedCompaction separates out.
+	Base int64
+
+	// UnplacedCompaction is true when a record after Base carries
+	// compaction-specific markers without being a cut point this scan
+	// recognises. The conversation has been compacted, the cut could not be
+	// placed, and so nothing can be trimmed.
+	//
+	// The expected cause is a newer agent version writing a shape these
+	// predicates do not know. That is exactly how a manually /compact-ed
+	// conversation went untrimmed for a release: the boundary was an assistant
+	// record and only the user shape was implemented. Nothing about that failed
+	// loudly, which is what this flag exists to fix — it is reported rather than
+	// guessed at, because guessing a cut point drops context the model still
+	// reads, while not guessing only wastes space.
+	UnplacedCompaction bool
+}
+
+// ScanCompaction returns the byte offset in a conversation's JSONL at which its
+// live history begins — the start of the last compaction record — plus whether
+// it saw a compaction it could not place.
 //
 // Compaction leaves the file append-only: nothing is removed, records are added
 // at the end. Which records, though, depends on which of the two compaction
@@ -45,14 +68,14 @@ import (
 //
 // A read error is reported with a zero base for the same reason: the caller
 // keeps the whole conversation.
-func CompactionBase(agent, path string) (int64, error) {
+func ScanCompaction(agent, path string) (CompactionInfo, error) {
 	// Only codebuddy writes the marker; a claude conversation has no base.
 	if agent != "codebuddy" {
-		return 0, nil
+		return CompactionInfo{}, nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return CompactionInfo{}, err
 	}
 	defer f.Close()
 
@@ -60,22 +83,50 @@ func CompactionBase(agent, path string) (int64, error) {
 	// output, far past a Scanner's token limit. A record boundary is the only
 	// place a JSONL line can be split safely.
 	rd := bufio.NewReaderSize(f, 64<<10)
-	var offset, base int64
+	var info CompactionInfo
+	var offset int64
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 0 {
-			if trimmed := bytes.TrimSpace(line); mayBeBoundary(trimmed) && isCompactionBoundary(trimmed) {
-				base = offset
+			if trimmed := bytes.TrimSpace(line); mayBeBoundary(trimmed) {
+				switch {
+				case isCompactionBoundary(trimmed):
+					// A cut point explains every marker before it, so a
+					// compaction this scan can place clears the doubt an earlier
+					// one raised: the remaining question is only whether
+					// something after it went unplaced.
+					info.Base = offset
+					info.UnplacedCompaction = false
+				case offset > info.Base && isCompactionEvidence(trimmed):
+					// Markers past the last cut we could place. Whatever wrote
+					// them knows where the live history starts and this scan
+					// does not.
+					//
+					// Strictly past: a marker sitting AT the base is the cut
+					// itself, or the file already starts there and there is
+					// nothing before it to drop.
+					info.UnplacedCompaction = true
+				}
 			}
 			offset += int64(len(line))
 		}
 		if err != nil {
 			if err == io.EOF {
-				return base, nil
+				return info, nil
 			}
-			return 0, err
+			return CompactionInfo{}, err
 		}
 	}
+}
+
+// CompactionBase is ScanCompaction's base on its own, for the callers that only
+// place the live history and have nowhere to report an unplaced compaction.
+func CompactionBase(agent, path string) (int64, error) {
+	info, err := ScanCompaction(agent, path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Base, nil
 }
 
 // boundaryProbe is the slice of a record that decides whether it is a
@@ -91,7 +142,7 @@ type boundaryProbe struct {
 }
 
 // boundaryProviderData is the part of providerData the two boundary predicates
-// look at.
+// and the evidence test look at.
 type boundaryProviderData struct {
 	IsCompacted         bool   `json:"isCompacted"`
 	IsSummary           bool   `json:"isSummary"`
@@ -100,6 +151,7 @@ type boundaryProviderData struct {
 	IsMediaBodyRecovery bool   `json:"isMediaBodyRecovery"`
 	CompactType         string `json:"compactType"`
 	Agent               string `json:"agent"`
+	Source              string `json:"source"`
 }
 
 // compactAgent is the agent name of the compaction pseudo-agent.
@@ -228,6 +280,45 @@ func assistantContentText(content json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
+// isCompactionEvidence reports whether a record carries markers only the
+// compaction machinery writes, even though it is not a cut point this scan
+// recognises. It is what turns "the conversation was compacted and nothing was
+// trimmed" from a silent nothing into a reportable fact.
+//
+// Only providerData is inspected, never message text. The format's own
+// vocabulary appears in conversations that discuss it — including the ones that
+// produced this code, whose records quote <conversation_history_summary> and
+// compactType verbatim — so text would fire on any session where somebody
+// talked about compaction.
+//
+// Records the boundary predicates deliberately exclude are understood and so
+// prove nothing: a point-in-time recovery re-sends an earlier message and is
+// expected to carry the same flags.
+//
+// The limits are worth stating. This catches a shape that moved — a new
+// compactType value, a summary on a different record type or role, a new agent
+// name — while keeping the field vocabulary. It does not catch a wholesale
+// rename, and it cannot see records the marker gate in mayBeBoundary rejected.
+// Both of those need the predicates re-derived from the CLI rather than
+// reported, and by then the flag has at least said something is wrong.
+func isCompactionEvidence(line []byte) bool {
+	var rec boundaryProbe
+	if json.Unmarshal(line, &rec) != nil {
+		return false
+	}
+	pd := rec.ProviderData
+	if pd.IsPtlRecovery || pd.IsMediaBodyRecovery {
+		return false
+	}
+	if pd.IsCompacted || pd.IsSummary || pd.CompactType != "" || pd.Agent == compactAgent {
+		return true
+	}
+	// The CLI writes this row immediately before a compaction's records, and
+	// writes it only for one: an ordinary periodic summary row reads
+	// source "periodic".
+	return rec.Type == "summary" && pd.Source == "pre-compact"
+}
+
 // boundaryMarkers are substrings any boundary record must contain. Parsing every
 // line of an 83 MB file is what would make this scan expensive; these gates are
 // a single IndexByte pass each and reject almost everything.
@@ -264,6 +355,11 @@ type PruneOutcome struct {
 	// RemovedBytes is how much was discarded; Size is what remains.
 	RemovedBytes int64
 	Size         int64
+	// UnplacedCompaction mirrors CompactionInfo's. Set even when nothing was
+	// pruned, which is exactly when it matters: it is the difference between
+	// "this conversation was never compacted" and "it was, and this build could
+	// not find where".
+	UnplacedCompaction bool
 }
 
 // ErrConversationInUse reports that a live agent holds the conversation, so
@@ -298,10 +394,12 @@ func PruneToCompactionBase(agent, path, sessionID string) (PruneOutcome, error) 
 	}
 	out := PruneOutcome{Size: info.Size()}
 
-	base, err := CompactionBase(agent, path)
+	scan, err := ScanCompaction(agent, path)
 	if err != nil {
 		return out, err
 	}
+	out.UnplacedCompaction = scan.UnplacedCompaction
+	base := scan.Base
 	if base <= 0 || base >= info.Size() {
 		return out, nil
 	}

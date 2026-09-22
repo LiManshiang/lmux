@@ -418,6 +418,13 @@ class APIClient: AgentSessionService {
         let reason: String?
         let removedBytes: Int64?
         let size: Int64?
+        /// The conversation is compacted, but the backend could not find where,
+        /// so nothing could be trimmed. The expected cause is a newer agent
+        /// version writing a shape the backend does not recognise. Worth telling
+        /// the user: the alternative is a conversation that never shrinks and no
+        /// reason anywhere for it. Not acted on automatically — trimming at a
+        /// guessed offset would drop context the model still reads.
+        let unplacedCompaction: Bool
     }
 
     /// Trims a session's conversation to its last compaction boundary, deleting
@@ -430,9 +437,11 @@ class APIClient: AgentSessionService {
             let reason: String?
             let removedBytes: Int64?
             let size: Int64?
+            let unplacedCompaction: Bool?
             enum CodingKeys: String, CodingKey {
                 case pruned, reason, size
                 case removedBytes = "removed_bytes"
+                case unplacedCompaction = "unplaced_compaction"
             }
         }
         let data = try await post(
@@ -441,7 +450,8 @@ class APIClient: AgentSessionService {
             timeout: Self.heavyTransferTimeout)
         let resp = try decode(Response.self, from: data)
         return PruneResult(pruned: resp.pruned, reason: resp.reason,
-                           removedBytes: resp.removedBytes, size: resp.size)
+                           removedBytes: resp.removedBytes, size: resp.size,
+                           unplacedCompaction: resp.unplacedCompaction ?? false)
     }
 
     /// What an import landed: the session it created or refreshed, plus the

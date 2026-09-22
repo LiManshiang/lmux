@@ -1720,6 +1720,15 @@ class ContentViewModel: ObservableObject {
 
     // MARK: - Cross-device sync
 
+    /// What one pinned session's export did.
+    private struct SessionExport {
+        /// Whether anything was written to the sync copy.
+        var wrote = false
+        /// The conversation is compacted but its compaction point could not be
+        /// located, so nothing was trimmed. See `SyncNowResult.unplacedCompaction`.
+        var unplacedCompaction = false
+    }
+
     /// Export one pinned session's conversation to the sync directory.
     ///
     /// With compaction-point sync on, this Mac's conversation is trimmed to its
@@ -1728,14 +1737,21 @@ class ContentViewModel: ObservableObject {
     /// normal answer (never compacted, or an agent has the file open) and the
     /// export simply proceeds on the full conversation.
     ///
-    /// Returns whether anything was written. Throws only for failures the caller
-    /// should treat as "nothing to export".
+    /// Throws only for failures the caller should treat as "nothing to export".
     @discardableResult
-    private func exportPinnedSession(_ session: SessionSummary, cbcID: String) async throws -> Bool {
+    private func exportPinnedSession(_ session: SessionSummary, cbcID: String) async throws -> SessionExport {
+        var outcome = SessionExport()
         if SessionSync.compactionOnly,
-           let pruned = try? await api.pruneConversation(sessionID: session.id),
-           pruned.pruned {
-            SessionSync.realignMirrorAfterPrune(cbcID: cbcID, newSize: pruned.size ?? 0)
+           let pruned = try? await api.pruneConversation(sessionID: session.id) {
+            if pruned.pruned {
+                SessionSync.realignMirrorAfterPrune(cbcID: cbcID, newSize: pruned.size ?? 0)
+            } else {
+                // "Nothing to trim" and "a compaction we could not find" look
+                // identical from here, and only the second one is worth telling
+                // the user about — the first is every session that was never
+                // compacted.
+                outcome.unplacedCompaction = pruned.unplacedCompaction
+            }
         }
 
         let since = SessionSync.exportSinceOffset(for: cbcID)
@@ -1757,9 +1773,11 @@ class ContentViewModel: ObservableObject {
             if fullResult == .unchanged {
                 SessionSync.recordExportedOffset(Int64(full.content.utf8.count), for: cbcID)
             }
-            return true
+            outcome.wrote = true
+            return outcome
         }
-        return applied == .updated
+        outcome.wrote = applied == .updated
+        return outcome
     }
 
     /// Manual sync pass: export changed pinned sessions to the sync directory
@@ -1828,6 +1846,17 @@ class ContentViewModel: ObservableObject {
         var agentConflicts = 0
         /// Two-way mirror conflicts, presented to the user for resolution.
         var agentConflictFiles: [SessionSync.AgentMirrorConflict] = []
+        /// Names of pinned sessions whose conversation is compacted but whose
+        /// compaction point could not be located, so nothing was trimmed.
+        ///
+        /// Worth its own report because the symptom is otherwise invisible: the
+        /// session simply never shrinks, and the only thing that distinguishes
+        /// it from a conversation that was never compacted is a detail of the
+        /// agent's file format. The expected cause is a newer agent version
+        /// writing a shape the backend does not know, which happened once
+        /// already — a manually /compact-ed session stayed at 26 MB for a
+        /// release with nothing anywhere to say why.
+        var unplacedCompaction: [String] = []
 
         /// True when nothing was exported or imported this pass (nothing to
         /// do). Note: a session whose export silently failed (no conversation
@@ -1903,8 +1932,10 @@ class ContentViewModel: ObservableObject {
             }
             syncPhase = .exporting(current: idx + 1, total: pinned.count)
             do {
-                if try await exportPinnedSession(session, cbcID: cbcID) {
-                    result.exportedSessions += 1
+                let exported = try await exportPinnedSession(session, cbcID: cbcID)
+                if exported.wrote { result.exportedSessions += 1 }
+                if exported.unplacedCompaction {
+                    result.unplacedCompaction.append(session.name)
                 }
             } catch {
                 // Session may not have a conversation yet; ignore.
@@ -1957,6 +1988,10 @@ class ContentViewModel: ObservableObject {
     /// Surface the outcome of a manual sync. A no-op sync silently reporting
     /// "0 sessions" left users unsure whether anything happened, so the
     /// up-to-date case gets an explicit toast.
+    ///
+    /// The unplaced-compaction note takes part in the same decision: when it is
+    /// the only thing to report, "everything is up to date" would be the wrong
+    /// answer, and it is the answer that would let the condition stay invisible.
     func reportSyncResult(_ result: SyncNowResult) {
         var parts: [String] = []
         if result.exportedSessions > 0 || result.importedSessions > 0 {
@@ -1968,6 +2003,11 @@ class ContentViewModel: ObservableObject {
                 agent += ", \(result.agentConflicts) conflict(s) kept local"
             }
             parts.append(agent)
+        }
+        if !result.unplacedCompaction.isEmpty {
+            parts.append(L("A compaction point was not found in %d session(s), so nothing was trimmed — the agent's conversation format may have changed: %@",
+                           result.unplacedCompaction.count,
+                           result.unplacedCompaction.joined(separator: ", ") as NSString))
         }
         if parts.isEmpty {
             showToast(L("Everything is up to date"))

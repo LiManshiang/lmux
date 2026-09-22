@@ -184,6 +184,204 @@ func TestPruneToCompactionBaseManualCompact(t *testing.T) {
 	}
 }
 
+// --- reporting a compaction this scan cannot place ---
+
+// unknownShape is a compaction written the way a newer agent version might write
+// it: same field vocabulary, a record the predicates do not cut at — a summary
+// on an assistant message from an agent that is not the one they know.
+const unknownShape = `{"id":"z1","timestamp":400,"type":"message","role":"assistant","content":[{"type":"output_text","text":"<conversation_history_summary>\n<summary>\nRework the report page\n</summary>\n</conversation_history_summary>"}],"providerData":{"agent":"context-compactor","compactType":"auto-manual","isSummary":true,"isCompacted":true},"sessionId":"s1","cwd":"/tmp/proj"}`
+
+// The case the flag exists for: the conversation was compacted, and nothing can
+// be trimmed. Before this, that was indistinguishable from "never compacted" and
+// went unreported — which is how a manually compacted session stayed at 26 MB
+// through a release.
+func TestScanCompactionFlagsACompactionItCannotPlace(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Join([]string{
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		unknownShape,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"carry on"}],"timestamp":401}`,
+		"",
+	}, "\n")
+	path := writeTempJSONL(t, dir, "conv.jsonl", body)
+
+	info, err := ScanCompaction("codebuddy", path)
+	if err != nil {
+		t.Fatalf("ScanCompaction: %v", err)
+	}
+	if info.Base != 0 {
+		t.Errorf("base = %d, want 0 — the scan must not guess a cut it cannot place", info.Base)
+	}
+	if !info.UnplacedCompaction {
+		t.Error("the compaction went unreported, which is the silent case this flag exists for")
+	}
+}
+
+// A cut the scan can place explains every marker before it, so doubt raised
+// earlier is dropped — everything before the cut is dead either way.
+func TestScanCompactionForgetsAnUnplacedCompactionOnceACutIsFound(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Join([]string{
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		unknownShape,
+		summaryBoundary,
+		continuePrompt,
+		`{"type":"message","role":"assistant","content":"carrying on","timestamp":500}`,
+		"",
+	}, "\n")
+	path := writeTempJSONL(t, dir, "conv.jsonl", body)
+
+	info, err := ScanCompaction("codebuddy", path)
+	if err != nil {
+		t.Fatalf("ScanCompaction: %v", err)
+	}
+	if want := int64(bytes.Index([]byte(body), []byte(summaryBoundary))); info.Base != want {
+		t.Errorf("base = %d, want %d", info.Base, want)
+	}
+	if info.UnplacedCompaction {
+		t.Error("flagged a compaction that sits before a cut the scan did place")
+	}
+}
+
+// The other half of the signal: a cut it can place, and then a later compaction
+// it cannot. Trimming to the first is safe but leaves part of the saving behind,
+// and that is worth saying rather than silently doing half the job.
+func TestScanCompactionFlagsAMissedSavingAfterAKnownCut(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Join([]string{
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		summaryBoundary,
+		continuePrompt,
+		unknownShape,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"carry on"}],"timestamp":501}`,
+		"",
+	}, "\n")
+	path := writeTempJSONL(t, dir, "conv.jsonl", body)
+
+	info, err := ScanCompaction("codebuddy", path)
+	if err != nil {
+		t.Fatalf("ScanCompaction: %v", err)
+	}
+	if want := int64(bytes.Index([]byte(body), []byte(summaryBoundary))); info.Base != want {
+		t.Errorf("base = %d, want %d (the cut it could place)", info.Base, want)
+	}
+	if !info.UnplacedCompaction {
+		t.Error("a compaction after the cut went unreported: the trim stops short of what is dead")
+	}
+}
+
+// Nothing here may raise the flag. Most of these pass the marker gate and get
+// parsed, so the guard is the evidence test itself, not the cheap substring
+// screen.
+func TestScanCompactionDoesNotFlagThese(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		why  string
+	}{
+		{
+			name: "ordinary conversation",
+			line: `{"type":"message","role":"user","content":[{"type":"input_text","text":"cd /tmp/proj"}],"timestamp":1}`,
+			why:  "no compaction markers at all",
+		},
+		{
+			name: "periodic summary row",
+			line: `{"type":"summary","summary":"Optimizing the pipeline","providerData":{"source":"periodic"},"timestamp":2}`,
+			why:  "only a pre-compact row is written by a compaction",
+		},
+		{
+			name: "continue prompt",
+			line: continuePrompt,
+			why:  "follows a cut and carries no markers of its own",
+		},
+		{
+			name: "point-in-time recovery",
+			line: `{"type":"message","role":"user","providerData":{"isPtlRecovery":true,"isCompacted":true,"isSummary":true},"timestamp":9}`,
+			why:  "understood, and deliberately not a boundary",
+		},
+		{
+			name: "media body recovery",
+			line: `{"type":"message","role":"user","providerData":{"isMediaBodyRecovery":true,"isCompacted":true},"timestamp":9}`,
+			why:  "same, for media bodies",
+		},
+		{
+			name: "prose about the format",
+			line: `{"type":"message","role":"user","content":[{"type":"input_text","text":"the file holds <conversation_history_summary> and a compactType field, and the agent is called compact"}],"timestamp":9}`,
+			why:  "conversations about compaction are not compactions — this is why only providerData counts",
+		},
+		{
+			name: "tool output about the format",
+			line: `{"type":"function_call_result","name":"Bash","status":"completed","output":{"type":"text","text":"grep isSummary: 3 matches, compactType: 1 match"},"timestamp":9}`,
+			why:  "not a message",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeTempJSONL(t, dir, "conv.jsonl", tc.line+"\n")
+
+			info, err := ScanCompaction("codebuddy", path)
+			if err != nil {
+				t.Fatalf("ScanCompaction: %v", err)
+			}
+			if info.Base != 0 {
+				t.Fatalf("base = %d, want 0", info.Base)
+			}
+			if info.UnplacedCompaction {
+				t.Errorf("flagged: %s", tc.why)
+			}
+		})
+	}
+}
+
+// A file that already starts at its own cut has nothing before it to drop, so
+// there is nothing to report — the pruned file must stay a fixed point here too,
+// or every sync after a prune would warn about it.
+func TestScanCompactionDoesNotFlagAnAlreadyTrimmedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTempJSONL(t, dir, "conv.jsonl", summaryBoundary+"\n"+continuePrompt+"\n")
+
+	info, err := ScanCompaction("codebuddy", path)
+	if err != nil {
+		t.Fatalf("ScanCompaction: %v", err)
+	}
+	if info.Base != 0 || info.UnplacedCompaction {
+		t.Errorf("base/unplaced = %d/%v, want 0/false", info.Base, info.UnplacedCompaction)
+	}
+}
+
+// The prune is where the signal reaches a caller, so it has to survive the
+// early return taken when there is nothing to trim.
+func TestPruneToCompactionBaseReportsAnUnplaceableCompaction(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Join([]string{
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		unknownShape,
+		`{"type":"message","role":"user","content":[{"type":"input_text","text":"carry on"}],"timestamp":401}`,
+		"",
+	}, "\n")
+	path := writeTempJSONL(t, dir, "conv.jsonl", body)
+
+	outcome, err := PruneToCompactionBase("codebuddy", path, "no-such-session")
+	if err != nil {
+		t.Fatalf("PruneToCompactionBase: %v", err)
+	}
+	if outcome.Pruned {
+		t.Error("Pruned = true, but there is no cut to trim to")
+	}
+	if !outcome.UnplacedCompaction {
+		t.Error("UnplacedCompaction = false; the caller has no way to report the miss")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Error("the conversation was rewritten despite nothing being prunable")
+	}
+}
+
 // Everything here must NOT move the base. Each entry is a record that either
 // carries compaction-shaped fields or merely mentions compaction in its body.
 func TestCompactionBaseRejectsNonBoundaries(t *testing.T) {

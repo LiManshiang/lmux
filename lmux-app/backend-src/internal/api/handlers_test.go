@@ -341,6 +341,88 @@ func compactedExportFixture(t *testing.T, h *Handler) (sessionID, pre, boundary,
 	return sessionID, pre, boundary, tail
 }
 
+// A prune that cannot place the compaction says so on the wire. Without it the
+// sync layer cannot tell "never compacted" from "compacted, and this build could
+// not find where", and the second is how a conversation stayed at 26 MB with
+// nothing anywhere to explain it.
+func TestPruneSessionConversationReportsAnUnplaceableCompaction(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ensureProjDir(t)
+	h := newTestHandler(t)
+
+	body := `{"project_dir":"/tmp/proj","name":"s1","agent_type":"codebuddy","cbc_session_id":"conv1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.CreateSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateSession status = %d", w.Code)
+	}
+	sessionID := idOf(w)
+
+	projDir := filepath.Join(home, ".codebuddy", "projects", "tmp-proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projDir, "conv1.jsonl")
+
+	prune := func() (pruned, unplaced bool, raw string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/sessions/"+sessionID+"/prune-conversation", nil)
+		w := httptest.NewRecorder()
+		h.PruneSessionConversation(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("prune status = %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Pruned   bool `json:"pruned"`
+			Unplaced bool `json:"unplaced_compaction"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.Pruned, resp.Unplaced, w.Body.String()
+	}
+
+	// A compaction in a shape this build does not know.
+	unknown := strings.Join([]string{
+		`{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		`{"sessionId":"conv1","type":"message","role":"assistant","content":[{"type":"output_text","text":"<conversation_history_summary><summary>x</summary></conversation_history_summary>"}],"providerData":{"agent":"context-compactor","isSummary":true,"isCompacted":true},"timestamp":2}`,
+		`{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"carry on"}],"timestamp":3}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(unknown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pruned, unplaced, raw := prune()
+	if pruned {
+		t.Error("pruned = true with no cut to trim to")
+	}
+	if !unplaced {
+		t.Errorf("unplaced_compaction missing from %s", raw)
+	}
+	if got, _ := os.ReadFile(path); string(got) != unknown {
+		t.Error("the conversation was rewritten even though nothing was prunable")
+	}
+
+	// A conversation that was simply never compacted must not claim the flag:
+	// every session would then carry a warning nothing could act on.
+	plain := strings.Join([]string{
+		`{"sessionId":"conv1","type":"message","role":"user","content":[{"type":"input_text","text":"early work"}],"timestamp":1}`,
+		`{"sessionId":"conv1","type":"message","role":"assistant","content":"done","timestamp":2}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(plain), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pruned, unplaced, raw = prune()
+	if pruned || unplaced {
+		t.Errorf("pruned/unplaced = %v/%v for a never-compacted conversation: %s",
+			pruned, unplaced, raw)
+	}
+}
+
 type exportResp struct {
 	Content      string `json:"content"`
 	Offset       int64  `json:"offset"`

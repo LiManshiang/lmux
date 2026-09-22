@@ -999,8 +999,17 @@ func (h *Handler) PruneSessionConversation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !outcome.Pruned {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"pruned": false, "reason": "nothing before the last compaction point"})
+		resp := map[string]interface{}{
+			"pruned": false, "reason": "nothing before the last compaction point"}
+		// Distinguish "never compacted" from "compacted, and this build could
+		// not find where". The second is what a newer agent version writing a
+		// shape this build does not know looks like, and staying silent about it
+		// is how a conversation went untrimmed for a whole release without
+		// anyone noticing. The sync result reports it.
+		if outcome.UnplacedCompaction {
+			resp["unplaced_compaction"] = true
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
