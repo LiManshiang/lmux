@@ -90,11 +90,17 @@ final class StatusBarController {
 
     @objc private func focusSession(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        NSApp.activate(ignoringOtherApps: true)
+        // Same reason as showApp: revealing a session in a window that was
+        // closed shows the user nothing. The view model is shared by the scene,
+        // so a window recreated here comes back already on that session.
+        MainWindow.show()
         viewModel?.revealSession(id: id)
     }
 
     @objc private func showApp() {
-        NSApp.activate(ignoringOtherApps: true)
+        // Not NSApp.activate on its own: after the window has been closed that
+        // leaves nothing on screen, which is a menu item promising to show lmux
+        // and not doing it.
+        MainWindow.show()
     }
 }

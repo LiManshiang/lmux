@@ -83,6 +83,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// A Dock click (or `open`) on an app whose window has been closed.
+    ///
+    /// Handled here rather than left to AppKit's default because the window is
+    /// either brought back or recreated — and the default must not run on top of
+    /// that, which is what would leave a second window behind on every click.
+    /// Returning false says the reopen is already done.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MainWindow.show()
+        return false
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let viewModel, viewModel.hasPinnedSessionsForSync else {
             return .terminateNow

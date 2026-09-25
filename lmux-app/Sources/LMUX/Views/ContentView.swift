@@ -17,6 +17,9 @@ struct ContentView: View {
                 sessionsArea
             }
         }
+        // Hand the window to MainWindow, so the menu bar item and a Dock click
+        // can bring the app back after the window has been closed.
+        .background(MainWindowCapture())
         .overlay(alignment: .top) {
             if let msg = viewModel.toastMessage {
                 Text(msg)
