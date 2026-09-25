@@ -151,27 +151,34 @@ struct ContentView: View {
                 Divider()
 
                 // New session as a full-width button above the footer row.
+                //
+                // The standard macOS button, not the accent-tinted band this
+                // used to be. That band was built from the same recipe as the
+                // list's section headers — a 10% wash, square corners, no hover
+                // — so it read as one more label band rather than a control,
+                // and with an accent colour like this Mac's red it read as a
+                // selection too. This shape says "button", and hover, press,
+                // keyboard focus and the disabled look all come from the system
+                // instead of not existing. Kept neutral on purpose: the sidebar
+                // spends its accent on the selected row.
                 Button(action: {
                     Task { await viewModel.quickCreateSession() }
                 }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         // Creating a session can take a moment (backend spawn +
                         // agent trust setup); show it rather than looking dead.
                         if viewModel.isLoading {
                             ProgressView().controlSize(.mini)
                         } else {
                             Image(systemName: "plus")
+                                .font(.system(size: 11))
                         }
                         Text(viewModel.isLoading ? "Creating…" : "New Session")
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.accentColor)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(Color.accentColor.opacity(0.1))
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
                 .disabled(!viewModel.backendRunning || viewModel.isLoading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
