@@ -1421,11 +1421,6 @@ class ContentViewModel: ObservableObject {
         }
     }
 
-    func quickCreateSession(agentType: AgentType = .codebuddy) async {
-        let home = NSHomeDirectory()
-        await createSession(projectDir: home, name: nil, cbcSessionID: nil, agentType: agentType)
-    }
-
     func deleteSession(id: String) async {
         do {
             try await api.deleteSession(id: id)

@@ -161,25 +161,25 @@ struct ContentView: View {
                 // keyboard focus and the disabled look all come from the system
                 // instead of not existing. Kept neutral on purpose: the sidebar
                 // spends its accent on the selected row.
-                Button(action: {
-                    Task { await viewModel.quickCreateSession() }
-                }) {
+                // It opens the sheet rather than creating a session on the spot.
+                // Creating one used to default the work directory to the home
+                // directory, and an agent working in $HOME walks the whole home
+                // on every search — slow, and it reaches the media libraries
+                // macOS protects, which is what raises the Photos and Media
+                // Library prompts. The directory is now always a deliberate
+                // choice; the sheet pre-fills it with where the user is already
+                // working.
+                Button(action: { viewModel.showNewSessionSheet = true }) {
                     HStack(spacing: 5) {
-                        // Creating a session can take a moment (backend spawn +
-                        // agent trust setup); show it rather than looking dead.
-                        if viewModel.isLoading {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11))
-                        }
-                        Text(viewModel.isLoading ? "Creating…" : "New Session")
+                        Image(systemName: "plus")
+                            .font(.system(size: 11))
+                        Text(L("New Session"))
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
-                .disabled(!viewModel.backendRunning || viewModel.isLoading)
+                .disabled(!viewModel.backendRunning)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
 

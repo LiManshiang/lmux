@@ -112,6 +112,22 @@ struct NewSessionSheet: View {
         }
         .padding()
         .frame(width: 500)
+        .onAppear { prefillDirectory() }
+    }
+
+    /// Start from where the user is already working, so picking the directory
+    /// every time costs one click rather than typing. Deliberately never the
+    /// home directory: a session whose work directory is $HOME makes the agent
+    /// scan the whole home — which is slow and walks into the media libraries
+    /// macOS protects, raising the Photos and Media Library prompts. Leaving the
+    /// field empty is the honest answer there, since home is not a project.
+    private func prefillDirectory() {
+        guard projectDir.isEmpty else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard let dir = viewModel.selectedSession?.projectDir,
+              dir != home, !dir.isEmpty else { return }
+        projectDir = dir
+        validateDir(dir)
     }
 
     private func browseDirectory() {
