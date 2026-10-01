@@ -639,6 +639,17 @@ class TerminalManager: ObservableObject {
         backend?.sendInput(text)
     }
 
+    /// Write a bare ESC (0x1B) to the pty — the agent's interrupt key.
+    ///
+    /// Not routed through the renderer's key translation on purpose: Ghostty
+    /// drops the Ctrl+[ chord (and an iPad Magic Keyboard has no Escape key at
+    /// all), so `AppDelegate.installInterruptKey()` catches the chord in the
+    /// app and lands here. Both backends write the string's UTF-8 bytes
+    /// verbatim, and "\u{1B}" is exactly one byte.
+    func sendEscape() {
+        sendInput("\u{1B}")
+    }
+
     /// Whether the session needs user attention (task completed in background).
     var needsAttention: Bool {
         !isConnected && !processRunning && backend != nil

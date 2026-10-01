@@ -37,6 +37,7 @@ enum L10n {
         "Stop": "停止",
         "Stop Session": "停止会话",
         "Stop session": "停止会话",
+        "Interrupt Agent": "中断 Agent",
         "Next Session": "下一个会话",
         "Previous Session": "上一个会话",
         "Search Sessions": "搜索会话",

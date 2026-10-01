@@ -1396,6 +1396,40 @@ class ContentViewModel: ObservableObject {
         searchFocusToken = UUID()
     }
 
+    // MARK: - Interrupt
+
+    /// Send ESC to the agent the user is looking at, as if they had pressed
+    /// Escape. Bound to Ctrl+[ because the keyboards lmux runs on do not
+    /// reliably deliver an Escape key (see `AppDelegate.installInterruptKey`).
+    ///
+    /// Returns false when there is no live terminal to interrupt, so the key
+    /// monitor can leave the event alone instead of swallowing it.
+    @discardableResult
+    func interruptActiveAgent() -> Bool {
+        guard let mgr = focusedTerminalManager()
+            ?? selectedSession.flatMap({ terminalManagerIfExists(for: $0.id) })
+        else { return false }
+        mgr.sendEscape()
+        return true
+    }
+
+    /// The pooled manager whose terminal view holds the keyboard focus.
+    ///
+    /// The selected session is not necessarily the one being typed into: a
+    /// session can be popped into its own window, and the detail pane can be
+    /// split into two terminals. The first responder is what disambiguates.
+    private func focusedTerminalManager() -> TerminalManager? {
+        var view = NSApp.keyWindow?.firstResponder as? NSView
+        let pool = Array(terminalManagers.values) + Array(splitTerminalManagers.values)
+        while let current = view {
+            if let hit = pool.first(where: { $0.backend?.view === current }) {
+                return hit
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
     func createSession(projectDir: String, name: String?, cbcSessionID: String?, agentType: AgentType = .codebuddy) async {
         isLoading = true
         defer { isLoading = false }

@@ -10,6 +10,7 @@ struct HelpView: View {
         ("⌘F", "Search Sessions"),
         ("⌘↑ / ⌘↓", "Switch to Previous / Next Session"),
         ("⌘K", "Stop the Selected Session"),
+        ("⌃[", "Interrupt the Agent (same as Esc)"),
         ("⌘?", "Show This Help"),
         ("⌘Q", "Quit lmux"),
     ]

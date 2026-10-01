@@ -21,6 +21,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the user knows the app is finishing, not hung.
     private var syncPanel: NSPanel?
 
+    /// Token for the Ctrl+[ -> Escape key monitor (see `installInterruptKey`).
+    private var interruptKeyMonitor: Any?
+
+    /// Make Ctrl+[ behave as Escape, so an agent run can be interrupted from a
+    /// keyboard that has no Escape key.
+    ///
+    /// Handled here rather than in the renderer because the renderer is where
+    /// the chord gets lost: an iPad Magic Keyboard has no Escape key at all,
+    /// and Ghostty's key-equivalent path drops Ctrl+[ (macOS hands the chord
+    /// over with `characters` already equal to 0x1B, which its encoder then
+    /// discards — Terminal.app handles the same chord fine). A local monitor
+    /// sees the event before anything is dispatched, so the chord never reaches
+    /// the renderer and the byte is written straight to the pty instead.
+    private func installInterruptKey() {
+        interruptKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard Self.isCtrlBracket(event) else { return event }
+            // Leave the event alone when there is no live terminal to
+            // interrupt, so a stray chord is not silently swallowed.
+            return self?.viewModel?.interruptActiveAgent() == true ? nil : event
+        }
+    }
+
+    /// Ctrl+[ and nothing else — no Command/Option/Shift.
+    ///
+    /// Matched on the characters *ignoring modifiers* so the chord follows the
+    /// user's keyboard layout instead of a hard-coded keycode.
+    private static func isCtrlBracket(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control
+            && event.charactersIgnoringModifiers == "["
+    }
+
     private func replyToTerminate(_ sender: NSApplication, shouldTerminate: Bool) {
         hideSyncPanel()
         guard !didReplyToTerminate else { return }
@@ -75,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        installInterruptKey()
         // Only request notification permission when the user hasn't decided yet,
         // so we don't re-prompt on every launch after a denial.
         UNUserNotificationCenter.current().getNotificationSettings { settings in
@@ -181,6 +213,11 @@ struct LmuxApp: App {
                 Divider()
                 Button(L("Stop Session")) { viewModel.stopCurrentSession() }
                     .keyboardShortcut("k", modifiers: .command)
+                // The chord is actually serviced by the key monitor, not by
+                // this menu item — the monitor sees the event first. The item
+                // exists so the shortcut is discoverable (and clickable).
+                Button(L("Interrupt Agent")) { _ = viewModel.interruptActiveAgent() }
+                    .keyboardShortcut("[", modifiers: .control)
                 Divider()
                 Button(L("Sync Now")) {
                     Task {
