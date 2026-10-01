@@ -1409,8 +1409,7 @@ class ContentViewModel: ObservableObject {
         guard let mgr = focusedTerminalManager()
             ?? selectedSession.flatMap({ terminalManagerIfExists(for: $0.id) })
         else { return false }
-        mgr.sendEscape()
-        return true
+        return mgr.sendEscape()
     }
 
     /// The pooled manager whose terminal view holds the keyboard focus.

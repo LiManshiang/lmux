@@ -646,8 +646,14 @@ class TerminalManager: ObservableObject {
     /// all), so `AppDelegate.installInterruptKey()` catches the chord in the
     /// app and lands here. Both backends write the string's UTF-8 bytes
     /// verbatim, and "\u{1B}" is exactly one byte.
-    func sendEscape() {
-        sendInput("\u{1B}")
+    ///
+    /// Returns false when there is no live process to write to, so the caller
+    /// can leave the key event alone rather than swallowing it.
+    @discardableResult
+    func sendEscape() -> Bool {
+        guard processRunning, let backend else { return false }
+        backend.sendInput("\u{1B}")
+        return true
     }
 
     /// Whether the session needs user attention (task completed in background).
