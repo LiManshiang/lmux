@@ -43,13 +43,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Ctrl+[ and nothing else — no Command/Option/Shift.
+    /// Ctrl+[ with no Command/Option.
     ///
-    /// Matched on the characters *ignoring modifiers* so the chord follows the
-    /// user's keyboard layout instead of a hard-coded keycode.
+    /// Matched by shape rather than by one attribute, because the chord is not
+    /// reported the same way everywhere: with a CJK input source the bracket
+    /// key reports 【 (U+3010) as `charactersIgnoringModifiers`, while macOS
+    /// still folds the chord into `characters` as 0x1B. Matching "[" alone
+    /// never fires there. ANSI keyCode 33 is the fallback for a layout that
+    /// reports no useful characters at all.
     private static func isCtrlBracket(_ event: NSEvent) -> Bool {
-        event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control
-            && event.charactersIgnoringModifiers == "["
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.control), !flags.contains(.command), !flags.contains(.option) else {
+            return false
+        }
+        if event.charactersIgnoringModifiers == "[" || event.characters == "[" { return true }
+        if event.characters == "\u{1B}" || event.charactersIgnoringModifiers == "\u{1B}" { return true }
+        // The ANSI "[" key, for layouts/IMEs that report no useful characters.
+        if event.keyCode == 33 { return true }
+        return false
     }
 
     private func replyToTerminate(_ sender: NSApplication, shouldTerminate: Bool) {

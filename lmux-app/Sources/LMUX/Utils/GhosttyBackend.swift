@@ -144,6 +144,15 @@ final class GhosttyBackend: TerminalBackend {
         viewState.surface?.sendText(text)
     }
 
+    /// Escape goes through the key path, not `sendInput`: the text path
+    /// re-encodes control bytes and turns 0x1B into a space.
+    @discardableResult
+    func sendEscape() -> Bool {
+        guard let view = terminalView else { return false }
+        view.sendEscapeKey()
+        return true
+    }
+
     // MARK: - Configuration
 
     func applyTheme(_ lmuxTheme: TerminalTheme) {

@@ -61,6 +61,11 @@ protocol TerminalBackend: AnyObject {
     /// Send text into the terminal as if the user typed it.
     func sendInput(_ text: String)
 
+    /// Send a synthesized Escape key. Returns false when there is no live
+    /// surface to write to.
+    @discardableResult
+    func sendEscape() -> Bool
+
     // MARK: - Configuration
 
     func applyTheme(_ theme: TerminalTheme)

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Current build version. Increment minor version for each release commit.
-/// Format: MAJOR.MINOR.PATCH (e.g. 1.0.321, 1.0.2)
+/// Format: MAJOR.MINOR.PATCH (e.g. 1.0.323, 1.0.2)
 enum AppVersion {
-    static let current = "1.0.321"
+    static let current = "1.0.323"
 }

@@ -129,6 +129,14 @@ final class SwiftTermBackend: TerminalBackend {
         terminalView?.send(txt: text)
     }
 
+    /// SwiftTerm writes the byte itself, so the [0x1B] array is already raw.
+    @discardableResult
+    func sendEscape() -> Bool {
+        guard let view = terminalView else { return false }
+        view.send([0x1B])
+        return true
+    }
+
     // MARK: - Configuration
 
     func applyTheme(_ theme: TerminalTheme) {
