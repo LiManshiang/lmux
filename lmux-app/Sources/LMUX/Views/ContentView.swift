@@ -8,6 +8,9 @@ struct ContentView: View {
     @AppStorage(TerminalRendererSetting.key) private var selectedRenderer = TerminalBackendFactory.defaultRenderer
     @AppStorage("sidebarTab") private var sidebarTab = "sessions"
 
+    /// Pointer state for the sidebar's New Session band (see `sessionsArea`).
+    @State private var newSessionHovering = false
+
     var body: some View {
         Group {
             if sidebarTab == "agent" {
@@ -150,17 +153,16 @@ struct ContentView: View {
 
                 Divider()
 
-                // New session as a full-width button above the footer row.
+                // New session: the band *is* the button.
                 //
-                // The standard macOS button, not the accent-tinted band this
-                // used to be. That band was built from the same recipe as the
-                // list's section headers — a 10% wash, square corners, no hover
-                // — so it read as one more label band rather than a control,
-                // and with an accent colour like this Mac's red it read as a
-                // selection too. This shape says "button", and hover, press,
-                // keyboard focus and the disabled look all come from the system
-                // instead of not existing. Kept neutral on purpose: the sidebar
-                // spends its accent on the selected row.
+                // It used to be a system bordered button sitting inside this
+                // full-width row, which drew a rectangle inside a band — a box
+                // in a box. The row already spans the sidebar and is already
+                // bounded by dividers, so the border was chrome nobody needed;
+                // the control now fills it edge to edge and takes the same hover
+                // wash as the session rows above, using the same borderless
+                // treatment as the other custom buttons (see IconButtonChrome).
+                //
                 // It opens the sheet rather than creating a session on the spot.
                 // Creating one used to default the work directory to the home
                 // directory, and an agent working in $HOME walks the whole home
@@ -176,12 +178,20 @@ struct ContentView: View {
                         Text(L("New Session"))
                     }
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .buttonStyle(.plain)
+                .background(
+                    Rectangle().fill(
+                        viewModel.backendRunning && newSessionHovering
+                            ? Color.primary.opacity(0.05) : Color.clear
+                    )
+                )
+                .animation(.easeOut(duration: 0.12), value: newSessionHovering)
+                .onHover { newSessionHovering = $0 }
                 .disabled(!viewModel.backendRunning)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .opacity(viewModel.backendRunning ? 1 : 0.45)
 
                 Divider()
 
