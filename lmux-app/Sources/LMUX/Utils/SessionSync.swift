@@ -709,7 +709,8 @@ enum SessionSync {
             incomingContentStart: bundle.contentStart ?? 0,
             incomingBytes: Int64(bundle.content.utf8.count),
             newOffset: bundle.offset ?? 0,
-            incomingEqualsMirror: existing?.content == bundle.content)
+            incomingEqualsMirror: existing?.content == bundle.content,
+            incomingNameEqualsMirror: existing?.name == bundle.name)
 
         switch plan {
         case .needsFullExport:
@@ -724,7 +725,7 @@ enum SessionSync {
             return .needsFullExport
         case .unchanged:
             return reencodeIfStillPlain(foundURL: foundURL, existing: existing)
-        case .append, .replace:
+        case .metadataOnly, .append, .replace:
             break
         }
 
@@ -732,10 +733,15 @@ enum SessionSync {
         var url: URL
         if let foundURL {
             url = foundURL
-            // Migrate legacy "//__xxxx.lmuxsession" names from earlier sync
-            // versions to the human-readable "<name>__<cbc8>.lmuxsession".
+            // Keep the human-readable half of the file name in step with the
+            // session. It is the name the user sees in the sync directory, so a
+            // rename that stopped at the payload would look like it never
+            // happened. The legacy "__<cbc8>.lmuxsession" names from earlier
+            // sync versions migrate by the same path. A target that already
+            // exists is left alone: that is another conversation's file, or a
+            // copy still arriving from iCloud.
             let foundName = foundURL.lastPathComponent
-            if foundName != freshName, foundName.hasPrefix("__"), foundName == "__\(String(cbcID.prefix(8))).lmuxsession" {
+            if foundName != freshName {
                 let target = foundURL.deletingLastPathComponent().appendingPathComponent(freshName)
                 if !FileManager.default.fileExists(atPath: target.path) {
                     try? FileManager.default.moveItem(at: foundURL, to: target)
@@ -748,11 +754,20 @@ enum SessionSync {
 
         var merged = bundle
         merged.deviceId = deviceID
-        if plan == .append, let existing {
-            // Append the increment, keeping the original display name and the
-            // offset the copy's content already starts at.
+        if plan == .metadataOnly, let existing {
+            // Nothing new to say about the content: the copy already holds it,
+            // so keep every byte and offset it records (the bundle in this case
+            // is an empty increment, and its offset describes the source, not
+            // the copy). Only the name moves.
+            merged.content = existing.content
+            merged.offset = existing.offset
+            merged.base = existing.base
+            merged.contentStart = existing.contentStart
+        } else if plan == .append, let existing {
+            // Append the increment, keeping the offset the copy's content
+            // already starts at. The name is deliberately *not* taken from the
+            // copy: a rename is exactly what this export is here to publish.
             merged.content = existing.content + bundle.content
-            merged.name = existing.name
             merged.base = existing.base
             merged.contentStart = existing.contentStart
         } else {

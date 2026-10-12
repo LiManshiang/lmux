@@ -18,7 +18,8 @@ final class SyncIncrementTests: XCTestCase {
         incomingContentStart: Int64 = 100,
         incomingBytes: Int64 = 20,
         newOffset: Int64 = 120,
-        incomingEqualsMirror: Bool = false
+        incomingEqualsMirror: Bool = false,
+        incomingNameEqualsMirror: Bool = true
     ) -> SyncIncrement.ExportPlan {
         SyncIncrement.plan(
             hasMirror: hasMirror,
@@ -31,7 +32,8 @@ final class SyncIncrementTests: XCTestCase {
             incomingContentStart: incomingContentStart,
             incomingBytes: incomingBytes,
             newOffset: newOffset,
-            incomingEqualsMirror: incomingEqualsMirror
+            incomingEqualsMirror: incomingEqualsMirror,
+            incomingNameEqualsMirror: incomingNameEqualsMirror
         )
     }
 
@@ -67,6 +69,41 @@ final class SyncIncrementTests: XCTestCase {
             plan(owned: false, incomingContentStart: 60, incomingBytes: 60,
                  newOffset: 120, incomingEqualsMirror: true),
             .unchanged)
+    }
+
+    // MARK: - Renaming
+
+    func testRenamedCopyIsRewrittenEvenWithNothingToAppend() {
+        // A rename moves no bytes, so the content rules read it as "nothing to
+        // do" and the copy kept the old name — which is what the sync directory
+        // shows the user. The name alone has to be a reason to write.
+        XCTAssertEqual(
+            plan(incomingBytes: 0, incomingNameEqualsMirror: false),
+            .metadataOnly)
+    }
+
+    func testRenameIsNoticedWhenTheContentIsIdenticalToo() {
+        // The other route to "nothing to do": the copy already holds exactly
+        // the incoming bytes, and the session was renamed on top of that.
+        XCTAssertEqual(
+            plan(owned: false, incomingContentStart: 60, incomingBytes: 60,
+                 newOffset: 120, incomingEqualsMirror: true,
+                 incomingNameEqualsMirror: false),
+            .metadataOnly)
+    }
+
+    func testRenameWithoutACopyIsNotMetadataOnly() {
+        // Nothing on disk to rewrite: this is a first export, and the name
+        // reaches the sync directory with the content.
+        XCTAssertEqual(
+            plan(hasMirror: false, incomingBytes: 0,
+                 incomingNameEqualsMirror: false),
+            .unchanged)
+    }
+
+    func testARenameDoesNotDisturbTheContentPlan() {
+        // New content still appends; the name rides along with that write.
+        XCTAssertEqual(plan(incomingNameEqualsMirror: false), .append)
     }
 
     // MARK: - First sync and lost copies

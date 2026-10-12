@@ -25,6 +25,10 @@ public enum SyncIncrement {
         /// date, which reads as "the remote changed" on the other machine and
         /// drags it into a re-import it does not need.
         case unchanged
+        /// The copy's content is already right and only its name is stale.
+        /// Rewrite the copy (and its file name) from what is on disk, without
+        /// asking the backend for content it does not need to send.
+        case metadataOnly
         /// Append the bundle's content to the copy's.
         case append
         /// Write the bundle's content as the whole copy.
@@ -56,6 +60,8 @@ public enum SyncIncrement {
     ///   - newOffset: the source's total size, as reported by the backend.
     ///   - incomingEqualsMirror: whether the bundle's content is byte-identical
     ///     to the copy's.
+    ///   - incomingNameEqualsMirror: whether the copy already carries this
+    ///     bundle's session name. Ignored when there is no copy to compare.
     public static func plan(
         hasMirror: Bool,
         mirrorOwnedByThisDevice: Bool,
@@ -67,8 +73,19 @@ public enum SyncIncrement {
         incomingContentStart: Int64,
         incomingBytes: Int64,
         newOffset: Int64,
-        incomingEqualsMirror: Bool
+        incomingEqualsMirror: Bool,
+        incomingNameEqualsMirror: Bool = true
     ) -> ExportPlan {
+        // A rename moves no bytes, so every content rule below reads it as
+        // "nothing to do" and the copy keeps the old name for as long as the
+        // conversation stays quiet — the name is otherwise only ever written
+        // along with content. It is its own outcome, and only ever applies when
+        // there is a copy to rename.
+        func unchangedOrRenamed() -> ExportPlan {
+            guard hasMirror, !incomingNameEqualsMirror else { return .unchanged }
+            return .metadataOnly
+        }
+
         // A conversation only grows. A source that no longer reaches as far as
         // what we published was rewritten shorter — a cwd repair rewrites the
         // whole file when the recorded directory stops matching, and importing a
@@ -84,7 +101,7 @@ public enum SyncIncrement {
 
         func rebuild() -> ExportPlan {
             guard coversFromBase else { return .needsFullExport }
-            return incomingEqualsMirror ? .unchanged : .replace
+            return incomingEqualsMirror ? unchangedOrRenamed() : .replace
         }
 
         // Every byte the copy holds was taken at `knownBase`. A conversation
@@ -117,7 +134,7 @@ public enum SyncIncrement {
 
         // An empty increment is otherwise never a reason to write: when the copy
         // is not empty, writing it would erase the conversation.
-        guard incomingBytes > 0 else { return .unchanged }
+        guard incomingBytes > 0 else { return unchangedOrRenamed() }
 
         if !hasMirror { return rebuild() }
 
