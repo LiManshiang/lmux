@@ -73,7 +73,16 @@ jobs:
       # part of its source tree — provide them here.
       - name: Provide libghostty vendored dependencies
         run: |
-          git clone --depth 1 https://github.com/Lakr233/MSDisplayLink.git libghostty-spm/vendor/MSDisplayLink
+          # Pinned, for the same reason SwiftTerm is. Upstream renamed the
+          # package to DisplayLink in 3.0 (d0d731fc, 2026-10-01) and its
+          # default branch no longer declares the product libghostty-spm asks
+          # for, so cloning the branch broke every release build with
+          # "product 'MSDisplayLink' required by ... not found" — nothing to do
+          # with lmux, and it would have failed the next release whatever
+          # changed here. db2eea93 is the last revision that still declares
+          # MSDisplayLink, and it still builds with a Swift 6.0 toolchain.
+          git clone https://github.com/Lakr233/MSDisplayLink.git libghostty-spm/vendor/MSDisplayLink
+          git -C libghostty-spm/vendor/MSDisplayLink checkout db2eea932d6e
           # Prebuilt GhosttyKit matching the pinned libghostty revision (C API
           # must line up with its Swift wrapper). Uploaded as a release asset
           # because the 127MB binary target can't live in git.
